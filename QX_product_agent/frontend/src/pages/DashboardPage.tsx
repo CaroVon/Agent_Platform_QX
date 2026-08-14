@@ -1,38 +1,39 @@
 import { useState } from 'react'
-import { Plus, FileText, Loader2, AlertCircle } from 'lucide-react'
+import { useNavigate } from 'react-router-dom'
+import { Plus, FileText, Loader2, AlertCircle, Rocket } from 'lucide-react'
 import { Button } from '@/components/common/button'
 import { ProjectCard } from '@/components/projects/ProjectCard'
 import { CreateProjectModal } from '@/components/projects/CreateProjectModal'
 import { useProjectList } from '@/hooks/useProjects'
 
 /**
- * 控制台页面（任务 2）
- *
- * 左侧边栏导航 + 主视图展示历史项目卡片列表。
- * 提供一个突出的"新建分析"按钮。
+ * 控制台页面 —— 研究项目管理（旧工作台入口）
  */
 export function DashboardPage() {
+  const navigate = useNavigate()
   const [modalOpen, setModalOpen] = useState(false)
   const { data: projects, isLoading, isError, error } = useProjectList()
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-8">
       {/* ─── 页面头部 ─────────────────────────────────────────── */}
-      <div className="flex items-center justify-between">
+      <div className="flex items-start justify-between gap-6">
         <div>
-          <h1 className="text-2xl font-bold tracking-tight">控制台</h1>
-          <p className="mt-1 text-sm text-muted-foreground">
-            管理您的产品分析项目，创建新的分析报告或查看已有成果。
+          <h1 className="text-2xl font-semibold tracking-tight">控制台</h1>
+          <p className="mt-2 text-sm text-muted-foreground">
+            管理研究项目（三阶段报告流水线）。AI 产品研发请前往 Product Workspace。
           </p>
         </div>
-        <Button
-          size="lg"
-          onClick={() => setModalOpen(true)}
-          className="gap-2"
-        >
-          <Plus className="h-4 w-4" />
-          新建分析
-        </Button>
+        <div className="flex shrink-0 gap-3">
+          <Button variant="outline" size="lg" className="gap-2" onClick={() => navigate('/workspace')}>
+            <Rocket className="h-4 w-4" />
+            Product Workspace
+          </Button>
+          <Button size="lg" onClick={() => setModalOpen(true)} className="gap-2">
+            <Plus className="h-4 w-4" />
+            新建分析
+          </Button>
+        </div>
       </div>
 
       {/* ─── 加载状态 ─────────────────────────────────────────── */}

@@ -66,3 +66,14 @@ class ExportPdfResponse(BaseModel):
     product_id: str
     pdf_url: str
     message: str
+
+
+class KnowledgeDocumentResponse(BaseModel):
+    """知识库文档条目（全局聚合，只读）。"""
+
+    document_id: str
+    project_id: str
+    project_topic: str
+    section_title: str
+    section_order: int = 0
+    updated_at: str | None = None

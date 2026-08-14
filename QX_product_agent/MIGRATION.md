@@ -274,3 +274,47 @@ cd backend && ../venv/bin/python ../scripts/studio_pipeline_smoke.py "AI 健身�
 | agents 集成 | ✅ 2 passed |
 | backend（含 P0 渲染审计 4 用例） | ✅ 48 passed |
 | 前端 tsc + vite build | ✅ 0 错误 |
+
+---
+
+## 9. 前端产品化改造记录（productize.md，2026-08）
+
+### 信息架构（8 模块侧边栏）
+```
+WORKSPACE  Product Workspace (/workspace, 四段式主工作区)
+STUDIO     Research Hub (/research) · PRD Studio (/prd)
+           Design Studio (/design) · Presentation (/presentation)
+MANAGE     Knowledge Base (/knowledge) · Templates (/templates) · Settings (/settings)
+```
+- 侧边栏可折叠（localStorage 持久化 + 200ms 过渡动画，Notion/Linear 风格）
+- `/studio` 重定向 `/workspace`（兼容旧链接）；旧工作台 `/projects/:id/*` 与 `/` 控制台保留不动
+- 每个模块：路由 + UI 结构 + 空状态 + 扩展点（ModulePlaceholder 通用壳）
+
+### Product Workspace 四段式
+1. Project Information：想法输入 + Generate + 最近产品
+2. Agent Workflow：八节点进度（含 Critic 评分徽标）
+3. Generated Assets：四大资产卡（研究/PRD/设计/演示）→ 跳转对应模块
+4. Related Knowledge：研究项目绑定 + 文件上传 + 图片搜索
+
+### 恢复缺失功能
+- **FileUploader**：拖拽/进度(XHR)/预览/移除；文本类 → upload-docs 入库检索，图片类 → assets 素材
+- **ImageSearch**：DuckDuckGo 搜索 → 自动入库项目图片库 → 网格预览/删除（复用既有 API）
+
+### 资产聚合（零新增业务逻辑，复用 P0-P5 结构化资产）
+- ProductAssetBrowser：产品列表（含 Critic 评分）→ 详情
+- Research Hub 复用 MarketCard/CompetitorMatrix；PRD Studio 复用 PRDViewer/PersonaCard/
+  FeatureMatrix/RoadmapTimeline；Design Studio 新写旅程/页面/组件规格展示；
+  Presentation 复用 PresentationViewer（新 DSL）/SlideRenderer（旧格式兼容）
+- 后端新增只读端点 `GET /api/v1/knowledge/documents`（全局文档聚合）
+
+### Breathing UI 设计系统
+- 大留白内容区（max-w-6xl + px-12 + py-10）、统一 Section 壳（step/标题/描述）
+- 资产卡/模板卡 hover 抬升、平滑过渡、低噪音顶栏
+
+### 测试结果
+| 验证项 | 结果 |
+|--------|------|
+| 后端套件（含 knowledge 2 用例） | ✅ 50 passed |
+| 前端 tsc + vite build | ✅ 0 错误 |
+| UI 冒烟（ui-smoke.mjs，Playwright） | ✅ 8 路由全渲染、侧边栏折叠、0 控制台错误 |
+| 深度验证 | ✅ 研究页 4 产品+MarketCard、演示翻页、知识库 108 文档、上传入库联通 |

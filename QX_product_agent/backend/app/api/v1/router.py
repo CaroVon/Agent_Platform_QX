@@ -10,6 +10,7 @@ from fastapi import APIRouter
 from app.api.v1.endpoints import projects
 from app.api.v1.endpoints import editor
 from app.api.v1.endpoints import product
+from app.api.v1.endpoints import knowledge
 
 # ─── 创建 v1 主路由 ───────────────────────────────────────────
 router = APIRouter(prefix="/api/v1")
@@ -18,3 +19,4 @@ router = APIRouter(prefix="/api/v1")
 router.include_router(projects.router)
 router.include_router(editor.router)
 router.include_router(product.router)
+router.include_router(knowledge.router)

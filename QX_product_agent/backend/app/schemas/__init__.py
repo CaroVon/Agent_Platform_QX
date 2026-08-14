@@ -512,6 +512,7 @@ class ProjectImagesResponse(BaseModel):
 # ────────────────────────────────────────────────────────────────
 from app.schemas.studio import (
     ExportPdfResponse,
+    KnowledgeDocumentResponse,
     ProductAssetResponse,
     ProductCreateRequest,
     ProductCreateResponse,
