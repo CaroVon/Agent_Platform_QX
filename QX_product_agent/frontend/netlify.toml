@@ -1,25 +1,41 @@
 # ============================================================
-# Netlify 部署配置
+# Netlify 部署配置 —— Agent Platform QX 前端
+# ============================================================
+# 部署上下文：
+#   - 仓库：github.com/CaroVon/Agent_Platform_QX
+#   - Base directory：QX_product_agent/frontend（本文件所在目录）
+#   - 后端：本机 FastAPI（8000）经隧道暴露公网，由 Edge Function 代理
+#
+# Netlify UI 站点设置（Site configuration → Build & deploy）：
+#   Base directory        = QX_product_agent/frontend
+#   Build command         = npx vite build
+#   Publish directory     = dist
+#
+# 环境变量（Site configuration → Environment variables）：
+#   BACKEND_URL  = 后端公网地址，例如 https://xxxx.trycloudflare.com
+#                  （本地联调用 netlify dev 时设 http://localhost:8000）
+#   AUTH_USERNAME / AUTH_PASSWORD = 可选：站点 Basic Auth 密码保护
+#   VITE_API_BASE = 可选：绕过代理直连后端（需后端 CORS 放行），缺省走代理
+# 详细步骤见 NETLIFY.md
 # ============================================================
 
 [build]
   command = "npx vite build"
   publish = "dist"
+  environment = { NODE_VERSION = "22" }
 
-# ─── 密码认证（最先执行）──────────────────────────────────────
-# 免费 Basic Auth，替代付费的 Visitor Access
+# ─── 密码认证（最先执行；未配置 AUTH_* 时自动跳过） ─────────
 [[edge_functions]]
   path = "/*"
   function = "auth"
 
-# ─── API 代理 ──────────────────────────────────────────────────
-# 所有 /api/* 请求由 api-proxy 转发到 BACKEND_URL
+# ─── API 代理：/api/* → BACKEND_URL ──────────────────────────
+# 前端全部使用相对路径 /api/v1/*，此处统一转发到本机后端
 [[edge_functions]]
   path = "/api/*"
   function = "api-proxy"
 
-# ─── SPA 回退 ──────────────────────────────────────────────────
-# 所有非 API 路径 → index.html（React Router 处理路由）
+# ─── SPA 回退：非 API 路径 → index.html（React Router 处理路由） ──
 [[redirects]]
   from = "/*"
   to = "/index.html"

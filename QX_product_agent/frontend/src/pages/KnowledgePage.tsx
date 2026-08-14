@@ -8,7 +8,7 @@ import { Database, FileText, Loader2 } from 'lucide-react'
 import { WorkspaceHeader } from '@/components/WorkspaceHeader'
 import { FileUploader } from '@/components/FileUploader'
 import { ImageSearch } from '@/components/ImageSearch'
-import { projectsApi } from '@/lib/api'
+import { projectsApi, API_BASE } from '@/lib/api'
 import type { ProjectResponse } from '@/types/api'
 
 interface KnowledgeDocument {
@@ -31,7 +31,7 @@ export function KnowledgePage() {
     const load = async () => {
       try {
         const [docs, projList] = await Promise.all([
-          fetch('/api/v1/knowledge/documents').then((r) => (r.ok ? r.json() : [])),
+          fetch(`${API_BASE}/knowledge/documents`).then((r) => (r.ok ? r.json() : [])),
           projectsApi.list(0, 100),
         ])
         if (cancelled) return

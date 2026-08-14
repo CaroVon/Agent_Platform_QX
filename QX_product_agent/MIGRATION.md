@@ -427,3 +427,18 @@ Hero 想法输入 → ProjectHeader（项目/行业/状态/Critic 分）→ AI �
 - 深度验证：色板 tokens 生效、画布 7 区块全渲染、演示缩略图 10 张、
   加载历史产品 → 团队画布完整 ✅
 - 后端/API/LangGraph 零改动（仅前端）
+
+---
+
+## 12. Netlify 部署适配（2026-08）
+
+架构：前端部署 Netlify（公网），后端本机运行。前端全部 API 走相对路径
+`/api/v1/*`，由 Netlify Edge Function（`netlify/edge-functions/api-proxy.ts`）
+转发到环境变量 `BACKEND_URL`；可选 Basic Auth（`auth.ts`，AUTH_USERNAME/PASSWORD）。
+
+- 代码适配：`api.ts` 导出 `API_BASE`（`VITE_API_BASE` 可覆盖直连），
+  FileUploader / KnowledgePage 统一改用，消除硬编码 `/api/v1`
+- 配置：`netlify.toml`（vite build / dist / SPA 回退 / 两个 Edge Function / Node 22）
+- 部署文档：`frontend/NETLIFY.md`（隧道暴露后端 → UI 配置 → CLI 联调 → 常见问题）
+- **实测**：netlify dev（.env 注入 BACKEND_URL=http://localhost:8000）→
+  静态站点 200、SPA 回退正常、API 代理打通（产品 10 条 / 文档 108 篇）

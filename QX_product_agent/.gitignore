@@ -87,3 +87,5 @@ fix/
 
 # dev section loop checkpoint
 scripts/.dev_checkpoint.json
+# Local Netlify folder
+.netlify

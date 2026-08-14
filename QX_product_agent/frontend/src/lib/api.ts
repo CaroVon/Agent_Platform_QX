@@ -2,7 +2,6 @@
  * ============================================================
  * API 服务层
  * —— 基于 fetch 封装，对接后端 FastAPI
- *     新增 approve-outline、blocks 等端点
  * ============================================================
  */
 
@@ -34,7 +33,14 @@ import type {
   StudioProductCreateResponse,
 } from '@/types/studio'
 
-const API_BASE = '/api/v1'
+/**
+ * API 基础路径（Netlify 部署适配）
+ *
+ * - 默认相对路径 /api/v1：走 Netlify Edge Function（api-proxy）转发到 BACKEND_URL
+ *   （本机后端经隧道暴露公网，或 netlify dev 本地联调指向 localhost:8000）
+ * - 可选环境变量 VITE_API_BASE：构建时覆盖为直连地址（需后端开启 CORS）
+ */
+export const API_BASE = import.meta.env.VITE_API_BASE ?? '/api/v1'
 
 class ApiError extends Error {
   constructor(

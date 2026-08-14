@@ -9,6 +9,7 @@
 import { useCallback, useRef, useState } from 'react'
 import { FileText, Image as ImageIcon, Loader2, UploadCloud, X } from 'lucide-react'
 import { cn } from '@/lib/utils'
+import { API_BASE } from '@/lib/api'
 
 interface UploadItem {
   key: string
@@ -85,8 +86,8 @@ export function FileUploader({ projectId }: { projectId: string }) {
 
         const url =
           kind === 'image'
-            ? `/api/v1/projects/${projectId}/assets`
-            : `/api/v1/projects/${projectId}/upload-docs`
+            ? `${API_BASE}/projects/${projectId}/assets`
+            : `${API_BASE}/projects/${projectId}/upload-docs`
 
         const result = await uploadWithProgress(url, file, (pct) =>
           setItems((prev) => prev.map((i) => (i.key === key ? { ...i, progress: pct } : i))),
