@@ -1,0 +1,54 @@
+# ============================================================
+# Agent Platform QX — 根级 .gitignore（覆盖所有子目录）
+# ============================================================
+
+# ─── Python ────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+venv/
+.venv/
+*.log
+
+# ─── 环境与密钥（严禁提交） ────────────────────────────────
+.env
+.env.local
+.env.*.local
+*.pem
+*.key
+
+# ─── 数据库 / 向量库 ───────────────────────────────────────
+*.db
+*.db-shm
+*.db-wal
+test_*.db
+chroma_db/
+bm25_db/
+
+# ─── Node / 前端 ───────────────────────────────────────────
+node_modules/
+frontend/dist/
+dist/
+*.tsbuildinfo
+vite.log
+npm-debug.log*
+
+# ─── 运行产物 / 输出 ───────────────────────────────────────
+outputs/
+backend/outputs/
+backend/runtime/
+nohup.out
+scripts/.dev_checkpoint.json
+agent_platform_memory/
+
+# ─── 备份 / 一次性文件 ─────────────────────────────────────
+*.bundle
+test0*.pdf
+
+# ─── IDE / 系统 ────────────────────────────────────────────
+.idea/
+.vscode/
+*.swp
+.DS_Store
+Thumbs.db

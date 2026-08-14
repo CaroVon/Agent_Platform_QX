@@ -1,0 +1,89 @@
+# Python
+__pycache__/
+*.py[cod]
+*.so
+
+# Virtual Environment
+venv/
+env/
+agent_py310/
+
+# Env
+.env
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+
+# Database
+*.sqlite3
+*.db
+
+# Chroma / Vector DB
+chroma_db/
+
+# BM25 cache
+bm25_db/
+
+# Logs
+*.log
+
+# Temporary
+tmp/
+temp/
+
+# Model weights
+models/
+*.safetensors
+*.bin
+
+# Python wheel
+*.whl
+
+# pip cache
+.pip/
+pip-wheel-metadata/
+
+# backup env
+agent_py310_backup/
+
+# cache
+.cache/
+
+# Node.js / Frontend
+node_modules/
+frontend/dist/
+frontend/.vite/
+
+# Generated outputs (PDFs, reports, images)
+backend/outputs/
+outputs/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Coverage
+.coverage
+htmlcov/
+
+# WAL files (SQLite)
+*.db-shm
+*.db-wal
+
+# Test databases
+test_*.db
+
+# fix
+fix/
+
+# caveman
+.caveman/
+
+# claude
+.claude/
+
+# dev section loop checkpoint
+scripts/.dev_checkpoint.json

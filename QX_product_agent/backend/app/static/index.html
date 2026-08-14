@@ -1,0 +1,568 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AI 产品分析 Agent - Dashboard</title>
+<style>
+  /* ── Reset & Base ── */
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    background: #f0f4f8; color: #1a202c; min-height: 100vh;
+  }
+
+  /* ── Layout ── */
+  .container { max-width: 1100px; margin: 0 auto; padding: 0 20px; }
+
+  /* ── Header ── */
+  header {
+    background: linear-gradient(135deg, #1a365d 0%, #2b6cb0 100%);
+    color: #fff; padding: 24px 0; box-shadow: 0 2px 12px rgba(0,0,0,.15);
+  }
+  header .container { display: flex; align-items: center; justify-content: space-between; }
+  header h1 { font-size: 1.5rem; font-weight: 700; letter-spacing: .5px; }
+  header h1 span { color: #63b3ed; }
+  header .badge {
+    background: rgba(255,255,255,.15); padding: 6px 14px; border-radius: 20px;
+    font-size: .8rem; display: flex; align-items: center; gap: 6px;
+  }
+  .status-dot {
+    display: inline-block; width: 8px; height: 8px; border-radius: 50%;
+    background: #48bb78; animation: pulse 2s infinite;
+  }
+  @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: .4; } }
+
+  /* ── Create Form ── */
+  .form-card {
+    background: #fff; border-radius: 12px; padding: 28px 32px;
+    box-shadow: 0 1px 4px rgba(0,0,0,.08); margin-top: 28px;
+  }
+  .form-card h2 { font-size: 1.1rem; margin-bottom: 16px; color: #2d3748; }
+  .form-row { display: flex; gap: 12px; flex-wrap: wrap; }
+  .form-row input {
+    flex: 1; min-width: 220px; padding: 12px 16px; border: 2px solid #e2e8f0;
+    border-radius: 8px; font-size: .95rem; transition: border .2s; outline: none;
+  }
+  .form-row input:focus { border-color: #3182ce; }
+  .form-row button {
+    padding: 12px 28px; background: #3182ce; color: #fff; border: none;
+    border-radius: 8px; font-size: .95rem; font-weight: 600; cursor: pointer;
+    transition: background .2s, transform .1s; white-space: nowrap;
+  }
+  .form-row button:hover { background: #2b6cb0; }
+  .form-row button:active { transform: scale(.97); }
+  .form-row button:disabled { opacity: .6; cursor: not-allowed; transform: none; }
+  .form-error { color: #e53e3e; font-size: .85rem; margin-top: 8px; display: none; }
+
+  /* ── Projects Section ── */
+  .section-header {
+    display: flex; align-items: center; justify-content: space-between;
+    margin: 32px 0 16px;
+  }
+  .section-header h2 { font-size: 1.1rem; color: #2d3748; }
+  .section-header .count {
+    background: #e2e8f0; padding: 2px 12px; border-radius: 12px; font-size: .8rem; color: #4a5568;
+  }
+  .refresh-btn {
+    background: none; border: 1px solid #e2e8f0; padding: 6px 14px; border-radius: 8px;
+    cursor: pointer; font-size: .85rem; color: #4a5568; transition: background .2s;
+  }
+  .refresh-btn:hover { background: #edf2f7; }
+
+  /* ── Project Card (list) ── */
+  .project-list { display: flex; flex-direction: column; gap: 10px; }
+  .project-card {
+    background: #fff; border-radius: 10px; padding: 16px 20px;
+    box-shadow: 0 1px 3px rgba(0,0,0,.06); display: flex; align-items: center;
+    justify-content: space-between; cursor: pointer; transition: box-shadow .2s, transform .1s;
+    border: 2px solid transparent;
+  }
+  .project-card:hover { box-shadow: 0 2px 8px rgba(0,0,0,.1); }
+  .project-card.active { border-color: #3182ce; }
+  .project-info { flex: 1; min-width: 0; }
+  .project-info .topic {
+    font-weight: 600; font-size: .95rem; white-space: nowrap; overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .project-info .meta {
+    font-size: .78rem; color: #718096; margin-top: 4px; display: flex; gap: 16px; flex-wrap: wrap;
+  }
+  .project-status {
+    display: flex; align-items: center; gap: 8px; flex-shrink: 0; margin-left: 12px;
+  }
+  .status-tag {
+    padding: 4px 14px; border-radius: 20px; font-size: .8rem; font-weight: 500;
+  }
+  .status-tag.PENDING { background: #fefcbf; color: #975a16; }
+  .status-tag.PROCESSING { background: #bee3f8; color: #2a4365; }
+  .status-tag.COMPLETED { background: #c6f6d5; color: #22543d; }
+  .status-tag.FAILED { background: #fed7d7; color: #742a2a; }
+  .project-progress {
+    font-size: .8rem; color: #4a5568; font-weight: 500; min-width: 48px; text-align: right;
+  }
+
+  /* ── Detail Panel ── */
+  .detail-panel {
+    background: #fff; border-radius: 12px; padding: 24px 28px;
+    box-shadow: 0 1px 4px rgba(0,0,0,.08); margin-top: 10px; display: none;
+  }
+  .detail-panel.open { display: block; }
+  .detail-header { display: flex; justify-content: space-between; align-items: start; margin-bottom: 16px; }
+  .detail-header h3 { font-size: 1.05rem; }
+  .detail-header .close-btn {
+    background: none; border: none; font-size: 1.4rem; cursor: pointer; color: #a0aec0; padding: 0 4px;
+  }
+  .detail-header .close-btn:hover { color: #4a5568; }
+
+  /* ── Progress Bar ── */
+  .progress-bar-wrap {
+    background: #edf2f7; border-radius: 10px; height: 12px; overflow: hidden; margin-bottom: 20px;
+  }
+  .progress-bar-fill {
+    height: 100%; border-radius: 10px; transition: width .5s ease;
+    background: linear-gradient(90deg, #48bb78, #38a169);
+  }
+  .progress-bar-fill.slow { background: linear-gradient(90deg, #ecc94b, #d69e2e); }
+  .progress-bar-fill.stuck { background: linear-gradient(90deg, #fc8181, #e53e3e); }
+  .progress-stats {
+    display: flex; gap: 20px; justify-content: center; margin-bottom: 20px; font-size: .85rem;
+  }
+  .progress-stats span { color: #718096; }
+  .progress-stats strong { color: #2d3748; }
+
+  /* ── Task Table ── */
+  .task-table { width: 100%; border-collapse: collapse; }
+  .task-table th {
+    text-align: left; font-size: .78rem; color: #718096; text-transform: uppercase;
+    padding: 8px 12px; border-bottom: 2px solid #e2e8f0; font-weight: 600;
+  }
+  .task-table td { padding: 10px 12px; border-bottom: 1px solid #f7fafc; font-size: .88rem; }
+  .task-table tr:last-child td { border-bottom: none; }
+  .task-icon { display: inline-block; width: 28px; height: 28px; border-radius: 50%;
+    text-align: center; line-height: 28px; font-size: .75rem; font-weight: 700; margin-right: 8px;
+  }
+  .task-icon.PENDING { background: #fefcbf; color: #975a16; }
+  .task-icon.PROCESSING { background: #bee3f8; color: #2a4365; animation: spin 1s linear infinite; }
+  .task-icon.COMPLETED { background: #c6f6d5; color: #22543d; }
+  .task-icon.FAILED { background: #fed7d7; color: #742a2a; }
+  @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+
+  .task-type-label {
+    display: inline-flex; align-items: center; gap: 6px; font-weight: 500;
+  }
+  .task-type-label .badge-type {
+    font-size: .7rem; background: #edf2f7; padding: 2px 8px; border-radius: 4px; color: #4a5568;
+  }
+  .task-error { color: #e53e3e; font-size: .8rem; max-width: 300px; overflow: hidden; text-overflow: ellipsis; }
+
+  /* ── Download Section ── */
+  .download-section { margin-top: 16px; padding-top: 16px; border-top: 1px solid #e2e8f0; display: none; }
+  .download-section.show { display: flex; gap: 12px; align-items: center; }
+  .download-btn {
+    display: inline-flex; align-items: center; gap: 6px; padding: 10px 24px;
+    background: #48bb78; color: #fff; border: none; border-radius: 8px; font-size: .9rem;
+    font-weight: 600; cursor: pointer; text-decoration: none; transition: background .2s;
+  }
+  .download-btn:hover { background: #38a169; }
+  .download-info { font-size: .8rem; color: #718096; }
+
+  /* ── Empty State ── */
+  .empty-state {
+    text-align: center; padding: 48px 20px; color: #a0aec0;
+  }
+  .empty-state .icon { font-size: 3rem; margin-bottom: 12px; }
+  .empty-state p { font-size: .9rem; }
+
+  /* ── Toast / Notification ── */
+  .toast-container {
+    position: fixed; top: 20px; right: 20px; z-index: 9999;
+    display: flex; flex-direction: column; gap: 8px;
+  }
+  .toast {
+    padding: 14px 20px; border-radius: 10px; color: #fff; font-size: .9rem;
+    box-shadow: 0 4px 12px rgba(0,0,0,.15); animation: slideIn .3s ease; max-width: 380px;
+  }
+  .toast.success { background: #48bb78; }
+  .toast.error { background: #e53e3e; }
+  .toast.info { background: #3182ce; }
+  @keyframes slideIn { from { transform: translateX(100%); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
+
+  /* ── Loading Spinner ── */
+  .spinner {
+    display: inline-block; width: 16px; height: 16px; border: 2px solid rgba(255,255,255,.3);
+    border-top-color: #fff; border-radius: 50%; animation: spin .6s linear infinite;
+    vertical-align: middle; margin-right: 6px;
+  }
+
+  /* ── Responsive ── */
+  @media (max-width: 640px) {
+    header .container { flex-direction: column; gap: 8px; text-align: center; }
+    .form-row input { min-width: 100%; }
+    .form-row button { width: 100%; }
+    .project-card { flex-wrap: wrap; gap: 8px; }
+    .project-status { margin-left: 0; width: 100%; justify-content: flex-end; }
+    .task-table { font-size: .8rem; }
+    .task-table th, .task-table td { padding: 6px 8px; }
+  }
+</style>
+</head>
+<body>
+
+<!-- ===== Header ===== -->
+<header>
+  <div class="container">
+    <h1>🔬 AI 产品分析 <span>Agent</span></h1>
+    <div class="badge">
+      <span class="status-dot"></span>
+      <span id="api-status">服务运行中</span>
+    </div>
+  </div>
+</header>
+
+<!-- ===== Main ===== -->
+<main class="container">
+
+  <!-- Create Form -->
+  <div class="form-card">
+    <h2>📋 创建新的产品分析项目</h2>
+    <div class="form-row">
+      <input type="text" id="topic-input" placeholder="输入分析主题，例如：智能手表产品分析、新能源汽车竞品对比..." autocomplete="off">
+      <button id="create-btn" onclick="createProject()">🚀 开始分析</button>
+    </div>
+    <div class="form-error" id="form-error"></div>
+  </div>
+
+  <!-- Projects List -->
+  <div class="section-header">
+    <div style="display:flex;align-items:center;gap:12px;">
+      <h2>📂 我的项目</h2>
+      <span class="count" id="project-count">0</span>
+    </div>
+    <button class="refresh-btn" onclick="loadProjects()">🔄 刷新</button>
+  </div>
+
+  <div id="project-list" class="project-list">
+    <div class="empty-state">
+      <div class="icon">📭</div>
+      <p>暂无项目，输入主题开始分析</p>
+    </div>
+  </div>
+
+  <!-- Detail Panel -->
+  <div class="detail-panel" id="detail-panel">
+    <div class="detail-header">
+      <h3 id="detail-title">项目详情</h3>
+      <button class="close-btn" onclick="closeDetail()">&times;</button>
+    </div>
+
+    <!-- Progress Bar -->
+    <div class="progress-bar-wrap">
+      <div class="progress-bar-fill" id="progress-fill" style="width:0%"></div>
+    </div>
+    <div class="progress-stats">
+      <span>✅ 已完成: <strong id="stat-completed">0</strong></span>
+      <span>⏳ 进行中: <strong id="stat-processing">0</strong></span>
+      <span>❌ 失败: <strong id="stat-failed">0</strong></span>
+      <span>📊 总进度: <strong id="stat-percentage">0%</strong></span>
+    </div>
+
+    <!-- Task Table -->
+    <table class="task-table">
+      <thead>
+        <tr>
+          <th style="width:30px">#</th>
+          <th>任务步骤</th>
+          <th>状态</th>
+          <th>信息</th>
+        </tr>
+      </thead>
+      <tbody id="task-tbody"></tbody>
+    </table>
+
+    <!-- Download -->
+    <div class="download-section" id="download-section">
+      <a class="download-btn" id="download-link" href="#">📥 下载 PDF 报告</a>
+      <span class="download-info" id="download-info"></span>
+    </div>
+  </div>
+
+</main>
+
+<!-- Toast -->
+<div class="toast-container" id="toast-container"></div>
+
+<!-- ===== JavaScript ===== -->
+<script>
+// ─── State ──────────────────────────────────────────────
+const API_BASE = '';
+let currentProjectId = null;
+let pollingInterval = null;
+
+// ─── Toast ──────────────────────────────────────────────
+function showToast(msg, type = 'info') {
+  const container = document.getElementById('toast-container');
+  const toast = document.createElement('div');
+  toast.className = `toast ${type}`;
+  toast.textContent = msg;
+  container.appendChild(toast);
+  setTimeout(() => { toast.style.opacity = '0'; toast.style.transition = 'opacity .3s';
+    setTimeout(() => toast.remove(), 300); }, 3000);
+}
+
+// ─── Typed task name mapping ────────────────────────────
+const TASK_LABELS = {
+  SEARCH: '🔍 网络搜索',
+  BUILD_KNOWLEDGE_BASE: '📚 知识库构建',
+  GENERATE_OUTLINE: '📝 生成大纲',
+  BUILD_REPORT: '✍️ 撰写报告',
+  GENERATE_PDF: '📄 生成 PDF',
+};
+const TASK_TYPE_BADGES = {
+  SEARCH: '搜索', BUILD_KNOWLEDGE_BASE: '知识库',
+  GENERATE_OUTLINE: '大纲', BUILD_REPORT: '撰写',
+  GENERATE_PDF: '渲染',
+};
+
+// ─── Load Projects ──────────────────────────────────────
+async function loadProjects() {
+  try {
+    const resp = await fetch(`${API_BASE}/api/v1/projects`);
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    const projects = await resp.json();
+    renderProjectList(projects);
+    document.getElementById('project-count').textContent = projects.length;
+  } catch (e) {
+    console.error('加载项目列表失败:', e);
+    document.getElementById('project-list').innerHTML =
+      `<div class="empty-state"><div class="icon">⚠️</div><p>加载失败: ${e.message}</p></div>`;
+  }
+}
+
+function renderProjectList(projects) {
+  const container = document.getElementById('project-list');
+  if (!projects || projects.length === 0) {
+    container.innerHTML = `<div class="empty-state"><div class="icon">📭</div><p>暂无项目，输入主题开始分析</p></div>`;
+    return;
+  }
+  container.innerHTML = projects.map(p => {
+    const status = p.status || 'PENDING';
+    const createdAt = new Date(p.created_at).toLocaleString('zh-CN');
+    const isActive = currentProjectId === p.id;
+    return `
+      <div class="project-card ${isActive ? 'active' : ''}" onclick="openDetail('${p.id}')">
+        <div class="project-info">
+          <div class="topic">${escapeHtml(p.topic)}</div>
+          <div class="meta">
+            <span>🆔 ${p.id.slice(0,8)}...</span>
+            <span>🕐 ${createdAt}</span>
+          </div>
+        </div>
+        <div class="project-status">
+          <span class="status-tag ${status}">${statusLabel(status)}</span>
+          <span class="project-progress">${p.progress || '-'}</span>
+        </div>
+      </div>
+    `;
+  }).join('');
+}
+
+function statusLabel(s) {
+  const map = { PENDING: '⏳ 待处理', PROCESSING: '🔄 进行中', COMPLETED: '✅ 已完成', FAILED: '❌ 失败' };
+  return map[s] || s;
+}
+
+// ─── Create Project ─────────────────────────────────────
+async function createProject() {
+  const input = document.getElementById('topic-input');
+  const btn = document.getElementById('create-btn');
+  const errEl = document.getElementById('form-error');
+  const topic = input.value.trim();
+
+  if (!topic) {
+    errEl.textContent = '⚠️ 请输入分析主题';
+    errEl.style.display = 'block'; return;
+  }
+  if (topic.length < 2) {
+    errEl.textContent = '⚠️ 主题至少 2 个字符';
+    errEl.style.display = 'block'; return;
+  }
+
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner"></span>提交中...';
+  errEl.style.display = 'none';
+
+  try {
+    const resp = await fetch(`${API_BASE}/api/v1/projects`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ topic }),
+    });
+    if (!resp.ok) {
+      const err = await resp.json();
+      throw new Error(err.detail || `HTTP ${resp.status}`);
+    }
+    const data = await resp.json();
+    input.value = '';
+    showToast(`✅ 项目已创建: ${data.project.topic}`, 'success');
+    await loadProjects();
+    // Auto-open the new project
+    openDetail(data.project.id);
+  } catch (e) {
+    errEl.textContent = `❌ ${e.message}`;
+    errEl.style.display = 'block';
+    showToast(`创建失败: ${e.message}`, 'error');
+  } finally {
+    btn.disabled = false;
+    btn.innerHTML = '🚀 开始分析';
+  }
+}
+
+// ─── Open Detail ─────────────────────────────────────────
+function openDetail(projectId) {
+  currentProjectId = projectId;
+  document.getElementById('detail-panel').classList.add('open');
+  document.getElementById('download-section').classList.remove('show');
+
+  // Highlight active card
+  document.querySelectorAll('.project-card').forEach(c => c.classList.remove('active'));
+  const cards = document.querySelectorAll('.project-card');
+  // We need to find by id, but we stored it in onclick. Let's just update
+  loadProjects(); // re-render to show active state
+
+  fetchProjectStatus(projectId);
+  // Start polling every 3 seconds
+  if (pollingInterval) clearInterval(pollingInterval);
+  pollingInterval = setInterval(() => fetchProjectStatus(projectId, true), 3000);
+}
+
+function closeDetail() {
+  currentProjectId = null;
+  document.getElementById('detail-panel').classList.remove('open');
+  if (pollingInterval) { clearInterval(pollingInterval); pollingInterval = null; }
+}
+
+// ─── Fetch Project Status ───────────────────────────────
+async function fetchProjectStatus(projectId, silent = false) {
+  try {
+    const resp = await fetch(`${API_BASE}/api/v1/projects/${projectId}/status`);
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    const data = await resp.json();
+    renderDetail(data);
+  } catch (e) {
+    if (!silent) {
+      showToast(`查询状态失败: ${e.message}`, 'error');
+    }
+  }
+}
+
+function renderDetail(data) {
+  const title = document.getElementById('detail-title');
+  title.textContent = `📊 ${data.topic}`;
+
+  // Progress bar
+  const pct = data.progress.percentage || 0;
+  const fill = document.getElementById('progress-fill');
+  fill.style.width = `${pct}%`;
+  fill.className = 'progress-bar-fill';
+  if (data.project_status === 'FAILED') fill.classList.add('stuck');
+  else if (pct > 0 && pct < 100) fill.classList.add('slow');
+
+  // Stats
+  document.getElementById('stat-completed').textContent = data.progress.completed_tasks || 0;
+  document.getElementById('stat-processing').textContent =
+    (data.progress.total_tasks - data.progress.completed_tasks - data.progress.failed_tasks) || 0;
+  document.getElementById('stat-failed').textContent = data.progress.failed_tasks || 0;
+  document.getElementById('stat-percentage').textContent = `${pct}%`;
+
+  // Tasks table
+  const tbody = document.getElementById('task-tbody');
+  tbody.innerHTML = (data.tasks || []).map((t, i) => {
+    const label = TASK_LABELS[t.task_type] || t.task_type;
+    const badge = TASK_TYPE_BADGES[t.task_type] || t.task_type;
+    const status = t.status || 'PENDING';
+    const statusText = statusLabel(status);
+    let info = '';
+    if (status === 'COMPLETED' && t.completed_at) {
+      info = `✅ ${new Date(t.completed_at).toLocaleTimeString('zh-CN')}`;
+    } else if (status === 'FAILED') {
+      info = `<span class="task-error">❌ ${escapeHtml(t.error_message || '未知错误')}</span>`;
+    } else if (status === 'PROCESSING') {
+      info = '⏳ 执行中...';
+    } else {
+      info = '⏸️ 等待中';
+    }
+    return `
+      <tr>
+        <td>${t.sequence_order || i + 1}</td>
+        <td>
+          <span class="task-type-label">
+            <span class="task-icon ${status}">${status === 'COMPLETED' ? '✓' : status === 'FAILED' ? '✗' : status === 'PROCESSING' ? '⟳' : '·'}</span>
+            ${label}
+            <span class="badge-type">${badge}</span>
+          </span>
+        </td>
+        <td><span class="status-tag ${status}" style="font-size:.75rem;">${statusText}</span></td>
+        <td>${info}</td>
+      </tr>
+    `;
+  }).join('');
+
+  // Download section
+  const downloadSection = document.getElementById('download-section');
+  if (data.project_status === 'COMPLETED') {
+    fetchDownloadInfo(data.project_id);
+  } else {
+    downloadSection.classList.remove('show');
+  }
+
+  // Also update the project card for this project if visible
+  updateProjectCard(data);
+}
+
+async function fetchDownloadInfo(projectId) {
+  try {
+    const resp = await fetch(`${API_BASE}/api/v1/projects/${projectId}/download`);
+    if (resp.ok) {
+      const data = await resp.json();
+      const section = document.getElementById('download-section');
+      section.classList.add('show');
+      const link = document.getElementById('download-link');
+      link.href = data.download_url;
+      const size = data.file_size_bytes ? `(${(data.file_size_bytes / 1024).toFixed(1)} KB)` : '';
+      document.getElementById('download-info').textContent = `🆔 ${data.filename} ${size}`;
+    }
+  } catch (e) { /* ignore */ }
+}
+
+function updateProjectCard(data) {
+  // Find the card in the list and update it
+  const cards = document.querySelectorAll('.project-card');
+  // Since we don't have data-id on cards, we'll just re-load the list silently
+  // Actually let's just not do this to avoid flicker - the refresh is manual
+}
+
+// ─── Helpers ────────────────────────────────────────────
+function escapeHtml(str) {
+  const div = document.createElement('div');
+  div.textContent = str;
+  return div.innerHTML;
+}
+
+// ─── Init ────────────────────────────────────────────────
+document.addEventListener('DOMContentLoaded', () => {
+  loadProjects();
+  // Health check
+  fetch(`${API_BASE}/health`).then(r => r.json()).then(d => {
+    document.getElementById('api-status').textContent = `${d.app} v${d.version}`;
+  }).catch(() => {
+    document.getElementById('api-status').textContent = '⚠️ 无法连接';
+  });
+  // Enter key to submit
+  document.getElementById('topic-input').addEventListener('keydown', e => {
+    if (e.key === 'Enter') createProject();
+  });
+});
+</script>
+</body>
+</html>

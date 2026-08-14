@@ -1,0 +1,64 @@
+"""
+============================================================
+AI Product Studio API Schemas
+—— POST /api/product/create 等端点的请求/响应契约
+============================================================
+"""
+
+from __future__ import annotations
+
+from typing import Any
+
+from pydantic import BaseModel, Field
+
+
+class ProductCreateRequest(BaseModel):
+    """创建产品（触发 Research → Product → Design → Presentation 流水线）。"""
+
+    idea: str = Field(..., min_length=1, max_length=500, description="产品想法")
+
+
+class ProductCreateResponse(BaseModel):
+    """创建成功 —— 异步流水线立即返回，前端轮询 GET /api/product/{id}。"""
+
+    product_id: str
+    idea: str
+    status: str
+
+
+class ProductAssetResponse(BaseModel):
+    """产品资产包查询响应（对齐 POST /api/product/create 的目标响应形状）。"""
+
+    product_id: str
+    idea: str
+    status: str
+    error_message: str | None = None
+    created_at: str | None = None
+    updated_at: str | None = None
+    # ── 六节点结构化资产（未完成时为 None） ──
+    requirement: dict[str, Any] | None = None
+    research: dict[str, Any] | None = None
+    competitor_analysis: dict[str, Any] | None = None
+    strategy: dict[str, Any] | None = None
+    design: dict[str, Any] | None = None
+    presentation: dict[str, Any] | None = None
+    # ── 进度与失败记录 ──
+    node_status: dict[str, str] = Field(default_factory=dict)
+    errors: dict[str, str] = Field(default_factory=dict)
+
+
+class ProductListResponse(BaseModel):
+    """产品列表项（轻量）。"""
+
+    product_id: str
+    idea: str
+    status: str
+    created_at: str | None = None
+
+
+class ExportPdfResponse(BaseModel):
+    """PPT 风格 PDF 导出结果。"""
+
+    product_id: str
+    pdf_url: str
+    message: str

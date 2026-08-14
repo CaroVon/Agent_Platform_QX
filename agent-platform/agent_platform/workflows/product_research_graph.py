@@ -1,0 +1,328 @@
+"""
+============================================================
+产品研究工作流 —— LangGraph 多 Agent 编排
+============================================================
+
+节点链（对齐目标架构）:
+
+  Requirement Parser
+        ↓
+  Research Agent
+        ↓
+  Competitor Analysis Agent
+        ↓
+  Product Strategy Agent
+        ↓
+  UX Design Agent
+        ↓
+  Presentation Agent
+        ↓
+  Final Product Asset Package
+
+每个节点：
+  - 接收结构化 state（ProductStudioState）
+  - 产出结构化输出（Pydantic Schema 校验通过）
+  - 支持失败处理（记录错误后降级继续，不整体崩溃）
+  - 支持重试机制（_with_retry 包装器，默认 max_retries+1 次尝试）
+
+Agent 实现通过构造参数注入（依赖倒置）：
+平台层不 import 任何具体业务 Agent，测试可注入 Fake Agent。
+"""
+
+from __future__ import annotations
+
+import logging
+from datetime import datetime, timezone
+from typing import Any, Callable
+
+from langgraph.graph import END, START, StateGraph
+
+from agent_platform.harness.agent_loop import BaseAgent
+from agent_platform.harness.runner import StructuredRunner
+from agent_platform.llm.client import LLMClient
+from agent_platform.memory.memory_store import MemoryStore
+from agent_platform.schemas.design import UXDesign
+from agent_platform.schemas.package import AssetPackageMeta, ProductAssetPackage
+from agent_platform.schemas.presentation import SlideDeck
+from agent_platform.schemas.product import ProductStrategy
+from agent_platform.schemas.requirement import RequirementSpec
+from agent_platform.schemas.research import CompetitorAnalysis, MarketResearch
+from agent_platform.workflows.state import ProductStudioState
+
+logger = logging.getLogger(__name__)
+
+# 节点执行顺序（linear pipeline）
+NODE_ORDER = [
+    "requirement_parser",
+    "research",
+    "competitor_analysis",
+    "strategy",
+    "design",
+    "presentation",
+]
+
+_REQUIREMENT_SYSTEM = """你是资深产品需求分析师。
+解析用户的产品想法，输出结构化的产品需求规格。
+只输出符合 Schema 的 JSON。"""
+
+
+def _with_retry(
+    node_fn: Callable[[dict], dict | None],
+    node_name: str,
+    max_retries: int,
+) -> Callable[[dict], dict]:
+    """节点重试包装器：失败重试 → 记录错误并降级继续。
+
+    LangGraph 规范：节点通过返回更新 dict 写回状态（而非原地修改）。
+    """
+
+    def wrapped(state: dict) -> dict:
+        status = dict(state.get("node_status", {}))
+        errors = dict(state.get("errors", {}))
+
+        status[node_name] = "running"
+        errors.pop(node_name, None)
+
+        last_exc: Exception | None = None
+        for attempt in range(1, max_retries + 2):  # 总尝试 = max_retries + 1
+            try:
+                updates = node_fn(state) or {}
+                status[node_name] = "completed"
+                return {**updates, "node_status": status, "errors": errors}
+            except Exception as exc:  # noqa: BLE001 —— 统一收敛为节点失败
+                last_exc = exc
+                logger.warning(
+                    "[%s] 第 %d/%d 次尝试失败: %s",
+                    node_name, attempt, max_retries + 1, exc,
+                )
+
+        # 重试耗尽：结构化记录失败，工作流降级继续
+        status[node_name] = "failed"
+        errors[node_name] = f"重试 {max_retries + 1} 次后仍失败: {last_exc}"
+        return {"node_status": status, "errors": errors}
+
+    return wrapped
+
+
+class ProductResearchGraph:
+    """
+    产品研究工作流图。
+
+    用法:
+        graph = ProductResearchGraph(
+            research_agent=..., product_agent=..., design_agent=...,
+            presentation_agent=..., llm=..., memory=...,
+        )
+        asset = graph.invoke("Build an AI fitness application")
+    """
+
+    def __init__(
+        self,
+        research_agent: BaseAgent,
+        product_agent: BaseAgent,
+        design_agent: BaseAgent,
+        presentation_agent: BaseAgent,
+        llm: LLMClient | None = None,
+        memory: MemoryStore | None = None,
+        max_retries: int = 2,
+    ):
+        self.research_agent = research_agent
+        self.product_agent = product_agent
+        self.design_agent = design_agent
+        self.presentation_agent = presentation_agent
+        self.llm = llm
+        self.memory = memory
+        self.max_retries = max_retries
+        self._checkpointer = self._make_checkpointer()
+        self.graph = self._build()
+
+    # ─── 节点实现 ──────────────────────────────────────────
+
+    def _parse_requirement(self, state: dict) -> dict:
+        """Requirement Parser：LLM 解析想法；失败时确定性回退。"""
+        idea = state["idea"]
+        if self.llm is not None:
+            try:
+                model = StructuredRunner(self.llm).run(
+                    system_prompt=_REQUIREMENT_SYSTEM,
+                    user_prompt=f"用户的产品想法：{idea}",
+                    schema=RequirementSpec,
+                    max_retries=1,
+                )
+                return {"requirement": model.model_dump()}
+            except Exception as exc:  # noqa: BLE001 —— 回退兜底
+                logger.warning("需求解析失败，使用确定性回退: %s", exc)
+        return {"requirement": RequirementSpec(idea=idea, goals=[idea]).model_dump()}
+
+    def _run_agent_node(self, agent: BaseAgent, task: str, state: dict, field: str) -> dict:
+        result = agent.execute(
+            task,
+            state,
+            memory=self.memory,
+            memory_namespace=state.get("memory_namespace", "default"),
+        )
+        if not result.success or result.data is None:
+            raise RuntimeError(result.error or f"Agent {agent.name} 执行失败")
+        return {field: result.data}
+
+    def _research(self, state: dict) -> dict:
+        updates = self._run_agent_node(self.research_agent, "market_research", state, "research")
+        MarketResearch.model_validate(updates["research"])
+        return updates
+
+    def _competitor_analysis(self, state: dict) -> dict:
+        updates = self._run_agent_node(
+            self.research_agent, "competitor_analysis", state, "competitor_analysis"
+        )
+        CompetitorAnalysis.model_validate(updates["competitor_analysis"])
+        return updates
+
+    def _strategy(self, state: dict) -> dict:
+        updates = self._run_agent_node(self.product_agent, "strategy", state, "strategy")
+        ProductStrategy.model_validate(updates["strategy"])
+        return updates
+
+    def _design(self, state: dict) -> dict:
+        updates = self._run_agent_node(self.design_agent, "ux_design", state, "design")
+        UXDesign.model_validate(updates["design"])
+        return updates
+
+    def _presentation(self, state: dict) -> dict:
+        updates = self._run_agent_node(self.presentation_agent, "slide_deck", state, "presentation")
+        SlideDeck.model_validate(updates["presentation"])
+        return updates
+
+    def _assemble(self, state: dict) -> dict:
+        """Final Product Asset Package：收敛全部节点产物。"""
+        def _get(model_cls, key):
+            value = state.get(key)
+            return model_cls.model_validate(value) if value is not None else None
+
+        package = ProductAssetPackage(
+            idea=state["idea"],
+            requirement=_get(RequirementSpec, "requirement"),
+            research=_get(MarketResearch, "research"),
+            competitor_analysis=_get(CompetitorAnalysis, "competitor_analysis"),
+            strategy=_get(ProductStrategy, "strategy"),
+            design=_get(UXDesign, "design"),
+            presentation=_get(SlideDeck, "presentation"),
+            meta=AssetPackageMeta(
+                idea=state["idea"],
+                created_at=datetime.now(timezone.utc).isoformat(),
+                node_status={
+                    **dict(state.get("node_status", {})),
+                    "assemble": "completed",
+                },
+                errors=dict(state.get("errors", {})),
+            ),
+        )
+        status = dict(state.get("node_status", {}))
+        status["assemble"] = "completed"
+        return {"asset_package": package.model_dump(), "node_status": status}
+
+    # ─── 图构建 ────────────────────────────────────────────
+
+    def _build(self):
+        builder = StateGraph(ProductStudioState)
+
+        for name in NODE_ORDER:
+            builder.add_node(name, _with_retry(self._node_fn(name), name, self.max_retries))
+        builder.add_node("assemble", self._assemble)
+
+        builder.add_edge(START, NODE_ORDER[0])
+        for prev, nxt in zip(NODE_ORDER, NODE_ORDER[1:]):
+            builder.add_edge(prev, nxt)
+        builder.add_edge(NODE_ORDER[-1], "assemble")
+        builder.add_edge("assemble", END)
+
+        if self._checkpointer is not None:
+            return builder.compile(checkpointer=self._checkpointer)
+        return builder.compile()
+
+    def _node_fn(self, name: str) -> Callable[[dict], dict]:
+        return {
+            "requirement_parser": self._parse_requirement,
+            "research": self._research,
+            "competitor_analysis": self._competitor_analysis,
+            "strategy": self._strategy,
+            "design": self._design,
+            "presentation": self._presentation,
+        }[name]
+
+    @staticmethod
+    def _make_checkpointer():
+        """内存 checkpoint（支持断点续跑/回放），缺失依赖时禁用。"""
+        try:
+            from langgraph.checkpoint.memory import MemorySaver
+
+            return MemorySaver()
+        except Exception:  # noqa: BLE001 —— 无 checkpoint 依赖时降级
+            return None
+
+    # ─── 执行入口 ──────────────────────────────────────────
+
+    def invoke(self, idea: str, memory_namespace: str = "default") -> ProductAssetPackage:
+        """运行全流程，返回最终产品资产包。"""
+        initial: ProductStudioState = {
+            "idea": idea,
+            "memory_namespace": memory_namespace,
+            "requirement": None,
+            "research": None,
+            "competitor_analysis": None,
+            "strategy": None,
+            "design": None,
+            "presentation": None,
+            "asset_package": None,
+            "node_status": {name: "pending" for name in NODE_ORDER + ["assemble"]},
+            "errors": {},
+        }
+        config = None
+        if self._checkpointer is not None:
+            config = {"configurable": {"thread_id": memory_namespace}}
+        final_state = self.graph.invoke(initial, config=config)
+        return ProductAssetPackage.model_validate(final_state["asset_package"])
+
+
+def build_product_research_graph(
+    research_agent: BaseAgent,
+    product_agent: BaseAgent,
+    design_agent: BaseAgent,
+    presentation_agent: BaseAgent,
+    llm: LLMClient | None = None,
+    memory: MemoryStore | None = None,
+    max_retries: int = 2,
+) -> ProductResearchGraph:
+    """工厂函数：构建产品研究工作流图。"""
+    return ProductResearchGraph(
+        research_agent=research_agent,
+        product_agent=product_agent,
+        design_agent=design_agent,
+        presentation_agent=presentation_agent,
+        llm=llm,
+        memory=memory,
+        max_retries=max_retries,
+    )
+
+
+def run_pipeline(
+    idea: str,
+    research_agent: BaseAgent,
+    product_agent: BaseAgent,
+    design_agent: BaseAgent,
+    presentation_agent: BaseAgent,
+    llm: LLMClient | None = None,
+    memory: MemoryStore | None = None,
+    max_retries: int = 2,
+    memory_namespace: str = "default",
+) -> ProductAssetPackage:
+    """一步式便捷入口：构建图并执行。"""
+    graph = build_product_research_graph(
+        research_agent=research_agent,
+        product_agent=product_agent,
+        design_agent=design_agent,
+        presentation_agent=presentation_agent,
+        llm=llm,
+        memory=memory,
+        max_retries=max_retries,
+    )
+    return graph.invoke(idea, memory_namespace=memory_namespace)

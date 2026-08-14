@@ -1,0 +1,23 @@
+# Agent Platform Runtime 依赖
+# Python: 3.10+
+# 安装: pip install -r requirements.txt
+#
+# 说明：平台层刻意保持最小依赖集合 ——
+# 不依赖 LangChain 全家桶，仅需 LangGraph（工作流）+ Pydantic（Schema）。
+
+# --- 工作流引擎 ---
+langgraph>=1.0
+
+# --- 结构化契约 ---
+pydantic>=2.7
+pydantic-settings>=2.2
+
+# --- HTTP 客户端（模型层 + 搜索工具） ---
+httpx>=0.27
+
+# --- 测试 ---
+pytest>=8.0
+pytest-asyncio>=0.23
+
+# --- 可选：本地 PDF 文档解析（DocumentTool） ---
+# PyMuPDF>=1.23

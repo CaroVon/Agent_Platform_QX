@@ -1,0 +1,188 @@
+# ============================================================
+# Research Agent —— 完整 Docker 编排
+# 包含: FastAPI Web 服务 + Celery Worker + Redis + PostgreSQL
+# ============================================================
+
+version: "3.9"
+
+# ─── 全局网络 ───────────────────────────────────────────────
+networks:
+  research-net:
+    driver: bridge
+
+# ─── 持久化卷 ───────────────────────────────────────────────
+volumes:
+  postgres-data:      # PostgreSQL 数据持久化
+  redis-data:         # Redis 数据持久化
+  chroma-data:        # Chroma 向量库持久化（多租户时按 tenant 拆分）
+  bm25-data:          # BM25 索引持久化
+  outputs-data:       # 报告产物持久化
+
+
+services:
+
+  # ============================================================
+  # 0. App Engine 引擎服务（需要 research_agent/app/ 目录存在）
+  # ============================================================
+  # 说明：research_agent/app/ 是核心引擎目录（planner/search/crawler/report/rag/llm），
+  # 通过 volume mount 挂载到 /app/engine，backend/app/__init__.py 会通过
+  # __path__ 扩展将其合并到 app 命名空间下。
+  # 本地开发时则通过相对路径直接找到 ../../app 目录。
+
+  # ============================================================
+  # 1. PostgreSQL 数据库
+  # ============================================================
+  postgres:
+    image: postgres:15-alpine
+    container_name: research-postgres
+    restart: unless-stopped
+    networks:
+      - research-net
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      POSTGRES_DB: ${POSTGRES_DB:-research_agent}
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-research_agent}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  # ============================================================
+  # 2. Redis（消息代理 + 结果后端）
+  # ============================================================
+  redis:
+    image: redis:7-alpine
+    container_name: research-redis
+    restart: unless-stopped
+    networks:
+      - research-net
+    volumes:
+      - redis-data:/data
+    ports:
+      - "6379:6379"
+    command: redis-server --appendonly yes --save 60 1
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  # ============================================================
+  # 3. FastAPI Web 服务
+  # ============================================================
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: research-agent-api:latest
+    container_name: research-api
+    restart: unless-stopped
+    networks:
+      - research-net
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      # 挂载 backend/app/ 应用代码（开发模式热更新）
+      - ./app:/app/app
+      # 挂载 engine 引擎目录（research_agent/app/ → /app/engine）
+      # 使得 app.planner / app.search / app.crawler / app.report / app.rag / app.llm 可导入
+      - ../app:/app/engine
+      # 持久化数据卷
+      - chroma-data:/app/chroma_db
+      - bm25-data:/app/bm25_db
+      - outputs-data:/app/outputs
+      # 嵌入模型（预下载的模型文件）
+      - /root/autodl-tmp/models:/models:ro
+    env_file:
+      - .env
+    environment:
+      - PYTHONPATH=/app
+    ports:
+      - "8000:8000"
+    command: >
+      uvicorn app.main:app
+      --host 0.0.0.0
+      --port 8000
+      --workers 2
+      --log-level info
+
+  # ============================================================
+  # 4. Celery Worker 节点
+  # ============================================================
+  celery-worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: research-agent-worker:latest
+    container_name: research-celery-worker
+    restart: unless-stopped
+    networks:
+      - research-net
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - ./app:/app/app
+      # 挂载 engine 引擎目录（与 api 服务保持一致）
+      - ../app:/app/engine
+      - chroma-data:/app/chroma_db
+      - bm25-data:/app/bm25_db
+      - outputs-data:/app/outputs
+      - /root/autodl-tmp/models:/models:ro
+    env_file:
+      - .env
+    environment:
+      - PYTHONPATH=/app
+    # Celery Worker 启动命令
+    # -A: 指定 Celery 应用模块
+    # -l: 日志级别
+    # -c: 并发 Worker 数（根据任务类型调整）
+    # -Q: 监听的任务队列（按优先级分离）
+    command: >
+      celery -A app.core.celery_app.celery_app worker
+      --loglevel=info
+      --concurrency=4
+      --pool=threads
+      --queues=celery
+      --hostname=worker1@%h
+      --without-gossip
+      --without-mingle
+      --without-heartbeat
+
+  # ============================================================
+  # 5. Celery Beat（定时任务调度器）—— 可选
+  # ============================================================
+  celery-beat:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: research-agent-beat:latest
+    container_name: research-celery-beat
+    restart: unless-stopped
+    networks:
+      - research-net
+    depends_on:
+      redis:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+    volumes:
+      - ./app:/app/app
+    env_file:
+      - .env
+    environment:
+      - PYTHONPATH=/app
+    command: >
+      celery -A app.core.celery_app.celery_app beat
+      --loglevel=info

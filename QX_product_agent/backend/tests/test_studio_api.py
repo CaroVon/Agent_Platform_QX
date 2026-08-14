@@ -1,0 +1,191 @@
+"""
+============================================================
+AI Product Studio API 集成测试
+—— POST /api/v1/product/create + 资产包查询 + PDF 导出
+============================================================
+"""
+
+import json
+import uuid
+from pathlib import Path
+from unittest.mock import patch
+
+import pytest
+from httpx import AsyncClient
+
+from app.models.studio_product import StudioProduct, StudioProductStatus
+
+
+class MockCeleryTask:
+    _id = "mock-product-task-001"
+
+    @property
+    def id(self):
+        return self._id
+
+    def delay(self, *args, **kwargs):
+        return self
+
+    def get(self, timeout=None):
+        return {"status": "completed"}
+
+
+mock_pipeline = patch(
+    "app.api.v1.endpoints.product.run_product_studio_pipeline",
+    MockCeleryTask(),
+)
+
+
+def _package_payload() -> dict:
+    """最小完整资产包（六节点齐备）。"""
+    return {
+        "idea": "AI 健身应用",
+        "requirement": {"idea": "AI 健身应用", "goals": ["个性化训练"]},
+        "research": {
+            "market_size": {"summary": "百亿市场"},
+            "competitors": [{"name": "Keep", "positioning": "大众健身"}],
+            "customer_pain_points": ["不会安排计划"],
+            "industry_trends": ["AI 教练化"],
+        },
+        "competitor_analysis": {
+            "competitors": [{"name": "Keep", "positioning": "大众健身"}],
+            "matrix": {"dimensions": ["定位"], "profiles": [{"name": "Keep", "positioning": "x"}]},
+            "competitive_landscape": "头部集中",
+            "differentiation_opportunities": ["个性化"],
+        },
+        "strategy": {
+            "positioning": "AI 私教",
+            "personas": [{"name": "小雅", "role": "新手"}],
+            "features": [{"name": "智能计划", "priority": "P0"}],
+            "roadmap": [{"phase": "Phase 1", "title": "MVP"}],
+            "prd_sections": [{"title": "产品概述", "content": "正文"}],
+        },
+        "design": {
+            "user_flow": [{"step": "注册"}],
+            "pages": [{"name": "首页"}],
+            "components": [{"name": "滑块", "kind": "input"}],
+        },
+        "presentation": {
+            "topic": "AI 健身应用",
+            "slides": [
+                {"id": "s1", "title": "封面", "layout_type": "cover"},
+                {"id": "s2", "title": "市场", "layout_type": "bullets",
+                 "blocks": [{"id": "b1", "block_type": "bullets", "content": "趋势一\n趋势二"}]},
+            ],
+            "sections": [{"title": "市场", "slide_ids": ["s1", "s2"]}],
+        },
+        "meta": {
+            "idea": "AI 健身应用",
+            "created_at": "2026-01-01T00:00:00+00:00",
+            "node_status": {"research": "completed"},
+            "errors": {},
+        },
+    }
+
+
+async def _insert_completed_product(db, package: dict | None = None) -> StudioProduct:
+    product = StudioProduct(
+        idea="AI 健身应用",
+        status=StudioProductStatus.COMPLETED,
+        asset_package=json.dumps(package or _package_payload(), ensure_ascii=False),
+    )
+    db.add(product)
+    await db.commit()
+    await db.refresh(product)
+    return product
+
+
+@pytest.mark.asyncio
+async def test_create_product(client: AsyncClient):
+    with mock_pipeline:
+        resp = await client.post(
+            "/api/v1/product/create", json={"idea": "Build an AI fitness application"}
+        )
+    assert resp.status_code == 201, resp.text
+    data = resp.json()
+    assert data["idea"] == "Build an AI fitness application"
+    assert data["status"] == "queued"
+    uuid.UUID(data["product_id"])  # 合法 UUID
+
+
+@pytest.mark.asyncio
+async def test_create_product_validates_idea(client: AsyncClient):
+    resp = await client.post("/api/v1/product/create", json={"idea": ""})
+    assert resp.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_get_product_queued(client: AsyncClient):
+    with mock_pipeline:
+        created = await client.post("/api/v1/product/create", json={"idea": "AI 教育助手"})
+    product_id = created.json()["product_id"]
+
+    resp = await client.get(f"/api/v1/product/{product_id}")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["status"] == "queued"
+    assert data["research"] is None
+    assert data["presentation"] is None
+
+
+@pytest.mark.asyncio
+async def test_get_product_completed_returns_assets(client: AsyncClient, test_session):
+    async with test_session as session:
+        product = await _insert_completed_product(session)
+        product_id = str(product.id)
+
+    resp = await client.get(f"/api/v1/product/{product_id}")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["status"] == "completed"
+    assert data["research"]["market_size"]["summary"] == "百亿市场"
+    assert data["strategy"]["positioning"] == "AI 私教"
+    assert data["design"]["pages"][0]["name"] == "首页"
+    assert data["presentation"]["slides"][0]["layout_type"] == "cover"
+    assert data["node_status"]["research"] == "completed"
+
+
+@pytest.mark.asyncio
+async def test_list_products(client: AsyncClient):
+    with mock_pipeline:
+        await client.post("/api/v1/product/create", json={"idea": "产品 A"})
+
+    resp = await client.get("/api/v1/product")
+    assert resp.status_code == 200
+    items = resp.json()
+    assert any(item["idea"] == "产品 A" for item in items)
+
+
+@pytest.mark.asyncio
+async def test_get_product_404(client: AsyncClient):
+    resp = await client.get(f"/api/v1/product/{uuid.uuid4()}")
+    assert resp.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_export_pdf(client: AsyncClient, test_session):
+    from app.core.config import get_settings
+
+    async with test_session as session:
+        product = await _insert_completed_product(session)
+        product_id = str(product.id)
+
+    resp = await client.post(f"/api/v1/product/{product_id}/export-pdf")
+    assert resp.status_code == 200, resp.text
+    data = resp.json()
+    assert data["pdf_url"].endswith(f"{product_id}.pdf")
+
+    # 验证 PDF 真实落盘并清理
+    pdf_path = Path(get_settings().OUTPUT_DIR) / "studio_assets" / f"{product_id}.pdf"
+    assert pdf_path.is_file() and pdf_path.stat().st_size > 1000
+    pdf_path.unlink()
+
+
+@pytest.mark.asyncio
+async def test_export_pdf_rejects_queued(client: AsyncClient):
+    with mock_pipeline:
+        created = await client.post("/api/v1/product/create", json={"idea": "未完成"})
+    product_id = created.json()["product_id"]
+
+    resp = await client.post(f"/api/v1/product/{product_id}/export-pdf")
+    assert resp.status_code == 409

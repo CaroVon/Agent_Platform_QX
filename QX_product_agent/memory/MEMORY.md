@@ -1,0 +1,1 @@
+- [Ralph Loop Session 2026-06-02](ralph-loop-session-20260602.md) — Database fixes, API testing, 11/11 tests, PDF 16:9 optimization

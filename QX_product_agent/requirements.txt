@@ -1,0 +1,74 @@
+# ============================================================
+# QX Product Research Agent — 完整 Python 依赖
+# Version: 1.0.0 | Python: 3.10+ | Updated: 2026-07-02
+# 安装: pip install -r requirements.txt
+# ============================================================
+
+# --- Web Framework (FastAPI Backend) ---
+fastapi==0.136.3
+uvicorn[standard]==0.48.0
+starlette==1.2.1
+pydantic==2.13.4
+pydantic-settings==2.14.1
+python-multipart==0.0.30
+
+# --- Database ---
+SQLAlchemy[asyncio]==2.0.50
+aiosqlite==0.22.1
+asyncpg==0.31.0
+psycopg2-binary==2.9.12
+alembic==1.18.4
+
+# --- Async Task Queue ---
+celery==5.6.3
+kombu==5.6.2
+redis==4.6.0
+
+# --- HTTP Client ---
+httpx==0.28.1
+requests==2.33.0
+python-dotenv==1.2.2
+
+# --- LangChain Ecosystem ---
+langchain-core==1.4.0
+langchain-community==0.4.2
+langchain-openai==1.2.2
+langchain-chroma==1.1.0
+langchain-classic==1.0.7
+langchain-text-splitters==1.1.2
+langgraph>=1.0            # 🆕 v2: agent-platform 工作流引擎
+
+# --- Embedding & Retrieval ---
+sentence-transformers==5.5.1
+chromadb==1.5.9
+rank-bm25==0.2.2
+jieba==0.42.1
+scikit-learn==1.8.0
+
+# --- External APIs ---
+tavily-python==0.7.25
+firecrawl-py==4.28.2
+openai==2.38.0
+
+# --- Report Generation ---
+markdown2==2.5.5
+weasyprint==68.1
+Pillow==12.2.0
+
+# --- Testing ---
+pytest==9.0.3
+pytest-asyncio==1.4.0
+
+# --- Local File Processing ---
+PyMuPDF==1.23.8          # PDF 解析 (app/rag/local_parser.py)
+
+# --- Image Search ---
+ddgs>=9.14.0 # DuckDuckGo 图片搜索 (app/search/image_search.py) — v9.x API: DDGS().images(query, ...)
+
+# --- Utilities ---
+watchfiles==1.2.0
+python-dateutil==2.9.0.post0
+PyYAML==6.0.3
+Jinja2==3.1.6
+click==8.4.1
+rich==15.0.0

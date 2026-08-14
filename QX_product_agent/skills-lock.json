@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "skills": {
+    "analyze-skill": {
+      "source": "shinyaigeek/cc-skills-usage",
+      "sourceType": "github",
+      "skillPath": "skills/analyze-skill/SKILL.md",
+      "computedHash": "cdacf74d70dc5245b51563879563dda81554b3887ff5e24508fa5dc8d367492b"
+    },
+    "cc-skills-usage": {
+      "source": "shinyaigeek/cc-skills-usage",
+      "sourceType": "github",
+      "skillPath": "skills/cc-skills-usage/SKILL.md",
+      "computedHash": "893f44450a2b60e97c5c3ae2eee3581a9fa706b59f9b9446a08c7664e9db92df"
+    }
+  }
+}
