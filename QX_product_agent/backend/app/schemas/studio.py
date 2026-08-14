@@ -42,6 +42,10 @@ class ProductAssetResponse(BaseModel):
     strategy: dict[str, Any] | None = None
     design: dict[str, Any] | None = None
     presentation: dict[str, Any] | None = None
+    document: dict[str, Any] | None = None
+    # ── P5: 质量层 ──
+    critic_score: int | None = None
+    gate_report: dict[str, Any] | None = None
     # ── 进度与失败记录 ──
     node_status: dict[str, str] = Field(default_factory=dict)
     errors: dict[str, str] = Field(default_factory=dict)

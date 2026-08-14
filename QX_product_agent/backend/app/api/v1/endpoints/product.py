@@ -67,9 +67,12 @@ def _to_asset_response(product: StudioProduct) -> ProductAssetResponse:
         "updated_at": product.updated_at.isoformat() if product.updated_at else None,
         "node_status": meta.get("node_status") or {},
         "errors": meta.get("errors") or {},
+        "critic_score": package.get("critic_score"),
+        "gate_report": package.get("gate_report"),
     }
     for key in _ASSET_KEYS:
         base[key] = package.get(key)
+    base["document"] = package.get("document")
     return ProductAssetResponse(**base)
 
 
@@ -142,16 +145,87 @@ async def get_product(
     return _to_asset_response(product)
 
 
+async def _export_via_node(product_id: str, fmt: str, out_path: Path) -> dict:
+    """P4: 调用 Node 导出脚本（Playwright PDF / PptxGenJS PPTX）。
+
+    与 Web 预览共用同一 React 渲染源（WYSIWYG）；
+    脚本 stdout 最后一行输出浏览器侧质量门 JSON 报告。
+
+    注意：subprocess 必须在独立线程执行（run_in_executor）——
+    Node 脚本会反向请求本后端（/export 路由 / 产品 API），
+    若阻塞事件循环会形成死锁。
+    """
+    import asyncio
+    import functools
+    import shutil
+    import subprocess
+
+    # backend/app/api/v1/endpoints/product.py → parents[5] = QX_project_root
+    frontend_dir = Path(__file__).resolve().parents[5] / "frontend"
+    script = frontend_dir / "scripts" / "export-pdf.mjs"
+    if not script.is_file():
+        raise HTTPException(status_code=500, detail="导出脚本缺失（frontend/scripts/export-pdf.mjs）")
+
+    node = shutil.which("node") or "node"
+    settings = get_settings()
+    base_url = settings.EXPORT_BASE_URL or "http://127.0.0.1:8000"
+
+    cmd = [
+        node, str(script), product_id,
+        "--base-url", base_url,
+        "--out", str(out_path),
+        "--format", fmt,
+    ]
+    runner = functools.partial(
+        subprocess.run,
+        cmd,
+        cwd=str(frontend_dir),
+        capture_output=True,
+        text=True,
+        timeout=settings.EXPORT_TIMEOUT,
+    )
+    try:
+        loop = asyncio.get_running_loop()
+        proc = await loop.run_in_executor(None, runner)
+    except subprocess.TimeoutExpired:
+        raise HTTPException(status_code=504, detail="导出超时")
+
+    if proc.returncode != 0 or not out_path.is_file():
+        logger.error("导出失败 returncode=%s stdout=%s stderr=%s",
+                     proc.returncode, proc.stdout[-400:], proc.stderr[-400:])
+        detail = proc.stderr[-300:] or proc.stdout[-300:] or "未知错误"
+        raise HTTPException(status_code=500, detail=f"导出失败: {detail}")
+
+    # stdout 最后一行非空 JSON = 质量门报告
+    gate: dict = {}
+    for line in reversed(proc.stdout.strip().splitlines()):
+        try:
+            gate = json.loads(line.strip())
+            break
+        except json.JSONDecodeError:
+            continue
+    return gate
+
+
+def _export_weasyprint_fallback(package: dict, pdf_path: Path) -> dict:
+    """旧版资产包（slides 格式）兜底：WeasyPrint 渲染（P0 已修复完整度）。"""
+    from app.services.studio_render import slides_to_pdf
+
+    slides_to_pdf(package, str(pdf_path))
+    return {}
+
+
 @router.post("/{product_id}/export-pdf", response_model=ExportPdfResponse)
 async def export_product_pdf(
     product_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
 ):
     """
-    将演示资产（Slide JSON Schema）渲染为 16:9 PPT 风格 PDF。
+    将演示资产渲染为 16:9 PDF。
 
-    渲染路径: Slide JSON → 结构化 HTML → WeasyPrint PDF
-    （AI 只生成结构，排版样式由后端模板控制）。
+    - 新版 Presentation DSL（pages）→ Playwright 打印 /export/{id}
+      （与 Web 预览同一 React 渲染源 + 浏览器侧溢出质量门）
+    - 旧版 SlideDeck（slides）→ WeasyPrint 兜底
     """
     product = await db.get(StudioProduct, product_id)
     if product is None:
@@ -160,21 +234,60 @@ async def export_product_pdf(
         raise HTTPException(status_code=409, detail="产品资产包尚未生成完成")
 
     package = json.loads(product.asset_package)
-    slides = (package.get("presentation") or {}).get("slides") or []
-    if not slides:
+    presentation = package.get("presentation") or {}
+    if not presentation.get("pages") and not presentation.get("slides"):
         raise HTTPException(status_code=422, detail="资产包中无演示内容")
 
-    from app.services.studio_render import slides_to_pdf
-
     settings = get_settings()
-    out_dir = Path(settings.OUTPUT_DIR) / "studio_assets"
+    out_dir = Path(settings.OUTPUT_DIR).resolve() / "studio_assets"
     out_dir.mkdir(parents=True, exist_ok=True)
     pdf_path = out_dir / f"{product_id}.pdf"
 
-    slides_to_pdf(package, str(pdf_path))
+    if presentation.get("pages"):
+        gate = await _export_via_node(str(product_id), "pdf", pdf_path)
+        overflow = len(gate.get("overflow_pages") or [])
+        message = f"PDF 导出成功（Playwright）| 页数 {gate.get('pages')} | 溢出页 {overflow}"
+    else:
+        gate = _export_weasyprint_fallback(package, pdf_path)
+        message = "PDF 导出成功（WeasyPrint 兜底）"
+
+    # 质量门报告落盘（供审计）
+    with (out_dir / f"{product_id}_gate.json").open("w", encoding="utf-8") as f:
+        json.dump(gate, f, ensure_ascii=False)
 
     return ExportPdfResponse(
         product_id=str(product_id),
         pdf_url=f"/api/v1/files/studio_assets/{product_id}.pdf",
-        message="PDF 导出成功",
+        message=message,
+    )
+
+
+@router.post("/{product_id}/export-pptx", response_model=ExportPdfResponse)
+async def export_product_pptx(
+    product_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+):
+    """导出 PPTX（PptxGenJS，可继续编辑的交付物；仅支持新版 DSL）。"""
+    product = await db.get(StudioProduct, product_id)
+    if product is None:
+        raise HTTPException(status_code=404, detail="产品不存在")
+    if product.status != StudioProductStatus.COMPLETED or not product.asset_package:
+        raise HTTPException(status_code=409, detail="产品资产包尚未生成完成")
+
+    package = json.loads(product.asset_package)
+    presentation = package.get("presentation") or {}
+    if not presentation.get("pages"):
+        raise HTTPException(status_code=422, detail="PPTX 导出仅支持新版 Presentation DSL")
+
+    settings = get_settings()
+    out_dir = Path(settings.OUTPUT_DIR).resolve() / "studio_assets"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    pptx_path = out_dir / f"{product_id}.pptx"
+
+    gate = await _export_via_node(str(product_id), "pptx", pptx_path)
+
+    return ExportPdfResponse(
+        product_id=str(product_id),
+        pdf_url=f"/api/v1/files/studio_assets/{product_id}.pptx",
+        message=f"PPTX 导出成功 | 页数 {gate.get('pages', len(presentation['pages']))}",
     )

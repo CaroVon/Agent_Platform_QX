@@ -48,10 +48,31 @@ def _design() -> dict:
 
 
 def _deck() -> dict:
+    """P2: Presentation DSL 格式。"""
     return {
-        "topic": IDEA,
-        "slides": [{"id": "s1", "title": "封面", "layout_type": "cover"}],
-        "sections": [{"title": "市场", "slide_ids": ["s1"]}],
+        "title": IDEA,
+        "theme": {"id": "default", "name": "默认主题"},
+        "pages": [
+            {
+                "id": "p1",
+                "type": "cover",
+                "layout": "cover",
+                "title": "封面",
+                "components": [
+                    {"id": "c1", "type": "text", "data": {"text": IDEA}},
+                ],
+            },
+            {
+                "id": "p2",
+                "type": "executive_summary",
+                "layout": "summary",
+                "title": "执行摘要",
+                "insight": "核心结论",
+                "components": [
+                    {"id": "c2", "type": "metric", "data": {"value": "100亿", "label": "市场规模"}},
+                ],
+            },
+        ],
     }
 
 
@@ -104,7 +125,11 @@ def test_happy_path_full_pipeline():
     assert package.competitor_analysis.competitors[0].name == "Keep"
     assert package.strategy.personas[0].name == "小雅"
     assert package.design.pages[0].name == "首页"
-    assert package.presentation.slides[0].layout_type == "cover"
+    assert package.presentation.pages[0].layout == "cover"
+    # P1: Canonical Document 与 presentation 分离
+    assert package.document is not None
+    assert package.document.strategy is not None
+    assert package.document.strategy.personas[0].name == "小雅"
     # 全部节点 completed，无错误
     assert all(status == "completed" for status in package.meta.node_status.values())
     assert package.meta.errors == {}

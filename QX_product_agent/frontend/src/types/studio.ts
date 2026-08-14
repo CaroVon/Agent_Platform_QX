@@ -127,17 +127,17 @@ export interface UXDesign {
   components: ComponentSpec[]
 }
 
-// ─── 演示（Presentation Agent → SlideDeck / Slide JSON） ─────
+// ─── 演示（P2/P4: Presentation DSL；旧 SlideDeck 见下方兼容类型） ──
 
+import type {
+  PresentationDSL,
+  QualityGateReport,
+} from '@/types/presentation'
+
+// @deprecated 旧版 SlideDeck（P2 前资产包，兼容展示用）
 export type SlideBlockType =
-  | 'title'
-  | 'subtitle'
-  | 'text'
-  | 'bullets'
-  | 'metric'
-  | 'quote'
-  | 'table'
-  | 'image'
+  | 'title' | 'subtitle' | 'text' | 'bullets'
+  | 'metric' | 'quote' | 'table' | 'image'
 
 export interface SlideBlock {
   id: string
@@ -181,7 +181,10 @@ export interface StudioProduct {
   competitor_analysis?: CompetitorAnalysis | null
   strategy?: ProductStrategy | null
   design?: UXDesign | null
-  presentation?: SlideDeck | null
+  document?: Record<string, unknown> | null
+  presentation?: PresentationDSL | SlideDeck | null
+  critic_score?: number | null
+  gate_report?: QualityGateReport | null
   node_status: Record<string, string>
   errors: Record<string, string>
 }

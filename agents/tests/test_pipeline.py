@@ -57,12 +57,27 @@ _DESIGN = {
     "components": [{"name": "强度滑块", "kind": "input"}],
 }
 _DECK = {
-    "topic": IDEA,
-    "slides": [
-        {"id": "s1", "title": "封面", "layout_type": "cover"},
-        {"id": "s2", "title": "市场", "layout_type": "bullets"},
+    "title": IDEA,
+    "theme": {"id": "default", "name": "默认主题"},
+    "pages": [
+        {
+            "id": "p1",
+            "type": "cover",
+            "layout": "cover",
+            "title": "封面",
+            "components": [{"id": "c1", "type": "text", "data": {"text": IDEA}}],
+        },
+        {
+            "id": "p2",
+            "type": "executive_summary",
+            "layout": "summary",
+            "title": "执行摘要",
+            "insight": "核心结论",
+            "components": [
+                {"id": "c2", "type": "metric", "data": {"value": "100亿", "label": "市场规模"}},
+            ],
+        },
     ],
-    "sections": [{"title": "市场洞察", "slide_ids": ["s1", "s2"]}],
 }
 
 
@@ -102,7 +117,11 @@ def test_full_pipeline_with_real_agents():
     assert package.strategy.positioning == "AI 私教"
     assert package.strategy.prd_sections[0].title == "产品概述"
     assert package.design.user_flow[0].is_entry is True
-    assert len(package.presentation.slides) == 2
+    assert len(package.presentation.pages) == 2
+    assert package.presentation.pages[0].layout == "cover"
+    # P1: Canonical Document
+    assert package.document is not None
+    assert package.document.strategy.positioning == "AI 私教"
     assert all(status == "completed" for status in package.meta.node_status.values())
     assert package.meta.errors == {}
 

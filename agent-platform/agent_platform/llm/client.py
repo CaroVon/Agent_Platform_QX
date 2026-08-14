@@ -156,3 +156,25 @@ def _cached_client() -> LLMClient:
 def get_llm_client() -> LLMClient:
     """惰性单例：按配置创建模型客户端。"""
     return _cached_client()
+
+
+@lru_cache()
+def _cached_presentation_client() -> LLMClient | None:
+    """Presentation Agent 专用模型（P3，如 Kimi）；未配置返回 None。"""
+    settings = get_settings()
+    if not (settings.PRESENTATION_LLM_MODEL and settings.PRESENTATION_LLM_API_KEY):
+        return None
+    base_url = settings.PRESENTATION_LLM_BASE_URL or settings.LLM_BASE_URL
+    return LLMClient(
+        api_key=settings.PRESENTATION_LLM_API_KEY,
+        base_url=base_url,
+        model=settings.PRESENTATION_LLM_MODEL,
+        timeout=settings.LLM_TIMEOUT,
+        max_tokens=settings.LLM_MAX_TOKENS,
+        temperature=settings.LLM_TEMPERATURE,
+    )
+
+
+def get_presentation_llm_client() -> LLMClient:
+    """Presentation 专用模型（Kimi 等）；未配置时回退主 LLM。"""
+    return _cached_presentation_client() or get_llm_client()

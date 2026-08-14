@@ -31,6 +31,7 @@ _FOLDERS = {
     "agents.product_agent": "product-agent",
     "agents.design_agent": "design-agent",
     "agents.presentation_agent": "presentation-agent",
+    "agents.critic_agent": "critic-agent",
 }
 
 
@@ -52,5 +53,12 @@ from agents.research_agent.agent import ResearchAgent  # noqa: E402
 from agents.product_agent.agent import ProductAgent  # noqa: E402
 from agents.design_agent.agent import DesignAgent  # noqa: E402
 from agents.presentation_agent.agent import PresentationAgent  # noqa: E402
+from agents.critic_agent.agent import CriticAgent  # noqa: E402
 
-__all__ = ["ResearchAgent", "ProductAgent", "DesignAgent", "PresentationAgent"]
+__all__ = [
+    "ResearchAgent",
+    "ProductAgent",
+    "DesignAgent",
+    "PresentationAgent",
+    "CriticAgent",
+]

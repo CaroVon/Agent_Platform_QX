@@ -27,11 +27,17 @@ from agent_platform.schemas.product import (
 )
 from agent_platform.schemas.design import ComponentSpec, PageSpec, UXDesign, UserFlowStep
 from agent_platform.schemas.presentation import (
+    Component,
     DeckSection,
+    LAYOUT_LIBRARY,
+    Page,
+    Presentation,
     Slide,
     SlideBlock,
     SlideDeck,
+    Theme,
 )
+from agent_platform.schemas.product_document import ProductDocument, ProjectInfo
 from agent_platform.schemas.package import AssetPackageMeta, ProductAssetPackage
 
 __all__ = [
@@ -59,11 +65,19 @@ __all__ = [
     "PageSpec",
     "UXDesign",
     "UserFlowStep",
-    # presentation
+    # presentation (DSL)
+    "Component",
     "DeckSection",
+    "LAYOUT_LIBRARY",
+    "Page",
+    "Presentation",
     "Slide",
     "SlideBlock",
     "SlideDeck",
+    "Theme",
+    # product document (P1)
+    "ProductDocument",
+    "ProjectInfo",
     # package
     "AssetPackageMeta",
     "ProductAssetPackage",

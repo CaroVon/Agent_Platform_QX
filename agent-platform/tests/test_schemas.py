@@ -7,7 +7,9 @@ from agent_platform.schemas import (
     CompetitorAnalysis,
     MarketResearch,
     ProductAssetPackage,
+    ProductDocument,
     ProductStrategy,
+    Presentation,
     SlideDeck,
     UXDesign,
 )
@@ -76,6 +78,114 @@ def test_slide_deck_structure():
     assert deck.slides[0].layout_type == "cover"
     assert deck.slides[0].blocks[0].emphasis == "high"
     assert deck.sections[0].slide_ids == ["s1"]
+
+
+# ─── P2: Presentation DSL 契约 ─────────────────────────────
+
+def test_presentation_dsl_roundtrip():
+    pres = Presentation.model_validate(
+        {
+            "title": "AI 健身应用",
+            "theme": {"id": "default", "name": "默认主题"},
+            "pages": [
+                {
+                    "id": "p1",
+                    "type": "cover",
+                    "layout": "cover",
+                    "title": "封面",
+                    "components": [{"id": "c1", "type": "text", "data": {"text": "AI 健身应用"}}],
+                },
+                {
+                    "id": "p2",
+                    "type": "competitor_matrix",
+                    "layout": "matrix",
+                    "title": "市场存在个性化缺口",
+                    "insight": "高价低个性化的竞品留下缺口",
+                    "components": [
+                        {
+                            "id": "c2",
+                            "type": "matrix",
+                            "data": {
+                                "chart_type": "quadrant",
+                                "x_axis": "price",
+                                "y_axis": "personalization",
+                                "points": [
+                                    {"name": "A", "x": 0.7, "y": 0.4, "kind": "competitor"},
+                                    {"name": "QX", "x": 0.4, "y": 0.9, "kind": "product"},
+                                ],
+                            },
+                        }
+                    ],
+                },
+            ],
+        }
+    )
+    assert pres.pages[0].layout == "cover"
+    assert pres.pages[1].type == "competitor_matrix"
+    assert pres.pages[1].insight
+    matrix = pres.pages[1].components[0]
+    assert matrix.data["chart_type"] == "quadrant"
+    assert matrix.data["points"][1]["name"] == "QX"
+    # 序列化往返稳定
+    assert Presentation.model_validate(pres.model_dump()) == pres
+
+
+def test_presentation_dsl_rejects_unknown_layout():
+    with pytest.raises(ValidationError):
+        Presentation.model_validate(
+            {
+                "title": "x",
+                "pages": [
+                    {"id": "p1", "type": "cover", "layout": "3d_rotate", "title": "封面"}
+                ],
+            }
+        )
+
+
+def test_presentation_dsl_rejects_unknown_component():
+    with pytest.raises(ValidationError):
+        Presentation.model_validate(
+            {
+                "title": "x",
+                "pages": [
+                    {
+                        "id": "p1",
+                        "type": "cover",
+                        "layout": "cover",
+                        "title": "封面",
+                        "components": [{"id": "c1", "type": "video", "data": {}}],
+                    }
+                ],
+            }
+        )
+
+
+def test_layout_library_covers_all_layouts():
+    """Layout Library 与 LayoutId 枚举一一对应（10 个布局）。"""
+    from agent_platform.schemas.presentation import LAYOUT_LIBRARY, LayoutId
+
+    ids = set(LAYOUT_LIBRARY.keys())
+    assert len(ids) == 10
+    for layout_id in ids:
+        assert layout_id in LayoutId.__args__
+        spec = LAYOUT_LIBRARY[layout_id]
+        assert spec["name"] and spec["grid"] and spec["components"]
+
+
+def test_product_document_excludes_visual_fields():
+    """P1: ProductDocument 是纯语义层（无排版字段）。"""
+    doc = ProductDocument.model_validate(
+        {
+            "project_info": {"idea": "AI 健身应用"},
+            "research": None,
+            "competitor_analysis": None,
+            "strategy": None,
+            "design": None,
+        }
+    )
+    # 语义层不应出现任何视觉参数字段
+    assert "font_size" not in ProductDocument.model_json_schema()["properties"]
+    assert doc.project_info.idea == "AI 健身应用"
 
 
 def test_slide_invalid_layout_rejected():

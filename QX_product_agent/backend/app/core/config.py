@@ -125,6 +125,15 @@ class Settings(BaseSettings):
     # 工作流节点重试次数
     AGENT_PLATFORM_MAX_RETRIES: int = Field(default=2)
 
+    # ─── P5: Critic 质量门 ─────────────────────────────────────
+    # 演示评分阈值（< 阈值触发修订循环）与最大修订次数
+    PRESENTATION_SCORE_THRESHOLD: int = Field(default=80)
+    PRESENTATION_MAX_REVISIONS: int = Field(default=2)
+
+    # ─── P4: Playwright/PptxGenJS 导出 ──────────────────────────
+    EXPORT_BASE_URL: str = Field(default="http://127.0.0.1:8000")
+    EXPORT_TIMEOUT: int = Field(default=300)
+
     # ─── HuggingFace / Embedding ─────────────────────────────────
     HF_ENDPOINT: str = Field(default="https://hf-mirror.com")
     EMBEDDING_MODEL_PATH: str = Field(default="BAAI/bge-small-zh-v1.5")

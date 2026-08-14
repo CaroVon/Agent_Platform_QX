@@ -38,13 +38,16 @@ from typing import Any, Callable
 from langgraph.graph import END, START, StateGraph
 
 from agent_platform.harness.agent_loop import BaseAgent
+from agent_platform.harness.quality_gate import run_quality_gate
 from agent_platform.harness.runner import StructuredRunner
 from agent_platform.llm.client import LLMClient
 from agent_platform.memory.memory_store import MemoryStore
 from agent_platform.schemas.design import UXDesign
+from agent_platform.schemas.evaluation import CritiqueResult
 from agent_platform.schemas.package import AssetPackageMeta, ProductAssetPackage
-from agent_platform.schemas.presentation import SlideDeck
+from agent_platform.schemas.presentation import Presentation
 from agent_platform.schemas.product import ProductStrategy
+from agent_platform.schemas.product_document import ProductDocument, ProjectInfo
 from agent_platform.schemas.requirement import RequirementSpec
 from agent_platform.schemas.research import CompetitorAnalysis, MarketResearch
 from agent_platform.workflows.state import ProductStudioState
@@ -125,11 +128,17 @@ class ProductResearchGraph:
         llm: LLMClient | None = None,
         memory: MemoryStore | None = None,
         max_retries: int = 2,
+        critic_agent: BaseAgent | None = None,
+        score_threshold: int = 80,
+        max_revisions: int = 2,
     ):
         self.research_agent = research_agent
         self.product_agent = product_agent
         self.design_agent = design_agent
         self.presentation_agent = presentation_agent
+        self.critic_agent = critic_agent
+        self.score_threshold = score_threshold
+        self.max_revisions = max_revisions
         self.llm = llm
         self.memory = memory
         self.max_retries = max_retries
@@ -189,23 +198,89 @@ class ProductResearchGraph:
 
     def _presentation(self, state: dict) -> dict:
         updates = self._run_agent_node(self.presentation_agent, "slide_deck", state, "presentation")
-        SlideDeck.model_validate(updates["presentation"])
+        Presentation.model_validate(updates["presentation"])
+        # 修订路径（revision_feedback 非空）→ 修订计数 +1
+        if state.get("revision_feedback"):
+            updates["revision_count"] = state.get("revision_count", 0) + 1
         return updates
 
+    def _critic(self, state: dict) -> dict:
+        """P5: Critic 评审 + 确定性质量门 → 评分与修订反馈。"""
+        presentation = Presentation.model_validate(state["presentation"])
+
+        # ── 确定性质量门（不依赖 LLM） ─────────────────────
+        gate = run_quality_gate(presentation)
+
+        # ── Critic Agent（LLM 语义评审） ────────────────────
+        if self.critic_agent is not None:
+            result = self.critic_agent.execute(
+                "critique",
+                state,
+                memory=self.memory,
+                memory_namespace=state.get("memory_namespace", "default"),
+            )
+            if result.success and result.data:
+                critique = CritiqueResult.model_validate(result.data)
+            else:
+                critique = CritiqueResult(
+                    score=100, issues=[], summary=f"Critic 不可用，降级通过: {result.error}"
+                )
+        else:
+            critique = CritiqueResult(score=100, issues=[], summary="未注入 Critic（跳过）")
+
+        # 质量门 error 级问题直接压分（每项 -20）
+        final_score = max(0, critique.score - 20 * len(gate.errors))
+
+        # 修订反馈 = Critic issues + 质量门问题
+        feedback_lines = [f"[{i.severity}] {i.type}: {i.description}" for i in critique.issues]
+        feedback_lines += [f"[error] quality_gate: {err}" for err in gate.errors]
+        feedback = "；".join(feedback_lines) if feedback_lines else ""
+
+        return {
+            "critic_score": final_score,
+            "critic_issues": [i.model_dump() for i in critique.issues],
+            "revision_feedback": feedback,
+            "gate_report": gate.model_dump(),
+        }
+
+    def _after_critic(self, state: dict) -> str:
+        """P5: 质量门决策 —— 达标/达修订上限 → 收尾；否则回到 presentation 修订。"""
+        score = state.get("critic_score", 100) or 100
+        revision = state.get("revision_count", 0)
+        if score >= self.score_threshold:
+            return "finalize"
+        if revision >= self.max_revisions:
+            return "finalize"
+        return "revise"
+
     def _assemble(self, state: dict) -> dict:
-        """Final Product Asset Package：收敛全部节点产物。"""
+        """Final Product Asset Package：收敛全部节点产物 + Canonical Document。"""
         def _get(model_cls, key):
             value = state.get(key)
             return model_cls.model_validate(value) if value is not None else None
 
-        package = ProductAssetPackage(
-            idea=state["idea"],
-            requirement=_get(RequirementSpec, "requirement"),
+        document = ProductDocument(
+            project_info=ProjectInfo(
+                idea=state["idea"],
+                created_at=datetime.now(timezone.utc).isoformat(),
+            ),
             research=_get(MarketResearch, "research"),
             competitor_analysis=_get(CompetitorAnalysis, "competitor_analysis"),
             strategy=_get(ProductStrategy, "strategy"),
             design=_get(UXDesign, "design"),
-            presentation=_get(SlideDeck, "presentation"),
+        )
+
+        package = ProductAssetPackage(
+            idea=state["idea"],
+            requirement=_get(RequirementSpec, "requirement"),
+            research=document.research,
+            competitor_analysis=document.competitor_analysis,
+            strategy=document.strategy,
+            design=document.design,
+            presentation=_get(Presentation, "presentation"),
+            document=document,
+            critic_score=state.get("critic_score"),
+            gate_report=state.get("gate_report"),
             meta=AssetPackageMeta(
                 idea=state["idea"],
                 created_at=datetime.now(timezone.utc).isoformat(),
@@ -218,7 +293,11 @@ class ProductResearchGraph:
         )
         status = dict(state.get("node_status", {}))
         status["assemble"] = "completed"
-        return {"asset_package": package.model_dump(), "node_status": status}
+        return {
+            "asset_package": package.model_dump(),
+            "document": document.model_dump(),
+            "node_status": status,
+        }
 
     # ─── 图构建 ────────────────────────────────────────────
 
@@ -227,12 +306,19 @@ class ProductResearchGraph:
 
         for name in NODE_ORDER:
             builder.add_node(name, _with_retry(self._node_fn(name), name, self.max_retries))
+        builder.add_node("critic", _with_retry(self._critic, "critic", self.max_retries))
         builder.add_node("assemble", self._assemble)
 
         builder.add_edge(START, NODE_ORDER[0])
         for prev, nxt in zip(NODE_ORDER, NODE_ORDER[1:]):
             builder.add_edge(prev, nxt)
-        builder.add_edge(NODE_ORDER[-1], "assemble")
+        # P5: presentation → critic →（修订循环 | 收尾）
+        builder.add_edge("presentation", "critic")
+        builder.add_conditional_edges(
+            "critic",
+            self._after_critic,
+            {"revise": "presentation", "finalize": "assemble"},
+        )
         builder.add_edge("assemble", END)
 
         if self._checkpointer is not None:
@@ -272,8 +358,14 @@ class ProductResearchGraph:
             "strategy": None,
             "design": None,
             "presentation": None,
+            "document": None,
             "asset_package": None,
-            "node_status": {name: "pending" for name in NODE_ORDER + ["assemble"]},
+            "critic_score": None,
+            "critic_issues": [],
+            "revision_count": 0,
+            "revision_feedback": "",
+            "gate_report": None,
+            "node_status": {name: "pending" for name in NODE_ORDER + ["critic", "assemble"]},
             "errors": {},
         }
         config = None
@@ -291,6 +383,9 @@ def build_product_research_graph(
     llm: LLMClient | None = None,
     memory: MemoryStore | None = None,
     max_retries: int = 2,
+    critic_agent: BaseAgent | None = None,
+    score_threshold: int = 80,
+    max_revisions: int = 2,
 ) -> ProductResearchGraph:
     """工厂函数：构建产品研究工作流图。"""
     return ProductResearchGraph(
@@ -301,6 +396,9 @@ def build_product_research_graph(
         llm=llm,
         memory=memory,
         max_retries=max_retries,
+        critic_agent=critic_agent,
+        score_threshold=score_threshold,
+        max_revisions=max_revisions,
     )
 
 
@@ -313,6 +411,9 @@ def run_pipeline(
     llm: LLMClient | None = None,
     memory: MemoryStore | None = None,
     max_retries: int = 2,
+    critic_agent: BaseAgent | None = None,
+    score_threshold: int = 80,
+    max_revisions: int = 2,
     memory_namespace: str = "default",
 ) -> ProductAssetPackage:
     """一步式便捷入口：构建图并执行。"""
@@ -324,5 +425,8 @@ def run_pipeline(
         llm=llm,
         memory=memory,
         max_retries=max_retries,
+        critic_agent=critic_agent,
+        score_threshold=score_threshold,
+        max_revisions=max_revisions,
     )
     return graph.invoke(idea, memory_namespace=memory_namespace)

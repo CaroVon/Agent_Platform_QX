@@ -6,6 +6,7 @@ import { EditorPage } from '@/pages/EditorPage'
 import { ProgressPage } from '@/pages/ProgressPage'
 import { ReportPage } from '@/pages/ReportPage'
 import { ProductStudioPage } from '@/pages/ProductStudioPage'
+import { ExportPage } from '@/pages/ExportPage'
 
 /**
  * 应用根路由
@@ -17,6 +18,7 @@ import { ProductStudioPage } from '@/pages/ProductStudioPage'
  * /projects/:id/progress → 生成进度页（轮询，兼容旧链接）
  * /projects/:id/report  → 报告阅读器（含溯源，兼容旧链接）
  * /studio               → 🚀 AI Product Studio（多 Agent 产品工作台）
+ * /export/:productId    → 🖨️ 导出专用路由（Playwright 打印，无 UI 外壳）
  */
 export function App() {
   return (
@@ -32,6 +34,8 @@ export function App() {
       </Route>
       {/* EditorPage 独立路由（不使用 Layout，全屏沉浸） */}
       <Route path="/projects/:projectId/editor" element={<EditorPage />} />
+      {/* ExportPage 独立路由（Playwright 打印专用） */}
+      <Route path="/export/:productId" element={<ExportPage />} />
     </Routes>
   )
 }

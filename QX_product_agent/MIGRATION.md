@@ -217,3 +217,60 @@ cd backend && ../venv/bin/python ../scripts/studio_pipeline_smoke.py "AI 健身�
 | 模型层 | 当前走 DeepSeek；Qwen/GPT 仅需改 `AGENT_PLATFORM_LLM_*` | 增加模型路由与失败切换 |
 | 多租户记忆 | FileMemoryStore 按 product_id 隔离 | 生产切换 Redis/Postgres 实现（接口已抽象） |
 | 评估深度 | 默认评估器仅检查字段非空 | 引入评分模型/规则集做质量门禁 |
+
+---
+
+## 8. P0-P5 完整改造记录（2026-08）
+
+按 `prompts/presentation_pipeline_plan.md` 实施完成：
+
+### P0 渲染完整度修复（WeasyPrint 兜底路径）
+- `studio_render.py`：grid/flex → table-cell 兼容布局（two_column 塌陷根治）、
+  移除固定高度 + overflow:hidden 截断 → 自动分页（内容永不丢失）、
+  密度分级字号（density-mid/compact 估算缩放）
+- 审计测试 `backend/tests/test_studio_render.py`：真实资产包 + 合成压力用例
+  （标题无缺、逐行可寻回、two_column 不塌陷）
+
+### P1 Canonical Product Document
+- 新增 `agent_platform/schemas/product_document.py`：`ProjectInfo` + `ProductDocument`
+  （research/competitor_analysis/strategy/design，**无排版字段**）
+- `ProductAssetPackage` 新增 `document` 字段；assemble 节点同时产出语义层与叙事层
+
+### P2 Presentation DSL
+- `schemas/presentation.py` 重写：`Presentation`(title/theme/pages) →
+  `Page`(type/layout/title/insight/components) → `Component`(type/data/emphasis)
+  - 10 语义页型、10 布局枚举、9 组件类型，全部 Literal 强约束
+  - `LAYOUT_LIBRARY`：10 布局栅格定义（模型只选不造）
+  - 旧 `SlideDeck/Slide/SlideBlock` 保留为 deprecated 兼容层
+
+### P3 视觉规范 Skill + 信息设计 Agent
+- `agent_platform/skills/presentation-design/`：SKILL.md（8 原则）+ layout_rules +
+  typography + chart_selection + information_hierarchy（SkillLoader 注入 Prompt）
+- Presentation Agent 重写：输出新 DSL、专用评估器（页数/组件密度/布局多样性）
+- Kimi 可选：`AGENT_PLATFORM_PRESENTATION_LLM_*` 配置即切换专用模型（默认 DeepSeek）
+
+### P4 单一 React 渲染源 + Playwright 导出
+- `frontend/src/components/presentation/`：`components.tsx`（9 组件，recharts 图表 +
+  quadrant 散点）、`layouts.tsx`（10 布局 PageFrame）、`PresentationViewer.tsx`
+- `/export/:productId` 导出路由（无 UI 外壳，@page 1280×720 打印分页）
+- `frontend/scripts/export-pdf.mjs`：Playwright 打印 PDF（preferCSSPageSize）+
+  PptxGenJS 导出 PPTX + **浏览器侧溢出质量门**（scrollHeight 检测 + 逐级缩字号自适配）
+- 后端 `POST /api/v1/product/{id}/export-pdf` 双路径：新 DSL → Playwright；
+  旧 slides → WeasyPrint 兜底；新增 `POST /api/v1/product/{id}/export-pptx`
+
+### P5 Critic Agent + 质量门 + 修订循环
+- `agents/critic-agent/`：六维度评审（density/hierarchy/consistency/variety/
+  overflow/duplicate）→ `CritiqueResult{score, issues}`
+- `agent_platform/harness/quality_gate.py`：确定性检查（页数 8-14、组件 2-6、
+  ID 唯一、标题/insight、文本密度、重复信息、metric/chart 数据完整性）
+- 图循环：presentation → critic →（score≥80 或修订上限 → assemble；
+  否则带 issues 反馈回到 presentation）—— 质量门 error 每项压 20 分
+- 可配置：`PRESENTATION_SCORE_THRESHOLD=80`、`PRESENTATION_MAX_REVISIONS=2`
+
+### 测试结果
+| 套件 | 数量 |
+|------|------|
+| agent-platform（含 P5 循环 6 用例 + DSL 契约 4 用例） | ✅ 39 passed |
+| agents 集成 | ✅ 2 passed |
+| backend（含 P0 渲染审计 4 用例） | ✅ 48 passed |
+| 前端 tsc + vite build | ✅ 0 错误 |

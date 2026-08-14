@@ -28,6 +28,9 @@ import { FeatureMatrix } from '@/components/FeatureMatrix'
 import { RoadmapTimeline } from '@/components/RoadmapTimeline'
 import { PRDViewer } from '@/components/PRDViewer'
 import { SlideRenderer } from '@/components/SlideRenderer'
+import { PresentationViewer } from '@/components/presentation/PresentationViewer'
+import type { PresentationDSL } from '@/types/presentation'
+import type { SlideDeck } from '@/types/studio'
 import { cn } from '@/lib/utils'
 
 const PIPELINE_STEPS = [
@@ -37,6 +40,7 @@ const PIPELINE_STEPS = [
   { key: 'strategy', label: '用户画像与产品策略' },
   { key: 'design', label: 'UX 设计' },
   { key: 'presentation', label: '演示生成' },
+  { key: 'critic', label: '质量评审（Critic）' },
   { key: 'assemble', label: '资产打包' },
 ] as const
 
@@ -270,7 +274,19 @@ export function ProductStudioPage() {
           )}
 
           {product.presentation && (
-            <SlideRenderer deck={product.presentation} productId={product.product_id} />
+            Array.isArray((product.presentation as PresentationDSL).pages) ? (
+              <PresentationViewer
+                presentation={product.presentation as PresentationDSL}
+                productId={product.product_id}
+                qualityGate={product.gate_report ?? null}
+              />
+            ) : (
+              // 旧版资产包（P2 前）兼容
+              <SlideRenderer
+                deck={product.presentation as SlideDeck}
+                productId={product.product_id}
+              />
+            )
           )}
         </div>
       )}

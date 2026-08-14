@@ -132,6 +132,7 @@ def run_product_studio_pipeline(self: ProductStudioTask, product_id: str):
     from agent_platform.memory.memory_store import FileMemoryStore
     from agent_platform.workflows.product_research_graph import ProductResearchGraph
 
+    from agents.critic_agent.agent import CriticAgent
     from agents.design_agent.agent import DesignAgent
     from agents.presentation_agent.agent import PresentationAgent
     from agents.product_agent.agent import ProductAgent
@@ -146,11 +147,20 @@ def run_product_studio_pipeline(self: ProductStudioTask, product_id: str):
         research_agent=ResearchAgent(loop=loop),
         product_agent=ProductAgent(loop=loop),
         design_agent=DesignAgent(loop=loop),
-        presentation_agent=PresentationAgent(loop=loop),
+        # P3: Presentation Agent 使用专用模型（Kimi 等，未配置回退主 LLM）
+        presentation_agent=PresentationAgent(memory=memory),
+        # P5: Critic 评审 + 修订循环
+        critic_agent=CriticAgent(),
         llm=loop.llm,          # 需求解析复用同一模型客户端
         memory=memory,
         max_retries=settings.AGENT_PLATFORM_MAX_RETRIES
         if settings.AGENT_PLATFORM_MAX_RETRIES >= 0
+        else 2,
+        score_threshold=settings.PRESENTATION_SCORE_THRESHOLD
+        if settings.PRESENTATION_SCORE_THRESHOLD > 0
+        else 80,
+        max_revisions=settings.PRESENTATION_MAX_REVISIONS
+        if settings.PRESENTATION_MAX_REVISIONS > 0
         else 2,
     )
 

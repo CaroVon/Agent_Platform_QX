@@ -38,6 +38,15 @@ class PlatformSettings(BaseSettings):
     LLM_MAX_TOKENS: int = Field(default=8192)
     LLM_TIMEOUT: int = Field(default=180)
 
+    # ─── Presentation Agent 专用模型（P3: 可选，如 Kimi） ───────
+    # 未配置时回退主 LLM；Kimi 示例:
+    #   AGENT_PLATFORM_PRESENTATION_LLM_BASE_URL=https://api.moonshot.cn/v1
+    #   AGENT_PLATFORM_PRESENTATION_LLM_MODEL=kimi-k2-turbo-preview
+    #   AGENT_PLATFORM_PRESENTATION_LLM_API_KEY=sk-xxx
+    PRESENTATION_LLM_API_KEY: str = Field(default="")
+    PRESENTATION_LLM_BASE_URL: str = Field(default="")
+    PRESENTATION_LLM_MODEL: str = Field(default="")
+
     # ─── 工具层 ────────────────────────────────────────────────
     TAVILY_API_KEY: str = Field(default="")
 

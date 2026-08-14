@@ -102,3 +102,27 @@
     background-position: -200% 0;
   }
 }
+
+/* ─── P4: 演示导出（屏幕与打印一致的 1280×720 画布） ───────── */
+.export-page {
+  position: relative;
+  width: 1280px;
+  height: 720px;
+  overflow: hidden;
+  page-break-after: always;
+  break-after: page;
+}
+.export-page:last-child {
+  page-break-after: auto;
+}
+
+@media print {
+  @page {
+    size: 1280px 720px;
+    margin: 0;
+  }
+  body {
+    margin: 0;
+    background: #fff;
+  }
+}

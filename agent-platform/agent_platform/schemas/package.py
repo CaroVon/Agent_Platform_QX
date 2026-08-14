@@ -14,7 +14,8 @@ from agent_platform.schemas.requirement import RequirementSpec
 from agent_platform.schemas.research import CompetitorAnalysis, MarketResearch
 from agent_platform.schemas.product import ProductStrategy
 from agent_platform.schemas.design import UXDesign
-from agent_platform.schemas.presentation import SlideDeck
+from agent_platform.schemas.presentation import Presentation
+from agent_platform.schemas.product_document import ProductDocument
 
 
 class AssetPackageMeta(BaseModel):
@@ -35,5 +36,17 @@ class ProductAssetPackage(BaseModel):
     competitor_analysis: CompetitorAnalysis | None = None
     strategy: ProductStrategy | None = None
     design: UXDesign | None = None
-    presentation: SlideDeck | None = None
+    presentation: Presentation | None = None
+    document: ProductDocument | None = Field(
+        default=None,
+        description="P1: Canonical Product Document（语义层，不含排版）",
+    )
+    critic_score: int | None = Field(
+        default=None,
+        description="P5: Critic Agent 最终评分（0-100）",
+    )
+    gate_report: dict | None = Field(
+        default=None,
+        description="P5: 确定性视觉质量门报告",
+    )
     meta: AssetPackageMeta
