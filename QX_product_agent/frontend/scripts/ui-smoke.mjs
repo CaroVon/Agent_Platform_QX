@@ -22,7 +22,7 @@ const baseUrl = getArg('--base-url', 'http://localhost:5173')
 const LOCAL_LIBS = `${process.env.HOME}/.local/playwright-libs/usr/lib/x86_64-linux-gnu`
 
 const ROUTES = [
-  { path: '/workspace', expect: 'Product Workspace' },
+  { path: '/workspace', expect: 'Describe the product you want' },
   { path: '/research', expect: 'Research Hub' },
   { path: '/prd', expect: 'PRD Studio' },
   { path: '/design', expect: 'Design Studio' },

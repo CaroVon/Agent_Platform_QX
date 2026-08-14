@@ -2,56 +2,67 @@
 @tailwind components;
 @tailwind utilities;
 
-/* ─── Shadcn UI 风格的 CSS 变量（Slate/Zinc 色系） ──────────── */
+/* ─── Vintage + Breathable 设计系统（frontedUI.md） ────────────
+   暖白纸感背景 · 柔和米色卡片 · 深蓝/深绿/柔和橙点缀
+   大圆角软边框 · 克制的阴影 · 编辑感字体层级 */
 @layer base {
   :root {
-    --background: 0 0% 100%;
-    --foreground: 240 10% 3.9%;
-    --card: 0 0% 100%;
-    --card-foreground: 240 10% 3.9%;
-    --popover: 0 0% 100%;
-    --popover-foreground: 240 10% 3.9%;
-    --primary: 240 5.9% 10%;
-    --primary-foreground: 0 0% 98%;
-    --secondary: 240 4.8% 95.9%;
-    --secondary-foreground: 240 5.9% 10%;
-    --muted: 240 4.8% 95.9%;
-    --muted-foreground: 240 3.8% 46.1%;
-    --accent: 240 4.8% 95.9%;
-    --accent-foreground: 240 5.9% 10%;
-    --destructive: 0 84.2% 60.2%;
-    --destructive-foreground: 0 0% 98%;
-    --border: 240 5.9% 90%;
-    --input: 240 5.9% 90%;
-    --ring: 240 5.9% 10%;
-    --radius: 0.5rem;
-    --sidebar: 240 10% 3.9%;
-    --sidebar-foreground: 0 0% 98%;
+    /* 纸感背景与暖黑前景 */
+    --background: 42 30% 97%;
+    --foreground: 220 22% 13%;
+    /* 米白卡片（软边框 + 微妙背景差，非重阴影） */
+    --card: 40 26% 95.5%;
+    --card-foreground: 220 22% 13%;
+    --popover: 42 30% 97%;
+    --popover-foreground: 220 22% 13%;
+    /* 深蓝主色（编辑部感） */
+    --primary: 212 46% 26%;
+    --primary-foreground: 42 30% 97%;
+    /* 米灰次级 */
+    --secondary: 40 18% 90%;
+    --secondary-foreground: 212 36% 21%;
+    --muted: 38 14% 91%;
+    --muted-foreground: 220 8% 41%;
+    /* 暖沙强调 */
+    --accent: 35 28% 88%;
+    --accent-foreground: 212 40% 23%;
+    /* 柔和红（破坏性） */
+    --destructive: 8 55% 46%;
+    --destructive-foreground: 42 30% 97%;
+    /* 暖边框 */
+    --border: 40 16% 85%;
+    --input: 40 16% 85%;
+    --ring: 212 46% 32%;
+    /* 大圆角（卡片 24-32px 内边距 + 大半径） */
+    --radius: 0.9rem;
+    /* 深墨蓝侧边栏（Linear 风格，暖调） */
+    --sidebar: 208 28% 16%;
+    --sidebar-foreground: 40 26% 93%;
   }
 
-  /* 深色模式（保留以备后续扩展） */
+  /* 深色模式（vintage 深色） */
   .dark {
-    --background: 240 10% 3.9%;
-    --foreground: 0 0% 98%;
-    --card: 240 10% 3.9%;
-    --card-foreground: 0 0% 98%;
-    --popover: 240 10% 3.9%;
-    --popover-foreground: 0 0% 98%;
-    --primary: 0 0% 98%;
-    --primary-foreground: 240 5.9% 10%;
-    --secondary: 240 3.7% 15.9%;
-    --secondary-foreground: 0 0% 98%;
-    --muted: 240 3.7% 15.9%;
-    --muted-foreground: 240 5% 64.9%;
-    --accent: 240 3.7% 15.9%;
-    --accent-foreground: 0 0% 98%;
-    --destructive: 0 62.8% 30.6%;
-    --destructive-foreground: 0 0% 98%;
-    --border: 240 3.7% 15.9%;
-    --input: 240 3.7% 15.9%;
-    --ring: 240 4.9% 83.9%;
-    --sidebar: 240 5.9% 10%;
-    --sidebar-foreground: 0 0% 98%;
+    --background: 220 18% 10%;
+    --foreground: 40 24% 92%;
+    --card: 220 15% 13%;
+    --card-foreground: 40 24% 92%;
+    --popover: 220 15% 12%;
+    --popover-foreground: 40 24% 92%;
+    --primary: 205 40% 60%;
+    --primary-foreground: 220 20% 10%;
+    --secondary: 220 12% 18%;
+    --secondary-foreground: 40 24% 92%;
+    --muted: 220 12% 18%;
+    --muted-foreground: 40 10% 62%;
+    --accent: 30 18% 22%;
+    --accent-foreground: 40 24% 92%;
+    --destructive: 8 45% 42%;
+    --destructive-foreground: 40 24% 92%;
+    --border: 220 12% 22%;
+    --input: 220 12% 22%;
+    --ring: 205 40% 55%;
+    --sidebar: 220 20% 9%;
+    --sidebar-foreground: 40 24% 92%;
   }
 }
 
@@ -62,6 +73,52 @@
   body {
     @apply bg-background text-foreground;
     font-feature-settings: "rlig" 1, "calt" 1;
+  }
+}
+
+/* ─── 编辑感字体层级（vintage editorial） ───────────────────── */
+@layer utilities {
+  .font-editorial {
+    font-family: "Iowan Old Style", "Palatino Linotype", Georgia,
+      "Songti SC", "SimSun", serif;
+    letter-spacing: -0.01em;
+  }
+  /* 纸感极淡纹理背景（可选点缀） */
+  .bg-paper {
+    background-image: radial-gradient(
+        circle at 20% 10%,
+        rgb(255 255 255 / 0.5),
+        transparent 40%
+      ),
+      radial-gradient(circle at 85% 90%, rgb(0 0 0 / 0.02), transparent 45%);
+  }
+  /* Magic UI 风格微动画：柔光呼吸 */
+  @keyframes breathe {
+    0%,
+    100% {
+      opacity: 0.55;
+      transform: translateY(0);
+    }
+    50% {
+      opacity: 1;
+      transform: translateY(-3px);
+    }
+  }
+  .animate-breathe {
+    animation: breathe 3.2s ease-in-out infinite;
+  }
+  /* 生成中的温和脉冲 */
+  @keyframes soft-pulse {
+    0%,
+    100% {
+      box-shadow: 0 0 0 0 rgb(33 66 110 / 0.12);
+    }
+    50% {
+      box-shadow: 0 0 0 6px rgb(33 66 110 / 0);
+    }
+  }
+  .animate-soft-pulse {
+    animation: soft-pulse 2.4s ease-in-out infinite;
   }
 }
 

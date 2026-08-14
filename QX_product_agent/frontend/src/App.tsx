@@ -1,5 +1,5 @@
 import { Routes, Route, Navigate } from 'react-router-dom'
-import { Layout } from '@/components/layout/Layout'
+import { WorkspaceLayout } from '@/components/layout/WorkspaceLayout'
 import { DashboardPage } from '@/pages/DashboardPage'
 import { ProductWorkspacePage } from '@/pages/ProductWorkspacePage'
 import { ResearchHubPage } from '@/pages/ResearchHubPage'
@@ -29,7 +29,7 @@ import { ExportPage } from '@/pages/ExportPage'
 export function App() {
   return (
     <Routes>
-      <Route element={<Layout />}>
+      <Route element={<WorkspaceLayout />}>
         <Route path="/" element={<DashboardPage />} />
         <Route path="/workspace" element={<ProductWorkspacePage />} />
         <Route path="/studio" element={<Navigate to="/workspace" replace />} />

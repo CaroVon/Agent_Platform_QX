@@ -3,7 +3,9 @@
  * Slide JSON 演示（PresentationViewer，Web 预览 = PDF 导出）+ 导出操作
  */
 
+import { useState } from 'react'
 import { PresentationViewer } from '@/components/presentation/PresentationViewer'
+import { SlidePreview } from '@/components/presentation/SlidePreview'
 import { SlideRenderer } from '@/components/SlideRenderer'
 import { WorkspaceHeader } from '@/components/WorkspaceHeader'
 import { ProductAssetBrowser } from '@/components/ProductAssetBrowser'
@@ -11,12 +13,14 @@ import type { PresentationDSL } from '@/types/presentation'
 import type { SlideDeck, StudioProduct } from '@/types/studio'
 
 export function PresentationPage() {
+  const [pageIndex, setPageIndex] = useState(0)
+
   return (
     <div>
       <WorkspaceHeader
         crumb="创作 · 演示"
         title="Presentation"
-        description="专业演示资产：Web 演示与 PDF/PPTX 导出共用同一渲染源（所见即所得）。"
+        description="专业演示资产：Web 演示与 PDF/PPTX/HTML 导出共用同一渲染源（所见即所得）。"
       />
       <ProductAssetBrowser
         emptyTitle="暂无演示资产"
@@ -26,14 +30,27 @@ export function PresentationPage() {
           if (!presentation) {
             return <p className="text-sm text-muted-foreground">该产品暂无演示资产。</p>
           }
-          return Array.isArray((presentation as PresentationDSL).pages) ? (
-            <PresentationViewer
-              presentation={presentation as PresentationDSL}
-              productId={product.product_id}
-              qualityGate={product.gate_report ?? null}
-            />
-          ) : (
-            <SlideRenderer deck={presentation as SlideDeck} productId={product.product_id} />
+          if (!Array.isArray((presentation as PresentationDSL).pages)) {
+            return (
+              <SlideRenderer deck={presentation as SlideDeck} productId={product.product_id} />
+            )
+          }
+          const dsl = presentation as PresentationDSL
+          return (
+            <div className="space-y-6">
+              <SlidePreview
+                presentation={dsl}
+                currentIndex={pageIndex}
+                onSelect={setPageIndex}
+              />
+              <PresentationViewer
+                presentation={dsl}
+                productId={product.product_id}
+                qualityGate={product.gate_report ?? null}
+                currentIndex={pageIndex}
+                onIndexChange={setPageIndex}
+              />
+            </div>
           )
         }}
       />

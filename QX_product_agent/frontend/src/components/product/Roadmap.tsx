@@ -6,7 +6,7 @@
 import { Milestone, Calendar } from 'lucide-react'
 import type { RoadmapItem } from '@/types/studio'
 
-export function RoadmapTimeline({ roadmap }: { roadmap: RoadmapItem[] }) {
+export function Roadmap({ roadmap }: { roadmap: RoadmapItem[] }) {
   if (!roadmap.length) {
     return (
       <div className="rounded-xl border bg-card p-5 shadow-sm">

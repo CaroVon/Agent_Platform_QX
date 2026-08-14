@@ -5,8 +5,9 @@
 
 import { WorkspaceHeader } from '@/components/WorkspaceHeader'
 import { ProductAssetBrowser } from '@/components/ProductAssetBrowser'
-import { MarketCard } from '@/components/MarketCard'
-import { CompetitorMatrix } from '@/components/CompetitorMatrix'
+import { ResearchCard } from '@/components/research/ResearchCard'
+import { CompetitorCard } from '@/components/research/CompetitorCard'
+import { InsightCard } from '@/components/research/InsightCard'
 import type { StudioProduct } from '@/types/studio'
 
 export function ResearchHubPage() {
@@ -20,26 +21,57 @@ export function ResearchHubPage() {
       <ProductAssetBrowser
         emptyTitle="暂无研究资产"
         emptyDescription="在 Product Workspace 输入产品想法并运行流水线后，市场研究与竞品分析会自动归档到这里。"
-        renderDetail={(product: StudioProduct) => (
-          <>
-            <div className="rounded-xl bg-secondary/50 px-5 py-3 text-sm text-muted-foreground">
-              产品：<span className="font-medium text-foreground">{product.idea}</span>
-              {product.critic_score != null && (
-                <span className="ml-3 text-xs">Critic 评分 {product.critic_score}/100</span>
-              )}
-            </div>
-            {product.research ? (
-              <>
-                <MarketCard research={product.research} />
-                {product.competitor_analysis && (
-                  <CompetitorMatrix analysis={product.competitor_analysis} />
+        renderDetail={(product: StudioProduct) => {
+          const research = product.research
+          const competitors = product.competitor_analysis
+          return (
+            <>
+              <div className="rounded-xl border bg-background/60 px-6 py-3.5 text-sm text-muted-foreground">
+                产品：<span className="font-medium text-foreground">{product.idea}</span>
+                {product.critic_score != null && (
+                  <span className="ml-3 text-xs">Critic 评分 {product.critic_score}/100</span>
                 )}
-              </>
-            ) : (
-              <p className="text-sm text-muted-foreground">该产品暂无研究资产。</p>
-            )}
-          </>
-        )}
+              </div>
+
+              {research && <ResearchCard research={research} />}
+
+              {competitors && competitors.competitors.length > 0 && (
+                <div className="space-y-5">
+                  <div className="grid gap-4 lg:grid-cols-2">
+                    {competitors.competitors.map((profile) => (
+                      <CompetitorCard key={profile.name} profile={profile} />
+                    ))}
+                  </div>
+                  <div className="grid gap-4 lg:grid-cols-2">
+                    {research && (
+                      <InsightCard title="用户痛点" items={research.customer_pain_points} />
+                    )}
+                    {competitors.differentiation_opportunities.length > 0 && (
+                      <InsightCard
+                        title="差异化机会"
+                        items={competitors.differentiation_opportunities}
+                      />
+                    )}
+                  </div>
+                  {competitors.competitive_landscape && (
+                    <div className="rounded-2xl border bg-card px-7 py-5">
+                      <h4 className="font-editorial mb-2 text-sm font-semibold tracking-tight">
+                        竞争格局
+                      </h4>
+                      <p className="text-sm leading-relaxed text-muted-foreground">
+                        {competitors.competitive_landscape}
+                      </p>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {!research && !competitors && (
+                <p className="text-sm text-muted-foreground">该产品暂无研究资产。</p>
+              )}
+            </>
+          )
+        }}
       />
     </div>
   )

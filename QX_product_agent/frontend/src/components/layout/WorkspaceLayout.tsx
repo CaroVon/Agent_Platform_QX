@@ -1,17 +1,17 @@
 import { useEffect, useState } from 'react'
 import { Outlet } from 'react-router-dom'
 import { Sidebar } from './Sidebar'
+import { Header } from './Header'
 import { cn } from '@/lib/utils'
 
 const COLLAPSE_KEY = 'qx-sidebar-collapsed'
 
 /**
- * 全局布局组件（Breathing UI）
+ * WorkspaceLayout —— 全局布局（Vintage + Breathable）
  *
- * 左侧可折叠侧边栏（8 模块）+ 右侧大留白主内容区。
- * 折叠状态持久化到 localStorage。
+ * 深墨蓝可折叠侧边栏 + 纸感大留白主内容区（页面 padding 32-48px）。
  */
-export function Layout() {
+export function WorkspaceLayout() {
   const [collapsed, setCollapsed] = useState<boolean>(() => {
     try {
       return localStorage.getItem(COLLAPSE_KEY) === '1'
@@ -24,26 +24,24 @@ export function Layout() {
     try {
       localStorage.setItem(COLLAPSE_KEY, collapsed ? '1' : '0')
     } catch {
-      /* 隐私模式下忽略 */
+      /* 隐私模式忽略 */
     }
   }, [collapsed])
 
   return (
-    <div className="min-h-screen bg-background">
+    <div className="bg-paper min-h-screen bg-background">
       <Sidebar collapsed={collapsed} onToggle={() => setCollapsed((v) => !v)} />
 
-      {/* ─── 主内容区 ─────────────────────────────────────────── */}
       <main
         className={cn(
           'transition-[padding-left] duration-200 ease-in-out',
-          collapsed ? 'pl-16' : 'pl-60',
+          collapsed ? 'pl-16' : 'pl-64',
         )}
       >
-        {/* 顶栏：轻量，呼吸感 */}
-        <div className="sticky top-0 z-30 h-14 border-b bg-background/80 backdrop-blur-sm" />
+        <Header />
 
-        {/* 大留白内容区 */}
-        <div className="mx-auto max-w-6xl px-8 py-10 lg:px-12">
+        {/* 大留白内容区（32-48px 页面边距） */}
+        <div className="mx-auto max-w-6xl px-10 py-12 lg:px-12">
           <Outlet />
         </div>
       </main>

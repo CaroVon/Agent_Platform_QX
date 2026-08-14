@@ -19,25 +19,42 @@ export function PresentationViewer({
   productId,
   exportMode = false,
   qualityGate,
+  currentIndex,
+  onIndexChange,
 }: {
   presentation: PresentationDSL
   productId?: string
   exportMode?: boolean
   qualityGate?: QualityGateReport | null
+  currentIndex?: number
+  onIndexChange?: (index: number) => void
 }) {
-  const [index, setIndex] = useState(0)
+  const [internalIndex, setInternalIndex] = useState(0)
   const [exporting, setExporting] = useState(false)
   const [htmlExporting, setHtmlExporting] = useState(false)
   const pages = presentation.pages ?? []
+  const index = currentIndex ?? internalIndex
   const page = pages[index]
+
+  const setIndex = useCallback(
+    (next: number) => {
+      const clamped = pages.length ? ((next % pages.length) + pages.length) % pages.length : 0
+      if (currentIndex !== undefined && onIndexChange) {
+        onIndexChange(clamped)
+      } else {
+        setInternalIndex(clamped)
+      }
+    },
+    [pages.length, currentIndex, onIndexChange],
+  )
   const fontScale = presentation.theme?.font_scale ?? 1
 
   const go = useCallback(
     (next: number) => {
       if (!pages.length) return
-      setIndex((next + pages.length) % pages.length)
+      setIndex(next)
     },
-    [pages.length],
+    [pages.length, setIndex],
   )
 
   useEffect(() => {

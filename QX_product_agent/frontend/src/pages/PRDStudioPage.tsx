@@ -5,10 +5,10 @@
 
 import { WorkspaceHeader } from '@/components/WorkspaceHeader'
 import { ProductAssetBrowser } from '@/components/ProductAssetBrowser'
-import { PRDViewer } from '@/components/PRDViewer'
+import { PRDViewer } from '@/components/product/PRDViewer'
 import { PersonaCard } from '@/components/PersonaCard'
-import { FeatureMatrix } from '@/components/FeatureMatrix'
-import { RoadmapTimeline } from '@/components/RoadmapTimeline'
+import { FeatureMatrix } from '@/components/product/FeatureMatrix'
+import { Roadmap } from '@/components/product/Roadmap'
 import type { StudioProduct } from '@/types/studio'
 
 export function PRDStudioPage() {
@@ -43,7 +43,7 @@ export function PRDStudioPage() {
                 </div>
               )}
               {strategy.features.length > 0 && <FeatureMatrix features={strategy.features} />}
-              {strategy.roadmap.length > 0 && <RoadmapTimeline roadmap={strategy.roadmap} />}
+              {strategy.roadmap.length > 0 && <Roadmap roadmap={strategy.roadmap} />}
               {strategy.prd_sections.length > 0 && <PRDViewer sections={strategy.prd_sections} />}
             </>
           )

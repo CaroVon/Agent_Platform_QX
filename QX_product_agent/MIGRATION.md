@@ -394,3 +394,36 @@ v3/v4 实证：Agent 结构达标但专有名词改写 + 长文本痛点难覆�
   与网页预览 100% 一致，双击即可独立打开，10 页渲染验证通过）
 - PresentationViewer 增加「导出 HTML」按钮；api.ts 增加 exportHtml/exportPptx
 - 三种交付格式：PDF（最终视觉）/ PPTX（可编辑）/ HTML（独立展示快照）
+
+---
+
+## 11. 前端视觉重构记录（frontedUI.md，2026-08）
+
+### 设计方向：Vintage + Breathable + Modern AI Workspace
+- 色板重定义：暖白纸感背景（42 30% 97%）/ 米白卡片（40 26% 95.5%）/
+  深蓝主色（212 46% 26%）/ 深绿 #3F6B4F / 柔和橙 #C87E4F 点缀；
+  大圆角 0.9rem；软边框（无重阴影）；深墨蓝侧边栏（Linear 风格）
+- 间距体系：页面 40-48px、区块 48px（space-y-12）、卡片 24-32px
+- 编辑感字体层级：font-editorial（Iowan/Georgia/宋体 serif）用于标题与 Hero
+- 微动画（CSS 实现，克制）：breathe（空态柔光）、soft-pulse（运行态）、
+  StreamingMessage 打字轮换 —— 传达 AI 思考与进度，非装饰
+
+### 组件架构（按规范目录落地）
+- layout/：Sidebar（工作区选择器 + 当前项目指示 + 用户资料区）、
+  WorkspaceLayout（bg-paper + 大留白）、Header（面包屑 + 状态徽标）
+- ai/：AgentTimeline（八节点 → 四团队角色）、AgentStatus、ToolExecution
+  （按活跃节点显示真实工具）、StreamingMessage
+- workspace/：ProjectHeader、IdeaInput（Hero 大居中）、AssetPanel、KnowledgePanel
+- research/：ResearchCard、CompetitorCard、InsightCard（研究页全部改用）
+- product/：PRDViewer、FeatureMatrix、Roadmap（从根目录迁移）
+- presentation/：新增 SlidePreview 缩略导航（与 PresentationViewer 联动翻页）
+
+### Product Workspace 重构为 AI 创作画布
+Hero 想法输入 → ProjectHeader（项目/行业/状态/Critic 分）→ AI 团队进度
+（时间线+工具双栏 + 流式状态）→ 生成资产面板 → 新想法输入 → 知识上下文
+
+### 测试
+- tsc + vite build ✅；Playwright UI 冒烟 8 路由 + 折叠 + 0 console 错误 ✅
+- 深度验证：色板 tokens 生效、画布 7 区块全渲染、演示缩略图 10 张、
+  加载历史产品 → 团队画布完整 ✅
+- 后端/API/LangGraph 零改动（仅前端）
