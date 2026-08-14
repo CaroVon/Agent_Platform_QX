@@ -13,10 +13,10 @@ import { ComponentRenderer } from '@/components/presentation/components'
 function FrameHeader({ page }: { page: PresentationPage }) {
   return (
     <div>
-      <h2 className="text-2xl font-bold tracking-tight text-slate-900">{page.title}</h2>
-      {page.subtitle && <p className="mt-1 text-sm text-slate-500">{page.subtitle}</p>}
+      <h2 className="text-2xl font-bold leading-snug tracking-tight text-slate-900">{page.title}</h2>
+      {page.subtitle && <p className="mt-1.5 text-sm text-slate-500">{page.subtitle}</p>}
       {page.insight && (
-        <p className="mt-2 inline-block rounded-lg bg-[var(--p-primary)]/10 px-3 py-1 text-sm font-medium text-[var(--p-primary)]">
+        <p className="mt-3 inline-block rounded-lg bg-[var(--p-primary)]/10 px-3.5 py-1.5 text-sm font-medium leading-relaxed text-[var(--p-primary)]">
           {page.insight}
         </p>
       )}
@@ -57,9 +57,9 @@ export function PageFrame({
   const isCover = page.layout === 'cover'
   const isClosing = page.layout === 'closing'
 
-  const shellClass = exportMode
-    ? 'absolute inset-0 flex flex-col'
-    : 'flex h-full w-full flex-col'
+  // B1 修复：不再使用 absolute inset-0（会无视父级 padding 导致标题贴边），
+  // 屏幕与导出模式统一为流式布局（WYSIWYG）。
+  const shellClass = 'flex h-full w-full flex-col'
 
   // ── 布局分发 ──────────────────────────────────────────────
   let body: React.ReactNode = null
@@ -173,21 +173,23 @@ export function PageFrame({
       )
   }
 
+  // B2: 导出模式也显示页码（放在安全区内）
   const pageNumber = (
-    <div className="absolute bottom-3 right-4 text-[10px] text-slate-400">
+    <div className="pointer-events-none absolute bottom-5 right-7 text-[10px] font-medium text-slate-400">
       {index + 1} / {total}
     </div>
   )
 
   return (
-    <div className="relative h-full w-full rounded-xl bg-gradient-to-br from-slate-50 to-indigo-50/60 px-8 py-6 shadow-inner">
+    // B2: 统一安全边距（56px 侧边 / 48px 上下），屏幕与导出一致
+    <div className="relative h-full w-full rounded-xl bg-gradient-to-br from-slate-50 to-indigo-50/60 px-14 py-12 shadow-inner">
       <div className={shellClass}>
         {!isCover && !isClosing && page.components.length === 0 && (
           <p className="text-xs text-slate-400">（空页）</p>
         )}
         {body}
       </div>
-      {!exportMode && pageNumber}
+      {pageNumber}
     </div>
   )
 }

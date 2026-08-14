@@ -26,6 +26,7 @@ from agent_platform.schemas import (
     LAYOUT_LIBRARY,
     Presentation,
     ProductDocument,
+    ProjectInfo,
 )
 from agent_platform.skills.loader import SkillLoader
 
@@ -103,10 +104,25 @@ class PresentationAgent(BaseAgent):
         objective = (
             f"为产品「{idea}」构建 8-14 页演示（Presentation DSL）。"
             "严格按视觉规范 skill：one slide = one message；"
-            "每页选择布局枚举 + 2-6 个组件；数据必须来自上游产品文档，禁止编造。"
+            "每页选择布局枚举 + 2-8 个组件；数据必须来自上游产品文档，禁止编造；"
+            "专有名词（功能/竞品/画像/阶段名）必须原文引用，禁止改写。"
         )
         if revise_feedback:
             objective += f"\n\n【上一版评审意见（必须逐条修正）】\n{revise_feedback}"
+
+        # ── A3 强化：AgentLoop 内覆盖度评估器（每轮自检，反馈带缺失清单） ──
+        def coverage_evaluator(model: Presentation) -> tuple[bool, str]:
+            if document is None:
+                return _presentation_evaluator(model)
+            ok, feedback = _presentation_evaluator(model)
+            if not ok:
+                return ok, feedback
+            from agent_platform.harness.quality_gate import coverage_issues
+
+            issues = coverage_issues(model, document)
+            if issues:
+                return False, "；".join(issues[:4])
+            return True, ""
 
         result = self.loop.run(
             agent_name=self.name,
@@ -116,6 +132,7 @@ class PresentationAgent(BaseAgent):
             inputs={"idea": idea},
             artifacts={"canonical_product_document": document},
             memory_namespace=memory_namespace,
+            evaluator=coverage_evaluator,
         )
         return result
 
@@ -129,12 +146,25 @@ class PresentationAgent(BaseAgent):
         if task != "slide_deck":
             return AgentResult(success=False, error=f"未知任务: {task}")
 
+        # document 优先取 state（assemble 已产出时），否则由四类资产即时构造
         document_data = state.get("document")
-        document = (
-            ProductDocument.model_validate(document_data)
-            if document_data is not None
-            else None
-        )
+        if document_data is not None:
+            document = ProductDocument.model_validate(document_data)
+        else:
+            from agent_platform.schemas.design import UXDesign
+            from agent_platform.schemas.product import ProductStrategy
+            from agent_platform.schemas.research import CompetitorAnalysis, MarketResearch
+
+            def _v(model_cls, value):
+                return model_cls.model_validate(value) if value is not None else None
+
+            document = ProductDocument(
+                project_info=ProjectInfo(idea=state.get("idea", "")),
+                research=_v(MarketResearch, state.get("research")),
+                competitor_analysis=_v(CompetitorAnalysis, state.get("competitor_analysis")),
+                strategy=_v(ProductStrategy, state.get("strategy")),
+                design=_v(UXDesign, state.get("design")),
+            )
         return self.build_deck(
             state.get("idea", ""),
             document,

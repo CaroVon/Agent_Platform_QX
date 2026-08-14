@@ -12,11 +12,12 @@ from __future__ import annotations
 
 from agent_platform.schemas.evaluation import QualityGateReport
 from agent_platform.schemas.presentation import Component, Page, Presentation
+from agent_platform.schemas.product_document import ProductDocument
 
 # 单页文本容量估算（字符）：text/bullets 型组件 data 中的文本总量上限
-_PAGE_TEXT_BUDGET = 320
+_PAGE_TEXT_BUDGET = 600
 # 组件级文本上限
-_COMPONENT_TEXT_BUDGET = 200
+_COMPONENT_TEXT_BUDGET = 150
 
 
 def _component_text_len(component: Component) -> int:
@@ -37,13 +38,22 @@ def _component_text_len(component: Component) -> int:
     return total
 
 
-def run_quality_gate(presentation: Presentation) -> QualityGateReport:
-    """对 Presentation DSL 执行确定性质量检查。"""
+def run_quality_gate(
+    presentation: Presentation,
+    document: ProductDocument | None = None,
+) -> QualityGateReport:
+    """对 Presentation DSL 执行确定性质量检查。
+
+    document（Canonical Product Document）提供时，额外执行
+    「信息覆盖度」检查（A3）：演示必须覆盖上游关键字段，
+    覆盖率不足记为 error（在 Critic 环节压分触发修订）。
+    """
     errors: list[str] = []
     warnings: list[str] = []
     checks: dict[str, bool] = {}
 
     pages = presentation.pages
+    dsl_text = presentation.model_dump_json()
 
     # 1. 页数区间
     page_count_ok = 8 <= len(pages) <= 14
@@ -112,5 +122,150 @@ def run_quality_gate(presentation: Presentation) -> QualityGateReport:
                 errors.append(f"页 {page.id} 组件 {c.id} chart 缺少数据")
     checks["component_data"] = data_ok
 
+    # 8. 信息覆盖度（A3，需 Canonical Document）
+    if document is not None:
+        _check_coverage(presentation, document, dsl_text, errors, checks)
+
     passed = len(errors) == 0
     return QualityGateReport(passed=passed, errors=errors, warnings=warnings, checks=checks)
+
+
+def coverage_issues(
+    presentation: Presentation,
+    document: ProductDocument,
+) -> list[str]:
+    """信息覆盖度检查：返回问题清单（供质量门与 AgentLoop 评估器共用）。
+
+    匹配策略（容忍 Agent 合理重述，但要求名称原文或核心前缀出现）:
+      - 名称原文出现在 DSL 中
+      - 或名称前 6 个字符（核心词）出现在 DSL 中
+    """
+    dsl_text = presentation.model_dump_json()
+    issues: list[str] = []
+
+    def hit(text: str | None) -> bool:
+        if not text:
+            return False
+        if text in dsl_text:
+            return True
+        return text[:6] in dsl_text
+
+    def missing_names(items: list, key) -> list[str]:
+        return [key(item) for item in items if not hit(key(item))]
+
+    # ── 功能覆盖（≥70% 且至少 6 个） ────────────────────────
+    if document.strategy and document.strategy.features:
+        features = document.strategy.features
+        covered = [f for f in features if hit(f.name)]
+        min_required = min(6, len(features))
+        coverage_ok = len(covered) >= max(min_required, int(len(features) * 0.7))
+        if not coverage_ok:
+            missing = missing_names(features, lambda f: f.name)[:12]
+            issues.append(
+                f"功能覆盖率不足：{len(covered)}/{len(features)} 个功能进入演示，"
+                f"缺失（必须原文引用）：{', '.join(missing)}"
+            )
+
+    # ── 痛点覆盖（≥60%，至少 min(4, 上游条数) 条） ──────────
+    if document.research and document.research.customer_pain_points:
+        pains = document.research.customer_pain_points
+        covered = [p for p in pains if hit(p[:8])]
+        required = max(min(4, len(pains)), int(len(pains) * 0.6))
+        if len(covered) < required:
+            missing = [p for p in pains if not hit(p[:8])][:8]
+            issues.append(
+                f"痛点覆盖率不足：{len(covered)}/{len(pains)} 条（要求 ≥{required}），"
+                f"缺失原文：{'；'.join(missing)}"
+            )
+
+    # ── 竞品覆盖（≥70%，至少 min(4, 上游个数) 个） ──────────
+    if document.competitor_analysis and document.competitor_analysis.competitors:
+        comps = document.competitor_analysis.competitors
+        covered = [c for c in comps if hit(c.name)]
+        required = max(min(4, len(comps)), int(len(comps) * 0.7))
+        if len(covered) < required:
+            missing = missing_names(comps, lambda c: c.name)[:10]
+            issues.append(
+                f"竞品覆盖率不足：{len(covered)}/{len(comps)}（要求 ≥{required}），"
+                f"缺失（必须原文引用）：{', '.join(missing)}"
+            )
+
+    # ── 市场指标覆盖（上游提供的指标 ≥ min(3, 提供数) 项） ────
+    if document.research and document.research.market_size:
+        ms = document.research.market_size
+        metrics = [
+            (label, value) for label, value in
+            [("TAM", ms.tam), ("SAM", ms.sam), ("SOM", ms.som), ("CAGR", ms.cagr)]
+            if value
+        ]
+        covered = [label for label, value in metrics if hit(value)]
+        required = min(3, len(metrics)) if metrics else 0
+        if metrics and len(covered) < required:
+            missing = [label for label, value in metrics if not hit(value)]
+            issues.append(
+                f"市场指标覆盖率不足：{len(covered)}/{len(metrics)}（要求 ≥{required}），"
+                f"缺失：{', '.join(missing)}"
+            )
+
+    # ── 路线图阶段覆盖（全部阶段） ──────────────────────────
+    if document.strategy and document.strategy.roadmap:
+        phases = document.strategy.roadmap
+        covered = [p for p in phases if hit(p.phase) or hit(p.title)]
+        if len(covered) != len(phases):
+            missing = [p.phase for p in phases if not (hit(p.phase) or hit(p.title))]
+            issues.append(
+                f"路线图覆盖不足：{len(covered)}/{len(phases)} 个阶段，"
+                f"缺失（必须原文引用）：{', '.join(missing[:8])}"
+            )
+
+    # ── 趋势覆盖（≥60%，至少 min(3, 上游条数) 条） ──────────
+    if document.research and document.research.industry_trends:
+        trends = document.research.industry_trends
+        covered = [t for t in trends if hit(t[:8])]
+        required = max(min(3, len(trends)), int(len(trends) * 0.6))
+        if len(covered) < required:
+            missing = [t for t in trends if not hit(t[:8])][:8]
+            issues.append(
+                f"行业趋势覆盖率不足：{len(covered)}/{len(trends)}（要求 ≥{required}），"
+                f"缺失原文：{'；'.join(missing)}"
+            )
+
+    # ── 画像覆盖（全部） ───────────────────────────────────
+    if document.strategy and document.strategy.personas:
+        personas = document.strategy.personas
+        covered = [p for p in personas if hit(p.name)]
+        if len(covered) != len(personas):
+            missing = missing_names(personas, lambda p: p.name)[:8]
+            issues.append(
+                f"画像覆盖率不足：{len(covered)}/{len(personas)} 个，"
+                f"缺失（必须原文引用）：{', '.join(missing)}"
+            )
+
+    return issues
+
+
+def _check_coverage(
+    presentation: Presentation,
+    document: ProductDocument,
+    dsl_text: str,
+    errors: list[str],
+    checks: dict[str, bool],
+) -> None:
+    """信息覆盖度：把 coverage_issues 的结论写入质量门报告。"""
+    issues = coverage_issues(presentation, document)
+    # 检查项按 issue 主题标记
+    for key in (
+        "coverage_features", "coverage_pain_points", "coverage_competitors",
+        "coverage_market_metrics", "coverage_roadmap", "coverage_trends",
+        "coverage_personas",
+    ):
+        checks[key] = not any(issue.startswith({
+            "coverage_features": "功能覆盖",
+            "coverage_pain_points": "痛点覆盖",
+            "coverage_competitors": "竞品覆盖",
+            "coverage_market_metrics": "市场指标覆盖",
+            "coverage_roadmap": "路线图覆盖",
+            "coverage_trends": "行业趋势覆盖",
+            "coverage_personas": "画像覆盖",
+        }[key]) for issue in issues)
+    errors.extend(issues)

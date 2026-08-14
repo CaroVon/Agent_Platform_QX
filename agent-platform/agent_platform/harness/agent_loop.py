@@ -77,13 +77,20 @@ class AgentLoop:
         inputs: dict[str, Any] | None = None,
         artifacts: dict[str, Any] | None = None,
         memory_namespace: str = "default",
+        evaluator: Evaluator | None = None,
     ) -> AgentResult:
         """
         执行一轮完整 Agent 循环。
 
+        Args:
+            evaluator: 本轮专用评估器（如覆盖率评估闭包），
+                       缺省使用 AgentLoop 构造时注入的评估器。
+
         Returns:
             AgentResult —— success=False 时 data 为 None，error 记录最终失败原因
         """
+        active_evaluator = evaluator or self.evaluator
+
         # ── 1. Planning ─────────────────────────────────────
         context_text = (objective or "") + ("\n" + str(inputs)[:2000] if inputs else "")
         plan = self.planner.plan(objective, context=context_text)
@@ -117,7 +124,7 @@ class AgentLoop:
                 logger.error("[%s] 第 %d 轮执行失败: %s", agent_name, turn, exc)
                 break
 
-            ok, feedback = self.evaluator(model)
+            ok, feedback = active_evaluator(model)
             if ok:
                 self._remember(
                     memory_namespace,

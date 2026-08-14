@@ -318,3 +318,68 @@ MANAGE     Knowledge Base (/knowledge) · Templates (/templates) · Settings (/s
 | 前端 tsc + vite build | ✅ 0 错误 |
 | UI 冒烟（ui-smoke.mjs，Playwright） | ✅ 8 路由全渲染、侧边栏折叠、0 控制台错误 |
 | 深度验证 | ✅ 研究页 4 产品+MarketCard、演示翻页、知识库 108 文档、上传入库联通 |
+
+---
+
+## 10. PDF 内容完整度与美观度优化（2026-08，第二轮）
+
+### 实证驱动的根因定位
+- 渲染完整性：DSL vs PDF 文本 0 缺失（渲染层无截断）—— "内容缺失"的真相是
+  **上游资产 → Presentation DSL 压缩率 11%**（9842 字 → 1090 字）：
+  功能 12→1 组件、痛点 6→0 处、竞品 6→0 数据点、PRD 5 章→0 页
+- 标题贴边：`PageFrame` exportMode 使用 `absolute inset-0` 脱离文档流、
+  无视父级 padding → 标题从画布原点 (0,0) 开始（PDF span 坐标 x=0.0 实证）
+
+### 修复内容
+- **B1**（布局 bug）：exportMode shell 改为流式布局，屏幕/打印一致（WYSIWYG）
+- **B2**：统一安全边距 56×48px；导出页显示页码（安全区内）
+- **B3**：标题行距/insight 间距打磨
+- **A1**：presentation-design skill 重写为「完整叙事」——组件 2-8 个、
+  单组件 ≤150 字、页文本 ≤600 字、各页型必覆盖清单（market 全指标/
+  痛点/趋势、matrix 全竞品、persona 全画像、features 全功能、roadmap 全阶段）
+- **A2**：Presentation Agent Prompt 注入必覆盖字段清单（输出前逐项核对）
+- **A3**：质量门新增 6 项信息覆盖度检查（功能 ≥70%、痛点 ≥60%、竞品 ≥70%、
+  市场指标 ≥3/4、路线图/画像全覆盖、趋势 ≥60%）—— 不达标记 error 压分，
+  自动触发 Critic 修订循环
+- 新增通用审计脚本 `scripts/audit_presentation.py`（压缩率/覆盖度/渲染完整性/坐标审计）
+
+### 测试
+- 平台 41（含覆盖度 2 用例）/ agents 2 / 后端 50 / tsc+build 通过
+
+### 第二轮补丁（覆盖度接线修复，实证驱动）
+v2 真实流水线暴露三个深层问题并修复：
+1. **覆盖度检查从未启用**：`document` 在 assemble 节点才构造，critic 运行时为 None
+   → 抽取 `_build_document(state)` 供 critic/assemble 共用（critic 先行构造）
+2. **评分 0 的 falsy 陷阱**：`critic_score or 100` 把压分到 0 的分数回退成 100 → 直接放行
+   → 改为显式 None 判断；并增加 presentation 节点 failed 时强制收尾（防修订死循环）
+3. **专有名词改写导致误判**：Agent 重述功能名（"AI睡眠监测与报告"→"睡眠监测"）
+   → 匹配改为「原文 或 前 6 字核心词」双通道；skill/prompt 强制专有名词原文引用
+   → 质量门语义修正：仅要求上游**实际提供**的字段（required = max(min(N, 条数), 60~70%)）
+
+### 第三轮强化（确定性兜底，覆盖率 100%）
+v3/v4 实证：Agent 结构达标但专有名词改写 + 长文本痛点难覆盖 + 组件 ID 重复。
+「模型做叙事，代码保底线」最终方案：
+1. **enforce_coverage 兜底层**（`agent_platform/harness/enforce_coverage.py`）：
+   presentation 节点输出后确定性注入缺失信息 —— 市场指标 metric / 痛点要点 /
+   趋势 / 竞品象限点 / 画像卡 / 功能表行 / 路线图阶段（全部取自上游原文）
+   + 组件 ID 全局归一化
+2. **AgentLoop 内覆盖度评估器**：build_deck 注入 coverage 闭包（含缺失清单反馈），
+   模型每轮自检自修；质量门 coverage 反馈改为携带缺失项原文名单
+3. **评分 falsy 修复**：`critic_score or 100` → 显式 None 判断；presentation 失败强制收尾防死循环
+4. **导出终极兜底**：字号三级缩放（最低 64%）后仍溢出 → transform 视觉缩放（内容完整不截断）
+
+### 最终验证（v5 真实 LLM 流水线）
+| 指标 | 优化前 | 优化后 |
+|------|--------|--------|
+| 上游→DSL 压缩率 | 11% | **31%**（3013 字） |
+| 功能覆盖 | 12→1 组件 | **12/12** |
+| 痛点覆盖 | 0 处 | **6/6** |
+| 竞品覆盖 | 0 数据点 | **6/6** |
+| 市场指标 | 0 | **4/4** |
+| 路线图 | — | **3/3** |
+| 质量门 errors | 4 项 | **0** |
+| PDF 溢出 | — | **0 页** |
+| 标题贴边 | x=0pt | **x=42pt（安全边距内）** |
+| PDF 页数 | 9=9 | 10=10（渲染完整性 0 缺失） |
+
+测试：平台 44（含 enforce 3 用例）/ agents 2 / 后端 50 / tsc+build 通过。

@@ -74,6 +74,10 @@ async function runOverflowGate(page) {
     const overflowPages = []
     const densityWarnings = []
     for (const section of sections) {
+      // transform 兜底页（scale<1）：视觉已完整缩放，不再计溢出
+      const transform = getComputedStyle(section).transform
+      const scaleMatch = transform && transform !== 'none' ? parseFloat(transform.split('(')[1]) : 1
+      if (scaleMatch < 1) continue
       const rect = section.getBoundingClientRect()
       const scrollH = section.scrollHeight
       const height = rect.height
@@ -97,8 +101,10 @@ async function runOverflowGate(page) {
   return report
 }
 
-// ─── 溢出自适应：对溢出页逐级缩字号（每级 12%，最多两级） ──
-async function autoFitOverflow(page, maxIterations = 2) {
+// ─── 溢出自适应 ─────────────────────────────────────────────
+// 1) 逐级缩字号（每级 10%，最多三级，最低 64%）—— 流式重排
+// 2) 仍溢出 → transform 视觉缩放兜底（内容完整，绝不截断）
+async function autoFitOverflow(page, maxIterations = 3) {
   for (let iter = 0; iter < maxIterations; iter++) {
     const report = await runOverflowGate(page)
     if (!report.overflow_pages.length) return report
@@ -107,13 +113,29 @@ async function autoFitOverflow(page, maxIterations = 2) {
       for (const section of document.querySelectorAll('.export-page')) {
         if (ids.includes(section.dataset.page)) {
           const current = parseFloat(section.style.fontSize || '100')
-          section.style.fontSize = `${Math.max(current - 12, 64)}%`
+          section.style.fontSize = `${Math.max(current - 10, 64)}%`
         }
       }
     }, overflowIds)
     await page.waitForTimeout(150)
   }
-  return runOverflowGate(page)
+  // 终极兜底：transform 缩放（保留全部内容，仅视觉缩小）
+  let report = await runOverflowGate(page)
+  if (report.overflow_pages.length) {
+    await page.evaluate(() => {
+      for (const section of document.querySelectorAll('.export-page')) {
+        const rect = section.getBoundingClientRect()
+        const ratio = rect.height / (section.scrollHeight || 1)
+        if (ratio < 1) {
+          section.style.transform = `scale(${(ratio - 0.02).toFixed(3)})`
+          section.style.transformOrigin = 'top left'
+        }
+      }
+    })
+    await page.waitForTimeout(150)
+    report = await runOverflowGate(page)
+  }
+  return report
 }
 
 async function exportPdf() {

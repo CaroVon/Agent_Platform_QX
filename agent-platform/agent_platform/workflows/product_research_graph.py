@@ -196,9 +196,31 @@ class ProductResearchGraph:
         UXDesign.model_validate(updates["design"])
         return updates
 
+    def _build_document(self, state: dict) -> ProductDocument:
+        """从 state 的四个资产构造 Canonical Product Document（critic 与 assemble 共用）。"""
+        def _get(model_cls, key):
+            value = state.get(key)
+            return model_cls.model_validate(value) if value is not None else None
+
+        return ProductDocument(
+            project_info=ProjectInfo(
+                idea=state["idea"],
+                created_at=datetime.now(timezone.utc).isoformat(),
+            ),
+            research=_get(MarketResearch, "research"),
+            competitor_analysis=_get(CompetitorAnalysis, "competitor_analysis"),
+            strategy=_get(ProductStrategy, "strategy"),
+            design=_get(UXDesign, "design"),
+        )
+
     def _presentation(self, state: dict) -> dict:
         updates = self._run_agent_node(self.presentation_agent, "slide_deck", state, "presentation")
-        Presentation.model_validate(updates["presentation"])
+        presentation = Presentation.model_validate(updates["presentation"])
+        # A3 确定性兜底：注入缺失的上游关键信息 + ID 归一化（代码保底线）
+        from agent_platform.harness.enforce_coverage import enforce_coverage
+
+        presentation = enforce_coverage(presentation, self._build_document(state))
+        updates["presentation"] = presentation.model_dump()
         # 修订路径（revision_feedback 非空）→ 修订计数 +1
         if state.get("revision_feedback"):
             updates["revision_count"] = state.get("revision_count", 0) + 1
@@ -208,8 +230,9 @@ class ProductResearchGraph:
         """P5: Critic 评审 + 确定性质量门 → 评分与修订反馈。"""
         presentation = Presentation.model_validate(state["presentation"])
 
-        # ── 确定性质量门（不依赖 LLM） ─────────────────────
-        gate = run_quality_gate(presentation)
+        # ── 确定性质量门（含 A3 信息覆盖度检查） ────────────
+        document = self._build_document(state)
+        gate = run_quality_gate(presentation, document=document)
 
         # ── Critic Agent（LLM 语义评审） ────────────────────
         if self.critic_agent is not None:
@@ -244,8 +267,13 @@ class ProductResearchGraph:
         }
 
     def _after_critic(self, state: dict) -> str:
-        """P5: 质量门决策 —— 达标/达修订上限 → 收尾；否则回到 presentation 修订。"""
-        score = state.get("critic_score", 100) or 100
+        """P5: 质量门决策 —— 达标/达修订上限/节点失败 → 收尾；否则修订。"""
+        # presentation 节点失败时强制收尾，防止修订循环无法终止
+        if state.get("node_status", {}).get("presentation") == "failed":
+            return "finalize"
+        score = state.get("critic_score")
+        if score is None:
+            score = 100  # 未评审视为通过
         revision = state.get("revision_count", 0)
         if score >= self.score_threshold:
             return "finalize"
@@ -259,16 +287,7 @@ class ProductResearchGraph:
             value = state.get(key)
             return model_cls.model_validate(value) if value is not None else None
 
-        document = ProductDocument(
-            project_info=ProjectInfo(
-                idea=state["idea"],
-                created_at=datetime.now(timezone.utc).isoformat(),
-            ),
-            research=_get(MarketResearch, "research"),
-            competitor_analysis=_get(CompetitorAnalysis, "competitor_analysis"),
-            strategy=_get(ProductStrategy, "strategy"),
-            design=_get(UXDesign, "design"),
-        )
+        document = self._build_document(state)
 
         package = ProductAssetPackage(
             idea=state["idea"],

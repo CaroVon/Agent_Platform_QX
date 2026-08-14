@@ -60,23 +60,40 @@ _DECK = {
     "title": IDEA,
     "theme": {"id": "default", "name": "默认主题"},
     "pages": [
-        {
-            "id": "p1",
-            "type": "cover",
-            "layout": "cover",
-            "title": "封面",
-            "components": [{"id": "c1", "type": "text", "data": {"text": IDEA}}],
-        },
-        {
-            "id": "p2",
-            "type": "executive_summary",
-            "layout": "summary",
-            "title": "执行摘要",
-            "insight": "核心结论",
-            "components": [
-                {"id": "c2", "type": "metric", "data": {"value": "100亿", "label": "市场规模"}},
-            ],
-        },
+        {"id": "p1", "type": "cover", "layout": "cover", "title": "封面",
+         "components": [{"id": "c1", "type": "text", "data": {"text": IDEA}}]},
+        {"id": "p2", "type": "executive_summary", "layout": "summary", "title": "执行摘要",
+         "insight": "核心结论",
+         "components": [
+             {"id": "c2", "type": "metric", "data": {"value": "100亿", "label": "市场规模"}},
+             {"id": "c3", "type": "text", "data": {"text": "痛点：不会安排训练计划；趋势：AI 教练化"}},
+         ]},
+        {"id": "p3", "type": "market_overview", "layout": "market", "title": "市场概览",
+         "insight": "增长迅速",
+         "components": [{"id": "c4", "type": "metric", "data": {"value": "100亿", "label": "TAM"}},
+                        {"id": "c4b", "type": "metric", "data": {"value": "15%", "label": "CAGR"}}]},
+        {"id": "p4", "type": "competitor_matrix", "layout": "matrix", "title": "竞品矩阵",
+         "insight": "存在缺口",
+         "components": [
+             {"id": "c5", "type": "matrix", "data": {
+                 "chart_type": "quadrant", "x_axis": "价格", "y_axis": "个性化",
+                 "points": [{"name": "Keep", "x": 0.5, "y": 0.4, "kind": "competitor"},
+                            {"name": "QX", "x": 0.4, "y": 0.9, "kind": "product"}]}},
+         ]},
+        {"id": "p5", "type": "user_persona", "layout": "persona", "title": "用户画像",
+         "insight": "两类用户",
+         "components": [{"id": "c6", "type": "card", "data": {"title": "小雅", "description": "健身新手"}}]},
+        {"id": "p6", "type": "feature_priority", "layout": "features", "title": "功能优先级",
+         "insight": "P0 聚焦",
+         "components": [{"id": "c7", "type": "table", "data": {
+             "columns": ["优先级", "功能", "描述"],
+             "rows": [["P0", "智能计划", "AI 生成训练计划"]]}}]},
+        {"id": "p7", "type": "roadmap", "layout": "roadmap", "title": "路线图",
+         "insight": "三阶段",
+         "components": [{"id": "c8", "type": "timeline", "data": {
+             "phases": [{"name": "Phase 1", "period": "Q1", "milestones": ["MVP"]}]}}]},
+        {"id": "p8", "type": "conclusion", "layout": "closing", "title": "结语",
+         "components": [{"id": "c9", "type": "quote", "data": {"quote": "行动号召"}}]},
     ],
 }
 
@@ -117,7 +134,7 @@ def test_full_pipeline_with_real_agents():
     assert package.strategy.positioning == "AI 私教"
     assert package.strategy.prd_sections[0].title == "产品概述"
     assert package.design.user_flow[0].is_entry is True
-    assert len(package.presentation.pages) == 2
+    assert len(package.presentation.pages) == 8
     assert package.presentation.pages[0].layout == "cover"
     # P1: Canonical Document
     assert package.document is not None
