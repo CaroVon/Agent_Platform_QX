@@ -383,3 +383,14 @@ v3/v4 实证：Agent 结构达标但专有名词改写 + 长文本痛点难覆�
 | PDF 页数 | 9=9 | 10=10（渲染完整性 0 缺失） |
 
 测试：平台 44（含 enforce 3 用例）/ agents 2 / 后端 50 / tsc+build 通过。
+
+### 第四轮：导出排版一致性 + HTML 快照格式（2026-08）
+用户反馈「网页预览 OK，导出 PDF 排版损失」→ 实证定位：
+- transform 兜底把竞品矩阵页缩至字号 5.8-13.9pt（其余页 7.5-18pt）→ 页面缩水不一致
+- 根治：matrix 布局改双栏（左象限图 190px / 右洞察卡）→ 不再触发 transform 兜底；
+  重导出后全页字号统一 7.5-18pt、溢出 0
+- 新增 **HTML 快照导出**（采纳用户建议的补充格式）：
+  `POST /api/v1/product/{id}/export-html` → 单文件 HTML（全部样式内联，
+  与网页预览 100% 一致，双击即可独立打开，10 页渲染验证通过）
+- PresentationViewer 增加「导出 HTML」按钮；api.ts 增加 exportHtml/exportPptx
+- 三种交付格式：PDF（最终视觉）/ PPTX（可编辑）/ HTML（独立展示快照）

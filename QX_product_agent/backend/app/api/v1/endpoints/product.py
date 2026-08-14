@@ -262,6 +262,37 @@ async def export_product_pdf(
     )
 
 
+@router.post("/{product_id}/export-html", response_model=ExportPdfResponse)
+async def export_product_html(
+    product_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+):
+    """导出单文件 HTML 快照（与网页预览 100% 一致的独立展示文件）。"""
+    product = await db.get(StudioProduct, product_id)
+    if product is None:
+        raise HTTPException(status_code=404, detail="产品不存在")
+    if product.status != StudioProductStatus.COMPLETED or not product.asset_package:
+        raise HTTPException(status_code=409, detail="产品资产包尚未生成完成")
+
+    package = json.loads(product.asset_package)
+    presentation = package.get("presentation") or {}
+    if not presentation.get("pages"):
+        raise HTTPException(status_code=422, detail="HTML 导出仅支持新版 Presentation DSL")
+
+    settings = get_settings()
+    out_dir = Path(settings.OUTPUT_DIR).resolve() / "studio_assets"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    html_path = out_dir / f"{product_id}.html"
+
+    gate = await _export_via_node(str(product_id), "html", html_path)
+
+    return ExportPdfResponse(
+        product_id=str(product_id),
+        pdf_url=f"/api/v1/files/studio_assets/{product_id}.html",
+        message=f"HTML 导出成功 | 页数 {gate.get('pages', len(presentation['pages']))}",
+    )
+
+
 @router.post("/{product_id}/export-pptx", response_model=ExportPdfResponse)
 async def export_product_pptx(
     product_id: uuid.UUID,

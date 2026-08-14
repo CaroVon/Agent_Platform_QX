@@ -272,7 +272,7 @@ function MatrixBlock({ component }: { component: PresentationComponent }) {
     const isProduct = (p: QuadrantPoint) => p.kind === 'product' || p.kind === 'ours'
     return (
       <div>
-        <ResponsiveContainer width="100%" height={220}>
+        <ResponsiveContainer width="100%" height={190}>
           <ScatterChart margin={{ top: 10, right: 24, bottom: 28, left: 0 }}>
             <CartesianGrid stroke="#e2e8f0" />
             <XAxis type="number" dataKey="x" domain={[0, 1]} tick={{ fontSize: 10 }} label={{ value: xAxis, position: 'bottom', fontSize: 11, offset: 4 }} />

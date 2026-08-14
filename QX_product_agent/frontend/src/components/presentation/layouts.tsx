@@ -108,10 +108,11 @@ export function PageFrame({
       )
       break
     case 'matrix':
+      // 双栏：左侧象限图、右侧洞察卡片 —— 根治矩阵页高度溢出
       body = (
         <div className="flex flex-1 flex-col">
           <FrameHeader page={page} />
-          <div className="mt-4 flex-1">
+          <div className="mt-4 grid flex-1 grid-cols-2 gap-4">
             {page.components.map((c) => (
               <ComponentRenderer key={c.id} component={c} />
             ))}

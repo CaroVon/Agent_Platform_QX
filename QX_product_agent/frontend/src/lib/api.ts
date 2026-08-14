@@ -328,6 +328,20 @@ export const productApi = {
       method: 'POST',
     })
   },
+
+  /** 导出单文件 HTML 快照（与网页预览 100% 一致） */
+  exportHtml(productId: string): Promise<ExportPdfResponse> {
+    return request(`/product/${productId}/export-html`, {
+      method: 'POST',
+    })
+  },
+
+  /** 导出可编辑 PPTX（PptxGenJS） */
+  exportPptx(productId: string): Promise<ExportPdfResponse> {
+    return request(`/product/${productId}/export-pptx`, {
+      method: 'POST',
+    })
+  },
 }
 
 // ─── 编辑器 AI API ──────────────────────────────────────────────

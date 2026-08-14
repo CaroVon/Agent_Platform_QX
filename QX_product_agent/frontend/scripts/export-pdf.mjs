@@ -159,6 +159,40 @@ async function exportPdf() {
   console.log(JSON.stringify(gate))
 }
 
+async function exportHtml() {
+  const browser = await launchBrowser()
+  const page = await browser.newPage({ viewport: { width: 1280, height: 720 } })
+  await page.goto(`${baseUrl}/export/${productId}`, {
+    waitUntil: 'networkidle',
+    timeout: 60000,
+  })
+  await page.waitForSelector('.export-page', { timeout: 30000 })
+  await page.waitForTimeout(800)
+
+  const gate = await autoFitOverflow(page)
+
+  // 单文件 HTML 快照：内联全部样式规则（与网页预览 100% 一致）
+  const html = await page.evaluate(() => {
+    let css = ''
+    for (const sheet of document.styleSheets) {
+      try {
+        for (const rule of sheet.cssRules) css += rule.cssText + '\n'
+      } catch {
+        /* 跳过跨域样式 */
+      }
+    }
+    const body = document.body.cloneNode(true)
+    body.querySelectorAll('script').forEach((s) => s.remove())
+    const div = document.createElement('div')
+    div.id = 'root'
+    div.innerHTML = body.innerHTML
+    return `<!DOCTYPE html>\n<html lang="zh-CN">\n<head>\n<meta charset="utf-8">\n<meta name="viewport" content="width=1280">\n<title>Presentation Export</title>\n<style>\n${css}\n</style>\n</head>\n<body style="margin:0">\n${div.outerHTML}\n</body>\n</html>`
+  })
+  fs.writeFileSync(outPath, html, 'utf-8')
+  await browser.close()
+  console.log(JSON.stringify(gate))
+}
+
 async function exportPptx() {
   const resp = await fetch(`${baseUrl}/api/v1/product/${productId}`)
   if (!resp.ok) throw new Error(`API ${resp.status}`)
@@ -234,6 +268,8 @@ async function exportPptx() {
 
 if (format === 'pptx') {
   await exportPptx()
+} else if (format === 'html') {
+  await exportHtml()
 } else {
   await exportPdf()
 }
