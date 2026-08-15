@@ -122,3 +122,21 @@ npx netlify-cli dev
 | API 502 `edgefn-error` | 隧道服务未运行 / BACKEND_URL 填错；确认本机 `curl https://xxxx/api/v1/product` 可达 |
 | 刷新 404 | SPA 回退未生效：确认 `[[redirects]]` 在 netlify.toml 中且已部署 |
 | 中文乱码 | 确认 `index.html` 有 `<meta charset="utf-8">`（已有） |
+
+## 快速上手（本机后端，一次实测记录）
+
+```bash
+# 1. 启动后端（已有）并跑隧道
+bash scripts/start_tunnel.sh
+# → https://xxxx.trycloudflare.com（临时地址，重启会变）
+
+# 2. Netlify 环境变量设置
+#    BACKEND_URL = https://xxxx.trycloudflare.com
+#    （可选 AUTH_USERNAME / AUTH_PASSWORD 站点密码保护）
+
+# 3. Trigger deploy 重新部署（env 修改必须重新部署才注入 Edge Function）
+```
+
+实测（2026-08）：快速隧道建立后，浏览器 UA 访问
+`https://xxxx.trycloudflare.com/health` 与 `/api/v1/product` 均正常返回
+（curl 默认 UA 会被 Cloudflare 简单质询拦截，浏览器无影响）。

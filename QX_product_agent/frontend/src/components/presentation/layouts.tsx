@@ -13,10 +13,10 @@ import { ComponentRenderer } from '@/components/presentation/components'
 function FrameHeader({ page }: { page: PresentationPage }) {
   return (
     <div>
-      <h2 className="text-2xl font-bold leading-snug tracking-tight text-slate-900">{page.title}</h2>
-      {page.subtitle && <p className="mt-1.5 text-sm text-slate-500">{page.subtitle}</p>}
+      <h2 className="text-[26px] font-bold leading-snug tracking-tight text-slate-900">{page.title}</h2>
+      {page.subtitle && <p className="mt-2 text-sm leading-relaxed text-slate-500">{page.subtitle}</p>}
       {page.insight && (
-        <p className="mt-3 inline-block rounded-lg bg-[var(--p-primary)]/10 px-3.5 py-1.5 text-sm font-medium leading-relaxed text-[var(--p-primary)]">
+        <p className="mt-3.5 inline-block rounded-lg bg-[var(--p-primary)]/10 px-3.5 py-1.5 text-sm font-medium leading-relaxed text-[var(--p-primary)]">
           {page.insight}
         </p>
       )}
@@ -195,9 +195,41 @@ export function PageFrame({
   )
 }
 
+// ─── 预置品牌主题（免费方案：品牌主题系统） ───────────────────
+export const THEMES: Record<string, { name: string; palette: Record<string, string> }> = {
+  default: {
+    name: '咨询蓝',
+    palette: {
+      bg: '#f8fafc', surface: '#ffffff', primary: '#4f46e5',
+      accent: '#6366f1', text: '#0f172a', muted: '#64748b',
+    },
+  },
+  vintage: {
+    name: '复古编辑',
+    palette: {
+      bg: '#FAF9F5', surface: '#F4F1EA', primary: '#24415E',
+      accent: '#C87E4F', text: '#1C2430', muted: '#716E66',
+    },
+  },
+  forest: {
+    name: '森林绿',
+    palette: {
+      bg: '#F4F6F3', surface: '#FFFFFF', primary: '#2F5D43',
+      accent: '#4E8A66', text: '#16211B', muted: '#5B6B62',
+    },
+  },
+  ink: {
+    name: '墨黑金',
+    palette: {
+      bg: '#F5F4F2', surface: '#FFFFFF', primary: '#2B2A26',
+      accent: '#B08A3C', text: '#1B1A17', muted: '#6B675E',
+    },
+  },
+}
+
 // 供导出模式使用的主题变量样式辅助
 export function themeVars(palette?: Record<string, string>): CSSProperties {
-  const p = palette ?? {}
+  const p = palette ?? THEMES.default.palette
   return {
     '--p-primary': p.primary ?? '#4f46e5',
     '--p-accent': p.accent ?? '#6366f1',

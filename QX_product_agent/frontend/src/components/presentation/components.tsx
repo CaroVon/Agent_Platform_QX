@@ -8,12 +8,13 @@
 import {
   Bar, BarChart, CartesianGrid, Cell, Line, LineChart, Pie, PieChart,
   Radar, RadarChart, PolarGrid, PolarAngleAxis, ResponsiveContainer,
-  Scatter, ScatterChart, Tooltip, XAxis, YAxis, ZAxis, ReferenceLine,
+  Tooltip, XAxis, YAxis,
 } from 'recharts'
 import {
   AlertTriangle, BarChart3, Image as ImageIcon, LayoutList,
   Quote as QuoteIcon, Table2, Timer, TrendingUp,
 } from 'lucide-react'
+import { EChart } from '@/components/presentation/EChart'
 import type { PresentationComponent } from '@/types/presentation'
 
 const CHART_COLORS = ['#4f46e5', '#0ea5e9', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6']
@@ -270,34 +271,50 @@ function MatrixBlock({ component }: { component: PresentationComponent }) {
       )
     }
     const isProduct = (p: QuadrantPoint) => p.kind === 'product' || p.kind === 'ours'
-    return (
-      <div>
-        <ResponsiveContainer width="100%" height={190}>
-          <ScatterChart margin={{ top: 10, right: 24, bottom: 28, left: 0 }}>
-            <CartesianGrid stroke="#e2e8f0" />
-            <XAxis type="number" dataKey="x" domain={[0, 1]} tick={{ fontSize: 10 }} label={{ value: xAxis, position: 'bottom', fontSize: 11, offset: 4 }} />
-            <YAxis type="number" dataKey="y" domain={[0, 1]} tick={{ fontSize: 10 }} width={30} label={{ value: yAxis, angle: -90, position: 'left', fontSize: 11 }} />
-            <ZAxis range={[90, 90]} />
-            <ReferenceLine x={0.5} stroke="#cbd5e1" />
-            <ReferenceLine y={0.5} stroke="#cbd5e1" />
-            <Tooltip cursor={{ strokeDasharray: '3 3' }} />
-            <Scatter data={points} fill="#94a3b8">
-              {points.map((p, i) => (
-                <Cell key={i} fill={isProduct(p) ? '#4f46e5' : '#94a3b8'} />
-              ))}
-            </Scatter>
-          </ScatterChart>
-        </ResponsiveContainer>
-        <div className="flex flex-wrap gap-x-3 gap-y-1 text-[10px] text-slate-500">
-          {points.map((p) => (
-            <span key={p.name} className="flex items-center gap-1">
-              <span className={`h-2 w-2 rounded-full ${isProduct(p) ? 'bg-[var(--p-primary)]' : 'bg-slate-400'}`} />
-              {p.name}
-            </span>
-          ))}
-        </div>
-      </div>
-    )
+
+    // ECharts 象限图（美观度升级：双系列着色 + 中轴十字线 + 平滑散点 + 悬浮提示）
+    const competitors = points.filter((p) => !isProduct(p)).map((p) => [p.x, p.y, p.name])
+    const ours = points.filter(isProduct).map((p) => [p.x, p.y, p.name])
+    const option = {
+      grid: { top: 16, right: 20, bottom: 34, left: 36 },
+      tooltip: {
+        trigger: 'item',
+        formatter: (p: { value: number[] }) => `${p.value[2]}<br/>${xAxis}: ${p.value[0]} · ${yAxis}: ${p.value[1]}`,
+      },
+      xAxis: {
+        min: 0, max: 1, name: xAxis, nameLocation: 'middle', nameGap: 22,
+        axisLine: { lineStyle: { color: '#cbd5e1' } },
+        splitLine: { lineStyle: { color: '#e2e8f0', type: 'dashed' } },
+        axisLabel: { fontSize: 10, color: '#94a3b8' },
+      },
+      yAxis: {
+        min: 0, max: 1, name: yAxis,
+        axisLine: { lineStyle: { color: '#cbd5e1' } },
+        splitLine: { lineStyle: { color: '#e2e8f0', type: 'dashed' } },
+        axisLabel: { fontSize: 10, color: '#94a3b8' },
+      },
+      series: [
+        {
+          type: 'scatter',
+          name: '竞品',
+          data: competitors,
+          symbolSize: 12,
+          itemStyle: { color: '#94a3b8', borderColor: '#64748b', borderWidth: 1 },
+          label: { show: true, formatter: (p: { value: number[] }) => p.value[2], position: 'top', fontSize: 10, color: '#475569' },
+          markLine: { silent: true, symbol: 'none', data: [{ xAxis: 0.5 }], lineStyle: { color: '#cbd5e1' } },
+        },
+        {
+          type: 'scatter',
+          name: '本产品',
+          data: ours,
+          symbolSize: 16,
+          itemStyle: { color: '#4f46e5', borderColor: '#312e81', borderWidth: 1.5 },
+          label: { show: true, formatter: (p: { value: number[] }) => p.value[2], position: 'top', fontSize: 11, fontWeight: 'bold', color: '#312e81' },
+          markLine: { silent: true, symbol: 'none', data: [{ yAxis: 0.5 }], lineStyle: { color: '#cbd5e1' } },
+        },
+      ],
+    }
+    return <EChart option={option} height={190} />
   }
   return <TableBlock component={{ ...component, type: 'table', data: { columns: component.data.columns, rows: component.data.rows } }} />
 }

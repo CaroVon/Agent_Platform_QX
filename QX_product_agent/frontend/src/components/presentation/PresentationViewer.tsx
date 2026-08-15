@@ -7,12 +7,20 @@
  */
 
 import { useCallback, useEffect, useState } from 'react'
-import { ChevronLeft, ChevronRight, FileDown, Globe, Loader2, MonitorPlay } from 'lucide-react'
+import {
+  ChevronLeft,
+  ChevronRight,
+  FileDown,
+  Globe,
+  Loader2,
+  MonitorPlay,
+  Palette,
+} from 'lucide-react'
 import { Button } from '@/components/common/button'
 import { cn } from '@/lib/utils'
 import { productApi } from '@/lib/api'
 import type { PresentationDSL, QualityGateReport } from '@/types/presentation'
-import { PageFrame, themeVars } from '@/components/presentation/layouts'
+import { PageFrame, THEMES, themeVars } from '@/components/presentation/layouts'
 
 export function PresentationViewer({
   presentation,
@@ -32,6 +40,8 @@ export function PresentationViewer({
   const [internalIndex, setInternalIndex] = useState(0)
   const [exporting, setExporting] = useState(false)
   const [htmlExporting, setHtmlExporting] = useState(false)
+  const [themeId, setThemeId] = useState<string>('default')
+  const [themeOpen, setThemeOpen] = useState(false)
   const pages = presentation.pages ?? []
   const index = currentIndex ?? internalIndex
   const page = pages[index]
@@ -89,7 +99,9 @@ export function PresentationViewer({
     }
   }
 
-  const vars = themeVars(presentation.theme?.palette)
+  // 主题切换（仅显示层覆盖，不改数据；导出时通过 ?theme= 传参）
+  const activePalette = THEMES[themeId]?.palette ?? presentation.theme?.palette
+  const vars = themeVars(activePalette)
 
   // ─── 导出模式：全量渲染，打印分页 ─────────────────────────
   if (exportMode) {
@@ -132,6 +144,42 @@ export function PresentationViewer({
               质量门警告 ×{qualityGate.warnings.length}
             </span>
           )}
+          {/* 主题切换器（预置品牌主题） */}
+          <div className="relative">
+            <Button
+              variant="ghost"
+              size="sm"
+              title="切换主题"
+              onClick={() => setThemeOpen((v) => !v)}
+            >
+              <Palette className="mr-2 h-3.5 w-3.5" />
+              {THEMES[themeId]?.name ?? '主题'}
+            </Button>
+            {themeOpen && (
+              <div className="absolute right-0 top-full z-20 mt-1 w-36 rounded-lg border bg-popover p-1 shadow-lg">
+                {Object.entries(THEMES).map(([id, theme]) => (
+                  <button
+                    key={id}
+                    type="button"
+                    onClick={() => {
+                      setThemeId(id)
+                      setThemeOpen(false)
+                    }}
+                    className={cn(
+                      'flex w-full items-center gap-2.5 rounded-md px-2.5 py-2 text-left text-xs transition-colors hover:bg-accent',
+                      id === themeId && 'bg-accent',
+                    )}
+                  >
+                    <span
+                      className="h-3.5 w-3.5 shrink-0 rounded-full border"
+                      style={{ backgroundColor: theme.palette.primary }}
+                    />
+                    {theme.name}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
           {productId && (
             <>
               <Button variant="ghost" size="sm" onClick={exportHtml} disabled={htmlExporting}>

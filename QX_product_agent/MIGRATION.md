@@ -442,3 +442,28 @@ Hero 想法输入 → ProjectHeader（项目/行业/状态/Critic 分）→ AI �
 - 部署文档：`frontend/NETLIFY.md`（隧道暴露后端 → UI 配置 → CLI 联调 → 常见问题）
 - **实测**：netlify dev（.env 注入 BACKEND_URL=http://localhost:8000）→
   静态站点 200、SPA 回退正常、API 代理打通（产品 10 条 / 文档 108 篇）
+
+---
+
+## 13. Presentation 质量提升（免费方案组合，2026-08）
+
+### 内容完整性
+- enforce_coverage 兜底层已保证上游覆盖 100%（功能/痛点/竞品/指标/路线图/画像）
+
+### UI 与排版美观度（免费方案组合）
+- **ECharts 接入**：象限图升级为 ECharts（双系列着色、十字中轴线、悬浮提示、
+  名称标注；竞品灰点 vs 本产品主色点），PDF 导出作为位图嵌入（清晰完整）
+- **排版优化**：标题 26px 层级 + insight 条间距 + 统一组件网格间距
+- **品牌主题系统**：4 套预置主题（咨询蓝/复古编辑/森林绿/墨黑金）
+  + PresentationViewer 主题切换器（实时切换，仅显示层，不改数据）
+
+### HTML 导出升级为交互式演示快照（关键需求）
+- `export-pdf.mjs --format html` 重写：单文件内嵌**原生 JS 播放器**
+  （上一页/下一页按钮 + 键盘 ←→/PageUp/Down/Home/End + 进度点跳转 +
+  fade+slide 过渡动效 + 自适应缩放 fit）——导出后与 Web 预览保持一致的
+  翻页交互与完整呈现效果（验证：翻页/键盘/跳点/动效全部通过）
+
+### 测试与验证
+- 平台 44 / agents 2 / 后端 50 / tsc+build ✅
+- HTML 快照：初始单页、键盘/按钮/跳点翻页、过渡动效 ✅（Playwright 实测）
+- PDF：10 页=10 页、0 溢出、字号统一 7.5-19.5、ECharts 嵌入 ✅

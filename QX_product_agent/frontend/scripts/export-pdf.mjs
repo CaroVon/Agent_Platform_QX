@@ -171,7 +171,8 @@ async function exportHtml() {
 
   const gate = await autoFitOverflow(page)
 
-  // 单文件 HTML 快照：内联全部样式规则（与网页预览 100% 一致）
+  // ── 交互式演示快照（导出后与 Web 预览一致的翻页/动效） ─────
+  // 收集渲染样式 + DOM，注入原生 JS 播放器（翻页/键盘/进度点/过渡动画/自适应缩放）
   const html = await page.evaluate(() => {
     let css = ''
     for (const sheet of document.styleSheets) {
@@ -181,12 +182,67 @@ async function exportHtml() {
         /* 跳过跨域样式 */
       }
     }
-    const body = document.body.cloneNode(true)
-    body.querySelectorAll('script').forEach((s) => s.remove())
-    const div = document.createElement('div')
-    div.id = 'root'
-    div.innerHTML = body.innerHTML
-    return `<!DOCTYPE html>\n<html lang="zh-CN">\n<head>\n<meta charset="utf-8">\n<meta name="viewport" content="width=1280">\n<title>Presentation Export</title>\n<style>\n${css}\n</style>\n</head>\n<body style="margin:0">\n${div.outerHTML}\n</body>\n</html>`
+
+    const root = document.getElementById('root')
+    const clone = root.cloneNode(true)
+    clone.querySelectorAll('script').forEach((s) => s.remove())
+    const title = document.title || 'Presentation'
+
+    const playerCss = `
+      html,body{margin:0;padding:0;background:#0f1117;height:100%;font-family:"PingFang SC","Microsoft YaHei",sans-serif}
+      .player-root{display:flex;flex-direction:column;height:100%;align-items:center;justify-content:center;gap:14px;padding:18px;box-sizing:border-box}
+      .player-stage{position:relative;width:1280px;height:720px;flex-shrink:0;transform-origin:center center}
+      .player-stage .export-page{position:absolute;top:0;left:0;opacity:0;pointer-events:none;transition:opacity .45s ease,transform .45s ease;transform:translateY(10px)}
+      .player-stage .export-page.active{opacity:1;pointer-events:auto;transform:translateY(0)}
+      .player-nav{display:flex;align-items:center;gap:14px;color:#94a3b8;font-size:13px;position:relative;z-index:10}
+      .player-nav button{background:#1e2534;color:#cbd5e1;border:1px solid #2a3348;border-radius:8px;padding:7px 16px;cursor:pointer;font-size:13px;transition:background .2s}
+      .player-nav button:hover{background:#2a3348;color:#f1f5f9}
+      .player-dots{display:flex;gap:6px}
+      .player-dots .dot{width:7px;height:7px;border-radius:99px;background:#3a4560;border:none;cursor:pointer;padding:0;transition:width .2s,background .2s}
+      .player-dots .dot.active{width:20px;background:#6366f1}
+      .player-counter{font-variant-numeric:tabular-nums;min-width:56px;text-align:center}
+    `
+
+    const playerJs = `
+      (function(){
+        var stage=document.querySelector('.player-stage');
+        var sections=Array.prototype.slice.call(stage.querySelectorAll('.export-page'));
+        var dotsWrap=document.querySelector('.player-dots');
+        var counter=document.querySelector('.player-counter');
+        var idx=0,n=sections.length;
+        sections.forEach(function(s,j){var d=document.createElement('button');d.className='dot';d.setAttribute('aria-label','第'+(j+1)+'页');d.onclick=function(){show(j)};dotsWrap.appendChild(d)});
+        var dots=Array.prototype.slice.call(dotsWrap.children);
+        function show(i){idx=((i%n)+n)%n;sections.forEach(function(s,j){s.classList.toggle('active',j===idx)});dots.forEach(function(d,j){d.classList.toggle('active',j===idx)});counter.textContent=(idx+1)+' / '+n}
+        document.getElementById('prev').onclick=function(){show(idx-1)};
+        document.getElementById('next').onclick=function(){show(idx+1)};
+        document.addEventListener('keydown',function(e){if(e.key==='ArrowRight'||e.key==='PageDown')show(idx+1);if(e.key==='ArrowLeft'||e.key==='PageUp')show(idx-1);if(e.key==='Home')show(0);if(e.key==='End')show(n-1)});
+        function fit(){var sw=window.innerWidth-36,sh=window.innerHeight-110;var s=Math.min(sw/1280,sh/720,1);stage.style.transform='scale('+s+')'}
+        window.addEventListener('resize',fit);fit();show(0);
+      })();
+    `
+
+    return `<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>${title}</title>
+<style>${css}</style>
+<style>${playerCss}</style>
+</head>
+<body>
+<div class="player-root">
+  <div class="player-stage">${clone.innerHTML}</div>
+  <div class="player-nav">
+    <button id="prev" type="button">← 上一页</button>
+    <div class="player-dots"></div>
+    <span class="player-counter"></span>
+    <button id="next" type="button">下一页 →</button>
+  </div>
+</div>
+<script>${playerJs}</script>
+</body>
+</html>`
   })
   fs.writeFileSync(outPath, html, 'utf-8')
   await browser.close()
