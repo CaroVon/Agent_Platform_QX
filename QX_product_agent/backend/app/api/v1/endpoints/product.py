@@ -15,10 +15,11 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import uuid
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
 from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -31,6 +32,9 @@ from app.schemas import (
     ProductAssetResponse,
     ProductCreateRequest,
     ProductCreateResponse,
+    ProductImageSearchRequest,
+    ProductImageSearchResponse,
+    ProductImageResult,
     ProductListResponse,
 )
 from app.tasks.product_studio_tasks import run_product_studio_pipeline
@@ -312,6 +316,64 @@ async def update_presentation(
     product.asset_package = json.dumps(package, ensure_ascii=False)
     await db.commit()
     return {"detail": "演示已更新"}
+
+
+@router.post("/{product_id}/search-images", response_model=ProductImageSearchResponse)
+async def search_product_images(
+    product_id: uuid.UUID,
+    body: ProductImageSearchRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    """编辑器素材搜索（无状态）：DuckDuckGo 搜索，结果不持久化。"""
+    product = await db.get(StudioProduct, product_id)
+    if product is None:
+        raise HTTPException(status_code=404, detail="产品不存在")
+
+    try:
+        from app.search.image_search import search_images
+        results = search_images(body.query, max_results=body.max_results)
+    except Exception as e:
+        logger.error("素材搜索失败 | product=%s | query=%s | error=%s", product_id, body.query, str(e))
+        raise HTTPException(status_code=500, detail=f"图片搜索失败: {str(e)}")
+
+    images = [
+        ProductImageResult(
+            id=f"img-{idx}",
+            query=body.query,
+            title=r.get("title", ""),
+            image_url=r.get("image", ""),
+            source_url=r.get("url") or None,
+        )
+        for idx, r in enumerate(results)
+        if r.get("image")
+    ]
+    return ProductImageSearchResponse(images=images, total_count=len(images))
+
+
+@router.post("/{product_id}/assets")
+async def upload_product_asset(
+    product_id: uuid.UUID,
+    file: UploadFile = File(...),
+    db: AsyncSession = Depends(get_db),
+):
+    """编辑器本地上传：保存图片至静态目录，返回公开访问 URL。"""
+    product = await db.get(StudioProduct, product_id)
+    if product is None:
+        raise HTTPException(status_code=404, detail="产品不存在")
+
+    settings = get_settings()
+    asset_dir = Path(settings.OUTPUT_DIR) / "assets" / str(product_id)
+    asset_dir.mkdir(parents=True, exist_ok=True)
+
+    file_ext = os.path.splitext(file.filename or "image.png")[1] or ".png"
+    safe_filename = f"{uuid.uuid4()}{file_ext}"
+    file_path = asset_dir / safe_filename
+    content = await file.read()
+    file_path.write_bytes(content)
+
+    logger.info("编辑器素材已保存 | product=%s | filename=%s | size=%d",
+                product_id, safe_filename, len(content))
+    return {"url": f"/api/v1/files/assets/{product_id}/{safe_filename}"}
 
 
 @router.post("/{product_id}/export-pptx", response_model=ExportPdfResponse)

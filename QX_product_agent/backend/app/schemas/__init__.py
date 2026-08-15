@@ -517,5 +517,8 @@ from app.schemas.studio import (
     ProductAssetResponse,
     ProductCreateRequest,
     ProductCreateResponse,
+    ProductImageResult,
+    ProductImageSearchRequest,
+    ProductImageSearchResponse,
     ProductListResponse,
 )

@@ -278,7 +278,7 @@ export function PresentationEditorPage() {
             {/* 两个 Tab 的容器都常驻挂载（GrapesJS 面板在 init 时 appendTo，必须存在），用 hidden 切换 */}
             <div className={cn('space-y-4', tab !== 'assets' && 'hidden')}>
               {/* 图片搜索（点击/拖拽插入） */}
-              <ImageSearch projectId={projectId} selectable={{ onInsert: insertImage }} />
+              <ImageSearch projectId={projectId} selectable={{ onInsert: insertImage, productId }} />
             </div>
             <div className={cn('space-y-4', tab !== 'styles' && 'hidden')}>
               <div>

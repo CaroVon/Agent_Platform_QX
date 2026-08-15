@@ -360,6 +360,38 @@ export const productApi = {
       body: JSON.stringify({ presentation }),
     })
   },
+
+  /** 编辑器素材搜索（无状态 DuckDuckGo，结果不持久化） */
+  searchImages(
+    productId: string,
+    body: { query: string; max_results?: number; search_depth?: number },
+  ): Promise<{ images: Array<{ id: string; query: string; title: string; image_url: string; source_url: string | null }>; total_count: number }> {
+    return request(`/product/${productId}/search-images`, {
+      method: 'POST',
+      body: JSON.stringify(body),
+    })
+  },
+
+  /** 编辑器本地上传图片素材，返回公开访问 URL */
+  async uploadAsset(productId: string, file: File): Promise<{ url: string }> {
+    const formData = new FormData()
+    formData.append('file', file)
+    const res = await fetch(`${API_BASE}/product/${productId}/assets`, {
+      method: 'POST',
+      body: formData,
+    })
+    if (!res.ok) {
+      let detail = `HTTP ${res.status}`
+      try {
+        const body = await res.json()
+        detail = body.detail ?? detail
+      } catch {
+        /* ignore */
+      }
+      throw new ApiError(res.status, detail)
+    }
+    return res.json()
+  },
 }
 
 // ─── 编辑器 AI API ──────────────────────────────────────────────

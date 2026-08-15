@@ -226,3 +226,65 @@ async def test_update_presentation_404(client: AsyncClient):
         json={"presentation": {"title": "x", "pages": []}},
     )
     assert resp.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_search_product_images(client: AsyncClient, test_session):
+    """编辑器素材搜索：无状态 DuckDuckGo，结果不持久化。"""
+    async with test_session as session:
+        product = await _insert_completed_product(session)
+        product_id = str(product.id)
+
+    fake_results = [
+        {"title": "国潮床品图", "image": "https://img.example.com/a.jpg", "url": "https://src.example.com/a"},
+        {"title": "无效条目", "image": "", "url": "https://src.example.com/b"},
+    ]
+    with patch("app.search.image_search.search_images", return_value=fake_results):
+        resp = await client.post(
+            f"/api/v1/product/{product_id}/search-images",
+            json={"query": "国潮床品", "max_results": 8, "search_depth": 5},
+        )
+    assert resp.status_code == 200, resp.text
+    data = resp.json()
+    assert data["total_count"] == 1  # 空 image 条目被过滤
+    assert data["images"][0]["image_url"] == "https://img.example.com/a.jpg"
+    assert data["images"][0]["query"] == "国潮床品"
+
+
+@pytest.mark.asyncio
+async def test_search_product_images_404(client: AsyncClient):
+    resp = await client.post(
+        f"/api/v1/product/{uuid.uuid4()}/search-images",
+        json={"query": "测试"},
+    )
+    assert resp.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_upload_product_asset(client: AsyncClient, test_session):
+    """编辑器本地上传：文件落盘并返回公开 URL。"""
+    async with test_session as session:
+        product = await _insert_completed_product(session)
+        product_id = str(product.id)
+
+    resp = await client.post(
+        f"/api/v1/product/{product_id}/assets",
+        files={"file": ("local.png", b"\x89PNG\r\n\x1a\nfake-image-bytes", "image/png")},
+    )
+    assert resp.status_code == 200, resp.text
+    url = resp.json()["url"]
+    assert url.startswith(f"/api/v1/files/assets/{product_id}/")
+    assert url.endswith(".png")
+
+    # 静态文件可访问（conftest 挂载 output dir）
+    static = await client.get(url)
+    assert static.status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_upload_product_asset_404(client: AsyncClient):
+    resp = await client.post(
+        f"/api/v1/product/{uuid.uuid4()}/assets",
+        files={"file": ("local.png", b"data", "image/png")},
+    )
+    assert resp.status_code == 404

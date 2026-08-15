@@ -517,6 +517,12 @@ HTML/PDF/PPTX 管线，三端一致不变。
   回写 asset_package.presentation）
 - 图片插入：ImageSearch 新增 selectable 模式（点击/拖拽插入），
   画布 drop 监听轮询挂载（canvas 文档异步就绪）
+- 素材栏（产品级，无遗留 project 依赖）：新增 `POST /product/{id}/search-images`
+  （无状态 DuckDuckGo 搜索，不持久化）+ `POST /product/{id}/assets`
+  （本地上传 → 静态 URL）；ImageSearch 支持 productMode（搜索/上传/本地素材库）
+- 文本编辑：GrapesJS RTE（contenteditable 双击编辑 → 保存回写 DSL text）
+- 图片编辑：trait 替换（data-src/data-alt）+ style manager（尺寸/效果扇区：
+  宽高/圆角/透明度/滤镜）；图层面板 + 撤销重做为 GrapesJS 内置能力
 
 ### 关键坑与修复（Playwright 实测驱动）
 1. **`setAttributes` 是替换语义**（`set('attributes', {...})` 清空原有属性）
@@ -529,8 +535,13 @@ HTML/PDF/PPTX 管线，三端一致不变。
    `{...dsl, pages: pagesRef}` 为基准，仅当前页从画布重收，避免丢页
 
 ### 验证
-- backend 52（+2 编辑器保存端点）/ platform 46 / agents 2 / tsc+build ✅
+- backend 56（+2 编辑器保存端点 + 素材搜索/上传 4）/ platform 46 /
+  agents 2 / tsc+build ✅
 - Playwright 全链路：块拖入（dragstart→dragenter→dragover→drop→插入，
   类型恢复 dsl-metric + traits 出现）→ trait 输入改数值 → 画布实时更新 →
   保存 → DSL 组件全量持久化（5 组件页 → 拖入 metric + image 共 7 组件，
   值 7777 保留）→ 导出 HTML 含编辑后内容 ✅；其他页组件零丢失 ✅
+- 素材栏：本地上传 → 素材库出现 → 点击插入画布 → 保存持久化 ✅；
+  在线搜索 12 图 ✅；图片 trait 替换（model+img tag 同步）✅
+- RTE 双击编辑 → 保存回写 DSL text ✅；style manager 尺寸/效果扇区 ✅；
+  图层面板（35 项）✅；撤销/重做（undo/redo 均生效）✅

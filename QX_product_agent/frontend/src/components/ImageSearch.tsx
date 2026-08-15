@@ -7,10 +7,10 @@
  *   DELETE /projects/{id}/images/{imageId}
  */
 
-import { useCallback, useEffect, useState } from 'react'
-import { ImagePlus, Loader2, RefreshCw, Search, Trash2 } from 'lucide-react'
+import { useCallback, useEffect, useRef, useState } from 'react'
+import { ImagePlus, Loader2, RefreshCw, Search, Trash2, Upload } from 'lucide-react'
 import { Button } from '@/components/common/button'
-import { projectsApi } from '@/lib/api'
+import { productApi, projectsApi } from '@/lib/api'
 import type { ImageResult } from '@/types/api'
 
 export function ImageSearch({
@@ -18,16 +18,22 @@ export function ImageSearch({
   selectable,
 }: {
   projectId: string
-  /** 编辑器模式：提供插入按钮与拖拽到画布 */
-  selectable?: { onInsert: (url: string) => void }
+  /** 编辑器模式：提供插入按钮与拖拽到画布；productId 时走产品级无状态搜索/上传 */
+  selectable?: { onInsert: (url: string) => void; productId?: string }
 }) {
   const [query, setQuery] = useState('')
   const [searching, setSearching] = useState(false)
+  const [uploading, setUploading] = useState(false)
   const [library, setLibrary] = useState<ImageResult[]>([])
   const [loadingLib, setLoadingLib] = useState(false)
   const [error, setError] = useState('')
+  const fileInputRef = useRef<HTMLInputElement>(null)
+
+  // 产品级模式（编辑器）：无持久化，素材库为本地状态
+  const productMode = Boolean(selectable?.productId)
 
   const loadLibrary = useCallback(async () => {
+    if (productMode) return
     setLoadingLib(true)
     try {
       const data = await projectsApi.getProjectImages(projectId)
@@ -37,7 +43,7 @@ export function ImageSearch({
     } finally {
       setLoadingLib(false)
     }
-  }, [projectId])
+  }, [projectId, productMode])
 
   useEffect(() => {
     loadLibrary()
@@ -48,12 +54,32 @@ export function ImageSearch({
     setSearching(true)
     setError('')
     try {
-      await projectsApi.searchImages(projectId, {
-        query: query.trim(),
-        max_results: 12,
-        search_depth: 5,
-      })
-      await loadLibrary()
+      if (productMode && selectable?.productId) {
+        const data = await productApi.searchImages(selectable.productId, {
+          query: query.trim(),
+          max_results: 12,
+          search_depth: 5,
+        })
+        setLibrary(
+          data.images.map((img) => ({
+            id: img.id,
+            query: img.query,
+            title: img.title,
+            image_url: img.image_url,
+            source_url: img.source_url,
+            search_depth: 5,
+            page_number: null,
+            created_at: '',
+          })),
+        )
+      } else {
+        await projectsApi.searchImages(projectId, {
+          query: query.trim(),
+          max_results: 12,
+          search_depth: 5,
+        })
+        await loadLibrary()
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : '搜索失败')
     } finally {
@@ -62,11 +88,42 @@ export function ImageSearch({
   }
 
   const remove = async (imageId: string) => {
+    if (productMode) {
+      setLibrary((prev) => prev.filter((i) => i.id !== imageId))
+      return
+    }
     try {
       await projectsApi.deleteProjectImage(projectId, imageId)
       setLibrary((prev) => prev.filter((i) => i.id !== imageId))
     } catch {
       /* 删除失败静默 */
+    }
+  }
+
+  /** 本地上传（编辑器模式）：文件 → 产品级静态资源 URL → 入素材库 */
+  const upload = async (file: File) => {
+    if (!selectable?.productId || uploading) return
+    setUploading(true)
+    setError('')
+    try {
+      const { url } = await productApi.uploadAsset(selectable.productId, file)
+      setLibrary((prev) => [
+        {
+          id: `upload-${Date.now()}`,
+          query: file.name,
+          title: file.name,
+          image_url: url,
+          source_url: null,
+          search_depth: 0,
+          page_number: null,
+          created_at: '',
+        },
+        ...prev,
+      ])
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '上传失败')
+    } finally {
+      setUploading(false)
     }
   }
 
@@ -89,9 +146,34 @@ export function ImageSearch({
           {searching ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Search className="mr-2 h-4 w-4" />}
           搜索
         </Button>
-        <Button variant="outline" size="icon" title="刷新素材库" onClick={loadLibrary}>
-          <RefreshCw className={loadingLib ? 'h-4 w-4 animate-spin' : 'h-4 w-4'} />
-        </Button>
+        {productMode ? (
+          <>
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept="image/*"
+              className="hidden"
+              onChange={(e) => {
+                const file = e.target.files?.[0]
+                if (file) upload(file)
+                e.target.value = ''
+              }}
+            />
+            <Button
+              variant="outline"
+              size="icon"
+              title="本地上传图片"
+              disabled={uploading}
+              onClick={() => fileInputRef.current?.click()}
+            >
+              {uploading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />}
+            </Button>
+          </>
+        ) : (
+          <Button variant="outline" size="icon" title="刷新素材库" onClick={loadLibrary}>
+            <RefreshCw className={loadingLib ? 'h-4 w-4 animate-spin' : 'h-4 w-4'} />
+          </Button>
+        )}
       </div>
       {error && <p className="mt-2 text-xs text-destructive">{error}</p>}
 
@@ -109,7 +191,9 @@ export function ImageSearch({
           <div className="flex flex-col items-center justify-center rounded-xl border border-dashed py-10 text-center">
             <ImagePlus className="h-6 w-6 text-muted-foreground/60" />
             <p className="mt-2 text-xs text-muted-foreground">
-              暂无图片 · 输入关键词搜索，结果会自动收录到这里
+              {productMode
+                ? '暂无图片 · 输入关键词搜索，或点击上传按钮添加本地图片'
+                : '暂无图片 · 输入关键词搜索，结果会自动收录到这里'}
             </p>
           </div>
         ) : (

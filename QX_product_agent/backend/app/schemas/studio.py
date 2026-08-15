@@ -83,3 +83,28 @@ class PresentationUpdateRequest(BaseModel):
     """演示编辑器保存：回写 Presentation DSL。"""
 
     presentation: dict[str, Any] = Field(..., description="完整 Presentation DSL")
+
+
+class ProductImageSearchRequest(BaseModel):
+    """编辑器素材搜索（无状态，DuckDuckGo）。"""
+
+    query: str = Field(..., min_length=1)
+    max_results: int = Field(default=12, ge=1, le=20)
+    search_depth: int = Field(default=5, ge=5, le=20)
+
+
+class ProductImageResult(BaseModel):
+    """搜索结果条目（不持久化，临时 id）。"""
+
+    id: str
+    query: str
+    title: str
+    image_url: str
+    source_url: str | None = None
+
+
+class ProductImageSearchResponse(BaseModel):
+    """编辑器素材搜索结果。"""
+
+    images: list[ProductImageResult]
+    total_count: int
