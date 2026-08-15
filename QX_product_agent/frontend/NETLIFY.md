@@ -140,3 +140,30 @@ bash scripts/start_tunnel.sh
 实测（2026-08）：快速隧道建立后，浏览器 UA 访问
 `https://xxxx.trycloudflare.com/health` 与 `/api/v1/product` 均正常返回
 （curl 默认 UA 会被 Cloudflare 简单质询拦截，浏览器无影响）。
+
+---
+
+## 五、隧道失效后的恢复步骤（quick tunnel 重启/过期）
+
+quick tunnel 进程停止或机器重启后 URL 会变（域名解析失败 → Edge Function
+报 `502 edgefn-error ... dns error`）。恢复步骤：
+
+```bash
+# 1. 重新拉起隧道（前台或 nohup 后台），记录输出中的 trycloudflare 地址
+cloudflared tunnel --url http://localhost:8000
+#    或 bash scripts/start_tunnel.sh
+
+# 2. 更新 Netlify 环境变量（需要本机 ~/.config/netlify 已登录）
+cd QX_product_agent/frontend
+netlify env:set BACKEND_URL https://新的.trycloudflare.com \
+  --site 4d320b10-0cc2-4528-930b-c9ba73601c08   # qxagentv2
+
+# 3. 重新部署（env 变更需 redeploy 生效；--site 指定站点避免误部署到新站）
+netlify deploy --prod --build --site 4d320b10-0cc2-4528-930b-c9ba73601c08
+
+# 4. 验证线上代理
+curl https://qxagentv2.netlify.app/api/v1/product?skip=0\&limit=1
+```
+
+> 注意：`netlify deploy` 不带 `--site` 时，若当前目录未关联站点会**新建一个站点**，
+> 务必显式传 `--site <id>`。
