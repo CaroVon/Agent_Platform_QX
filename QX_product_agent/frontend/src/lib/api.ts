@@ -32,6 +32,7 @@ import type {
   StudioProduct,
   StudioProductCreateResponse,
 } from '@/types/studio'
+import type { PresentationDSL } from '@/types/presentation'
 
 /**
  * API 基础路径（Netlify 部署适配）
@@ -346,6 +347,17 @@ export const productApi = {
   exportPptx(productId: string): Promise<ExportPdfResponse> {
     return request(`/product/${productId}/export-pptx`, {
       method: 'POST',
+    })
+  },
+
+  /** 更新演示 DSL（编辑器保存） */
+  updatePresentation(
+    productId: string,
+    presentation: PresentationDSL,
+  ): Promise<{ detail: string }> {
+    return request(`/product/${productId}/presentation`, {
+      method: 'PATCH',
+      body: JSON.stringify({ presentation }),
     })
   },
 }

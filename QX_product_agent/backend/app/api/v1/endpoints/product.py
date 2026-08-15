@@ -27,6 +27,7 @@ from app.core.database import get_db
 from app.models.studio_product import StudioProduct, StudioProductStatus
 from app.schemas import (
     ExportPdfResponse,
+    PresentationUpdateRequest,
     ProductAssetResponse,
     ProductCreateRequest,
     ProductCreateResponse,
@@ -291,6 +292,26 @@ async def export_product_html(
         pdf_url=f"/api/v1/files/studio_assets/{product_id}.html",
         message=f"HTML 导出成功 | 页数 {gate.get('pages', len(presentation['pages']))}",
     )
+
+
+@router.patch("/{product_id}/presentation")
+async def update_presentation(
+    product_id: uuid.UUID,
+    body: PresentationUpdateRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    """演示编辑器保存：回写 Presentation DSL 到资产包。"""
+    product = await db.get(StudioProduct, product_id)
+    if product is None:
+        raise HTTPException(status_code=404, detail="产品不存在")
+    if not product.asset_package:
+        raise HTTPException(status_code=409, detail="产品资产包尚未生成")
+
+    package = json.loads(product.asset_package)
+    package["presentation"] = body.presentation
+    product.asset_package = json.dumps(package, ensure_ascii=False)
+    await db.commit()
+    return {"detail": "演示已更新"}
 
 
 @router.post("/{product_id}/export-pptx", response_model=ExportPdfResponse)

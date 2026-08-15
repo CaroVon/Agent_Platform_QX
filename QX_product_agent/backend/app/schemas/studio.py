@@ -77,3 +77,9 @@ class KnowledgeDocumentResponse(BaseModel):
     section_title: str
     section_order: int = 0
     updated_at: str | None = None
+
+
+class PresentationUpdateRequest(BaseModel):
+    """演示编辑器保存：回写 Presentation DSL。"""
+
+    presentation: dict[str, Any] = Field(..., description="完整 Presentation DSL")

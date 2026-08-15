@@ -189,3 +189,40 @@ async def test_export_pdf_rejects_queued(client: AsyncClient):
 
     resp = await client.post(f"/api/v1/product/{product_id}/export-pdf")
     assert resp.status_code == 409
+
+
+@pytest.mark.asyncio
+async def test_update_presentation(client: AsyncClient, test_session):
+    """编辑器保存：PATCH 回写 Presentation DSL。"""
+    async with test_session as session:
+        product = await _insert_completed_product(session)
+        product_id = str(product.id)
+
+    updated = {
+        "title": "更新后的演示",
+        "theme": {"id": "default"},
+        "pages": [
+            {"id": "p1", "type": "cover", "layout": "cover", "title": "新封面",
+             "components": [{"id": "c1", "type": "text", "data": {"text": "编辑后的内容"}}]},
+        ],
+    }
+    resp = await client.patch(
+        f"/api/v1/product/{product_id}/presentation",
+        json={"presentation": updated},
+    )
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["detail"] == "演示已更新"
+
+    get_resp = await client.get(f"/api/v1/product/{product_id}")
+    data = get_resp.json()
+    assert data["presentation"]["title"] == "更新后的演示"
+    assert data["presentation"]["pages"][0]["title"] == "新封面"
+
+
+@pytest.mark.asyncio
+async def test_update_presentation_404(client: AsyncClient):
+    resp = await client.patch(
+        f"/api/v1/product/{uuid.uuid4()}/presentation",
+        json={"presentation": {"title": "x", "pages": []}},
+    )
+    assert resp.status_code == 404

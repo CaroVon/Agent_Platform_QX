@@ -14,6 +14,7 @@ import { EditorPage } from '@/pages/EditorPage'
 import { ProgressPage } from '@/pages/ProgressPage'
 import { ReportPage } from '@/pages/ReportPage'
 import { ExportPage } from '@/pages/ExportPage'
+import { PresentationEditorPage } from '@/pages/PresentationEditorPage'
 
 /**
  * 应用根路由（productize: 8 模块信息架构）
@@ -50,6 +51,8 @@ export function App() {
       <Route path="/projects/:projectId/editor" element={<EditorPage />} />
       {/* ExportPage 独立路由（Playwright 打印专用） */}
       <Route path="/export/:productId" element={<ExportPage />} />
+      {/* Presentation 编辑器（GrapesJS，全屏） */}
+      <Route path="/presentation/editor/:productId" element={<PresentationEditorPage />} />
     </Routes>
   )
 }

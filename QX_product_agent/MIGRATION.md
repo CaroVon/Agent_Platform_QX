@@ -492,3 +492,45 @@ Hero 想法输入 → ProjectHeader（项目/行业/状态/Critic 分）→ AI �
 
 验证：platform 46 / agents 2 / backend 50 / tsc+build ✅；
 三端一致性审计（预览=HTML 坐标一致）✅；v9 PDF 12 页 0 溢出 ✅
+
+---
+
+## 15. Presentation HTML 编辑器（GrapesJS，M1-M2，2026-08）
+
+调研结论（`prompts/editor_research.md`）：免费开源方案选型 **GrapesJS 0.23.5**
+（对比 Polotno 付费/Page 类库无 DSL 对接），自研 DSL 桥接层，编辑对象 =
+Presentation DSL（canonical）——编辑保存回写 DSL，导出仍走既有
+HTML/PDF/PPTX 管线，三端一致不变。
+
+### 架构
+- 路由 `/presentation/editor/:productId`（PresentationPage 加“在编辑器中打开”入口）
+- `components/editor/studio/initGrapes.ts`：1280×720 单设备画布、面板
+  appendTo 自定义容器（属性面板/样式/图层/块面板）
+- `blocks.ts`：9 类 DSL 块（text/metric/card/image/table/quote/timeline/
+  chart/matrix）+ 2 基础元素（分割线/矩形）；`isComponent` 按
+  `data-dsl-type` 恢复自定义类型 → 选中即出 traits
+- `dslBridge.ts`：DSL↔HTML 双向转换。组件元数据走 `data-dsl-*` 属性
+  （**GrapesJS 会清理无前缀自定义属性，data-* 保留**）；trait 编辑 →
+  model attributes → 画布实时同步（attrViews + change:attributes）
+- 保存：`grapesToPage`（DOM 收集 + 模型匹配回退）→ PATCH
+  `/product/{id}/presentation`（新端点 + PresentationUpdateRequest，
+  回写 asset_package.presentation）
+- 图片插入：ImageSearch 新增 selectable 模式（点击/拖拽插入），
+  画布 drop 监听轮询挂载（canvas 文档异步就绪）
+
+### 关键坑与修复（Playwright 实测驱动）
+1. **`setAttributes` 是替换语义**（`set('attributes', {...})` 清空原有属性）
+   → data-dsl-* 元数据丢失、组件从收集中消失；真实 trait 输入走合并语义
+   （addAttributes）安全。代码约定：只写 `addAttributes`
+2. **面板容器须常驻挂载**：样式/图层/块面板 appendTo 的目标容器原本按
+   Tab 条件渲染（init 时不存在 → BlockManager "appendTo not found"）
+   → 改为双容器常驻 + `hidden` 类切换
+3. **保存基准**：切页收集的编辑保存在 pagesRef，保存时以
+   `{...dsl, pages: pagesRef}` 为基准，仅当前页从画布重收，避免丢页
+
+### 验证
+- backend 52（+2 编辑器保存端点）/ platform 46 / agents 2 / tsc+build ✅
+- Playwright 全链路：块拖入（dragstart→dragenter→dragover→drop→插入，
+  类型恢复 dsl-metric + traits 出现）→ trait 输入改数值 → 画布实时更新 →
+  保存 → DSL 组件全量持久化（5 组件页 → 拖入 metric + image 共 7 组件，
+  值 7777 保留）→ 导出 HTML 含编辑后内容 ✅；其他页组件零丢失 ✅

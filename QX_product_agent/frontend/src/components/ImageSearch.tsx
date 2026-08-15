@@ -13,7 +13,14 @@ import { Button } from '@/components/common/button'
 import { projectsApi } from '@/lib/api'
 import type { ImageResult } from '@/types/api'
 
-export function ImageSearch({ projectId }: { projectId: string }) {
+export function ImageSearch({
+  projectId,
+  selectable,
+}: {
+  projectId: string
+  /** 编辑器模式：提供插入按钮与拖拽到画布 */
+  selectable?: { onInsert: (url: string) => void }
+}) {
   const [query, setQuery] = useState('')
   const [searching, setSearching] = useState(false)
   const [library, setLibrary] = useState<ImageResult[]>([])
@@ -106,23 +113,40 @@ export function ImageSearch({ projectId }: { projectId: string }) {
             </p>
           </div>
         ) : (
-          <div className="grid grid-cols-3 gap-3 sm:grid-cols-4 lg:grid-cols-6">
+          <div className={selectable ? "grid grid-cols-3 gap-2" : "grid grid-cols-3 gap-3 sm:grid-cols-4 lg:grid-cols-6"}>
             {library.map((img) => (
               <div key={img.id} className="group relative overflow-hidden rounded-lg border">
                 <img
                   src={img.image_url}
                   alt={img.query ?? '素材图'}
                   loading="lazy"
-                  className="aspect-square w-full object-cover"
+                  draggable={Boolean(selectable)}
+                  onDragStart={(e) => {
+                    e.dataTransfer.setData('text/plain', img.image_url)
+                    e.dataTransfer.effectAllowed = 'copy'
+                  }}
+                  className="aspect-square w-full cursor-grab object-cover"
                 />
-                <button
-                  type="button"
-                  title="从素材库删除"
-                  onClick={() => remove(img.id)}
-                  className="absolute right-1.5 top-1.5 rounded-md bg-black/50 p-1 text-white opacity-0 transition-opacity hover:bg-destructive group-hover:opacity-100"
-                >
-                  <Trash2 className="h-3.5 w-3.5" />
-                </button>
+                {selectable && (
+                  <button
+                    type="button"
+                    title="插入到画布"
+                    onClick={() => selectable.onInsert(img.image_url)}
+                    className="absolute inset-x-0 bottom-0 bg-[#24415E]/85 py-1 text-[10px] font-medium text-white opacity-0 transition-opacity hover:bg-[#24415E] group-hover:opacity-100"
+                  >
+                    插入
+                  </button>
+                )}
+                {!selectable && (
+                  <button
+                    type="button"
+                    title="从素材库删除"
+                    onClick={() => remove(img.id)}
+                    className="absolute right-1.5 top-1.5 rounded-md bg-black/50 p-1 text-white opacity-0 transition-opacity hover:bg-destructive group-hover:opacity-100"
+                  >
+                    <Trash2 className="h-3.5 w-3.5" />
+                  </button>
+                )}
               </div>
             ))}
           </div>

@@ -4,6 +4,8 @@
  */
 
 import { useState } from 'react'
+import { useNavigate } from 'react-router-dom'
+import { PenLine } from 'lucide-react'
 import { PresentationViewer } from '@/components/presentation/PresentationViewer'
 import { SlidePreview } from '@/components/presentation/SlidePreview'
 import { SlideRenderer } from '@/components/SlideRenderer'
@@ -13,6 +15,7 @@ import type { PresentationDSL } from '@/types/presentation'
 import type { SlideDeck, StudioProduct } from '@/types/studio'
 
 export function PresentationPage() {
+  const navigate = useNavigate()
   const [pageIndex, setPageIndex] = useState(0)
 
   return (
@@ -38,6 +41,18 @@ export function PresentationPage() {
           const dsl = presentation as PresentationDSL
           return (
             <div className="space-y-6">
+              <div className="flex items-center justify-between rounded-xl border bg-background/60 px-6 py-3.5">
+                <span className="text-sm text-muted-foreground">
+                  编辑演示内容（文本 / 图片 / 基础元素 / 素材插入）
+                </span>
+                <button
+                  type="button"
+                  onClick={() => navigate(`/presentation/editor/${product.product_id}`)}
+                  className="flex items-center gap-2 rounded-lg bg-[#24415E] px-4 py-2 text-xs font-medium text-white transition-opacity hover:opacity-90"
+                >
+                  <PenLine className="h-3.5 w-3.5" /> 在编辑器中打开
+                </button>
+              </div>
               <SlidePreview
                 presentation={dsl}
                 currentIndex={pageIndex}
