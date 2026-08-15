@@ -523,6 +523,9 @@ HTML/PDF/PPTX 管线，三端一致不变。
 - 文本编辑：GrapesJS RTE（contenteditable 双击编辑 → 保存回写 DSL text）
 - 图片编辑：trait 替换（data-src/data-alt）+ style manager（尺寸/效果扇区：
   宽高/圆角/透明度/滤镜）；图层面板 + 撤销重做为 GrapesJS 内置能力
+- 导出多选项：`components/presentation/ExportMenu.tsx`（HTML / PDF / PPT
+  下拉菜单，编辑器与预览 viewer 共用）；PPT = 可编辑 .pptx（PptxGenJS，
+  `POST /product/{id}/export-pptx`，实测 10 页 145KB）
 
 ### 关键坑与修复（Playwright 实测驱动）
 1. **`setAttributes` 是替换语义**（`set('attributes', {...})` 清空原有属性）

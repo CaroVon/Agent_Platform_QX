@@ -10,15 +10,12 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react
 import {
   ChevronLeft,
   ChevronRight,
-  FileDown,
-  Globe,
-  Loader2,
   MonitorPlay,
   Palette,
 } from 'lucide-react'
 import { Button } from '@/components/common/button'
 import { cn } from '@/lib/utils'
-import { productApi } from '@/lib/api'
+import { ExportMenu } from '@/components/presentation/ExportMenu'
 import type { PresentationDSL, QualityGateReport } from '@/types/presentation'
 import { PageFrame, THEMES, themeVars } from '@/components/presentation/layouts'
 
@@ -79,8 +76,6 @@ export function PresentationViewer({
   onIndexChange?: (index: number) => void
 }) {
   const [internalIndex, setInternalIndex] = useState(0)
-  const [exporting, setExporting] = useState(false)
-  const [htmlExporting, setHtmlExporting] = useState(false)
   const [themeId, setThemeId] = useState<string>('default')
   const [themeOpen, setThemeOpen] = useState(false)
   const pages = presentation.pages ?? []
@@ -117,28 +112,6 @@ export function PresentationViewer({
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
   }, [go, index, exportMode])
-
-  const exportPdf = async () => {
-    if (!productId || exporting) return
-    setExporting(true)
-    try {
-      const result = await productApi.exportPdf(productId)
-      window.open(result.pdf_url, '_blank')
-    } finally {
-      setExporting(false)
-    }
-  }
-
-  const exportHtml = async () => {
-    if (!productId || htmlExporting) return
-    setHtmlExporting(true)
-    try {
-      const result = await productApi.exportHtml(productId)
-      window.open(result.pdf_url, '_blank')
-    } finally {
-      setHtmlExporting(false)
-    }
-  }
 
   // 主题切换（仅显示层覆盖，不改数据；导出时通过 ?theme= 传参）
   const activePalette = THEMES[themeId]?.palette ?? presentation.theme?.palette
@@ -227,26 +200,7 @@ export function PresentationViewer({
               </div>
             )}
           </div>
-          {productId && (
-            <>
-              <Button variant="ghost" size="sm" onClick={exportHtml} disabled={htmlExporting}>
-                {htmlExporting ? (
-                  <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" />
-                ) : (
-                  <Globe className="mr-2 h-3.5 w-3.5" />
-                )}
-                导出 HTML
-              </Button>
-              <Button variant="outline" size="sm" onClick={exportPdf} disabled={exporting}>
-                {exporting ? (
-                  <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" />
-                ) : (
-                  <FileDown className="mr-2 h-3.5 w-3.5" />
-                )}
-                导出 PDF
-              </Button>
-            </>
-          )}
+          {productId && <ExportMenu productId={productId} />}
         </div>
       </div>
 

@@ -9,10 +9,11 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import type { Editor } from 'grapesjs'
 import {
-  ArrowLeft, Check, FileDown, Globe, Loader2, Save,
+  ArrowLeft, Check, Loader2, Save,
 } from 'lucide-react'
 import { initGrapes } from '@/components/editor/studio/initGrapes'
 import { componentToHtml, grapesToDsl, grapesToPage, pageToHtml } from '@/components/editor/studio/dslBridge'
+import { ExportMenu } from '@/components/presentation/ExportMenu'
 import { ImageSearch } from '@/components/ImageSearch'
 import { productApi } from '@/lib/api'
 import type { StudioProduct } from '@/types/studio'
@@ -150,19 +151,6 @@ export function PresentationEditorPage() {
     }
   }
 
-  const handleExport = async (kind: 'html' | 'pdf') => {
-    if (!productId) return
-    try {
-      const result =
-        kind === 'html'
-          ? await productApi.exportHtml(productId)
-          : await productApi.exportPdf(productId)
-      window.open(result.pdf_url, '_blank')
-    } catch (err) {
-      setError(err instanceof Error ? err.message : '导出失败')
-    }
-  }
-
   if (error && !product) {
     return (
       <div className="flex h-screen items-center justify-center text-sm text-destructive">
@@ -195,20 +183,13 @@ export function PresentationEditorPage() {
             </span>
           )}
           {error && <span className="text-xs text-destructive">{error}</span>}
-          <button
-            type="button"
-            onClick={() => handleExport('html')}
-            className="flex items-center gap-1.5 rounded-lg border px-3.5 py-2 text-xs transition-colors hover:bg-accent"
-          >
-            <Globe className="h-3.5 w-3.5" /> 导出 HTML
-          </button>
-          <button
-            type="button"
-            onClick={() => handleExport('pdf')}
-            className="flex items-center gap-1.5 rounded-lg border px-3.5 py-2 text-xs transition-colors hover:bg-accent"
-          >
-            <FileDown className="h-3.5 w-3.5" /> 导出 PDF
-          </button>
+          {productId && (
+            <ExportMenu
+              productId={productId}
+              onError={setError}
+              className="rounded-lg px-3.5 py-2"
+            />
+          )}
           <button
             type="button"
             onClick={handleSave}
