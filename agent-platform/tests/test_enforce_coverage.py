@@ -52,3 +52,45 @@ def test_enforce_noop_when_fully_covered():
     pres = Presentation.model_validate(_full_deck())
     result = enforce_coverage(pres, doc)
     assert result.pages == pres.pages  # 无缺失注入时保持原样
+
+
+def test_enrich_fills_table_description_column():
+    """enrich：features 表格描述列为空 → 从上游补全。"""
+    from agent_platform.harness.enforce_coverage import enrich_coverage
+    from tests.test_workflow_graph import _full_deck
+
+    doc = _rich_document()
+    deck = _full_deck()
+    # 制造空描述列的表格
+    for pg in deck["pages"]:
+        if pg.get("type") == "feature_priority":
+            for c in pg.get("components", []):
+                if c.get("type") == "table":
+                    c["data"]["rows"] = [["P0", "功能0", ""]]
+    pres = Presentation.model_validate(deck)
+    result = enrich_coverage(pres, doc)
+    features_page = next(p for p in result.pages if p.type == "feature_priority")
+    table = next(c for c in features_page.components if c.type == "table")
+    assert len(table.data["rows"][0]) == 3
+    # 上游功能名是"功能0"（_rich_document），描述来自上游
+    assert table.data["rows"][0][1] == "功能0"
+
+
+def test_enrich_adds_market_conclusion():
+    """enrich：market 页补核心结论与来源。"""
+    from agent_platform.harness.enforce_coverage import enrich_coverage
+
+    doc = _rich_document()
+    deck = _full_deck()
+    # 移除 market 页的 summary 结论（p3 组件只有 metric）
+    for pg in deck["pages"]:
+        if pg.get("type") == "market_overview":
+            pg["components"] = [
+                c for c in pg["components"] if c.get("type") != "text"
+            ]
+    pres = Presentation.model_validate(deck)
+    result = enrich_coverage(pres, doc)
+    market = next(p for p in result.pages if p.type == "market_overview")
+    texts = [c for c in market.components if c.type == "text"]
+    assert len(texts) == 1
+    assert "核心结论" in str(texts[0].data.get("title", ""))

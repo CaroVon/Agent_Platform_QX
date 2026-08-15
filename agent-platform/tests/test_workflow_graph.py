@@ -108,7 +108,22 @@ def _full_deck() -> dict:
                 ],
             },
             {
-                "id": "p8", "type": "conclusion", "layout": "closing", "title": "结语",
+                "id": "p8", "type": "user_journey", "layout": "journey", "title": "用户旅程",
+                "insight": "完整旅程",
+                "components": [
+                    {"id": "c11a", "type": "timeline", "data": {
+                        "phases": [{"name": "注册", "milestones": ["进入产品"]}]}},
+                ],
+            },
+            {
+                "id": "p9", "type": "product_architecture", "layout": "architecture", "title": "产品架构",
+                "insight": "分层架构",
+                "components": [
+                    {"id": "c11b", "type": "card", "data": {"title": "应用层", "description": "架构说明"}},
+                ],
+            },
+            {
+                "id": "p10", "type": "conclusion", "layout": "closing", "title": "结语",
                 "components": [{"id": "c12", "type": "quote", "data": {"quote": "行动号召"}}],
             },
         ],

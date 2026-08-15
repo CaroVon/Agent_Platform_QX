@@ -72,15 +72,17 @@
   }
   body {
     @apply bg-background text-foreground;
+    font-family: "Noto Sans SC", "Source Han Sans SC", "PingFang SC",
+      "Microsoft YaHei", "WenQuanYi Micro Hei", sans-serif;
     font-feature-settings: "rlig" 1, "calt" 1;
   }
 }
 
-/* ─── 编辑感字体层级（vintage editorial） ───────────────────── */
+/* ─── 编辑感字体层级（思源宋体组合） ───────────────────────── */
 @layer utilities {
   .font-editorial {
-    font-family: "Iowan Old Style", "Palatino Linotype", Georgia,
-      "Songti SC", "SimSun", serif;
+    font-family: "Noto Serif SC", "Source Han Serif SC", "Songti SC",
+      "SimSun", Georgia, serif;
     letter-spacing: -0.01em;
   }
   /* 纸感极淡纹理背景（可选点缀） */

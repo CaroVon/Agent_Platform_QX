@@ -217,9 +217,15 @@ class ProductResearchGraph:
         updates = self._run_agent_node(self.presentation_agent, "slide_deck", state, "presentation")
         presentation = Presentation.model_validate(updates["presentation"])
         # A3 确定性兜底：注入缺失的上游关键信息 + ID 归一化（代码保底线）
-        from agent_platform.harness.enforce_coverage import enforce_coverage
+        from agent_platform.harness.enforce_coverage import (
+            enrich_coverage,
+            enforce_coverage,
+        )
 
-        presentation = enforce_coverage(presentation, self._build_document(state))
+        document = self._build_document(state)
+        presentation = enforce_coverage(presentation, document)
+        # 内容充实层：确定性补全描述/细节（不依赖 LLM 波动）
+        presentation = enrich_coverage(presentation, document)
         updates["presentation"] = presentation.model_dump()
         # 修订路径（revision_feedback 非空）→ 修订计数 +1
         if state.get("revision_feedback"):

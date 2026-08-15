@@ -15,9 +15,9 @@ from agent_platform.schemas.presentation import Component, Page, Presentation
 from agent_platform.schemas.product_document import ProductDocument
 
 # 单页文本容量估算（字符）：text/bullets 型组件 data 中的文本总量上限
-_PAGE_TEXT_BUDGET = 600
+_PAGE_TEXT_BUDGET = 2000
 # 组件级文本上限
-_COMPONENT_TEXT_BUDGET = 150
+_COMPONENT_TEXT_BUDGET = 360
 
 
 def _component_text_len(component: Component) -> int:
@@ -56,10 +56,10 @@ def run_quality_gate(
     dsl_text = presentation.model_dump_json()
 
     # 1. 页数区间
-    page_count_ok = 8 <= len(pages) <= 14
-    checks["page_count_8_14"] = page_count_ok
+    page_count_ok = 10 <= len(pages) <= 16
+    checks["page_count_10_16"] = page_count_ok
     if not page_count_ok:
-        errors.append(f"页数 {len(pages)} 不在 8-14 区间")
+        errors.append(f"页数 {len(pages)} 不在 10-16 区间")
 
     # 2. 每页组件数（cover/closing 允许 1-2，其余 2-6）
     component_limits_ok = True

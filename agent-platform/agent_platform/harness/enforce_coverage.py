@@ -23,6 +23,107 @@ def _hit(text: str | None, dsl_text: str) -> bool:
     return text[:6] in dsl_text
 
 
+def enrich_coverage(
+    presentation: Presentation,
+    document: ProductDocument,
+) -> Presentation:
+    """确定性内容充实（不依赖 LLM 波动）：
+    即使字段已覆盖，也把上游细节注入组件 —— 表格描述列、画像细节、
+    市场核心结论、路线图阶段信息，保证内容量稳定丰富。
+    """
+    pages = list(presentation.pages)
+
+    def find_page(page_type: str) -> Page | None:
+        return next((p for p in pages if p.type == page_type), None)
+
+    def find_components(page_type: str, comp_type: str) -> list[Component]:
+        page = find_page(page_type)
+        if page is None:
+            return []
+        return [c for c in page.components if c.type == comp_type]
+
+    # ── features 表格：补全描述列 ──────────────────────────
+    if document.strategy and document.strategy.features:
+        by_name = {f.name: f for f in document.strategy.features}
+        for table in find_components("feature_priority", "table"):
+            rows = table.data.get("rows")
+            if not isinstance(rows, list):
+                continue
+            for row in rows:
+                if len(row) >= 3 and (not row[2] or len(str(row[2])) < 6):
+                    feature = by_name.get(row[1])
+                    if feature and feature.description:
+                        row[2] = feature.description[:60]
+
+    # ── persona 卡片：补全目标/痛点细节 ────────────────────
+    if document.strategy and document.strategy.personas:
+        by_name = {p.name: p for p in document.strategy.personas}
+        for card in find_components("user_persona", "card"):
+            persona = by_name.get(card.data.get("title", ""))
+            desc = card.data.get("description", "") or ""
+            if persona and (not desc or len(str(desc)) < 10):
+                goals = "、".join(persona.goals[:3]) if persona.goals else ""
+                pains = "、".join(persona.pain_points[:3]) if persona.pain_points else ""
+                parts = []
+                if goals:
+                    parts.append(f"目标：{goals}")
+                if pains:
+                    parts.append(f"痛点：{pains}")
+                if persona.behavior:
+                    parts.append(str(persona.behavior)[:40])
+                if parts:
+                    card.data["description"] = "；".join(parts)[:160]
+
+    # ── market 页：补核心结论 + 来源 ───────────────────────
+    if document.research and document.research.market_size:
+        ms = document.research.market_size
+        market = find_page("market_overview")
+        if market is not None:
+            dsl_text = Presentation(title=presentation.title, pages=pages).model_dump_json()
+            has_conclusion = ms.summary and ms.summary[:10] in dsl_text
+            has_source = bool(ms.source) and ms.source[:10] in dsl_text
+            if ms.summary and not (has_conclusion and has_source):
+                text = ms.summary
+                if ms.source and not has_source:
+                    text += f"（来源：{ms.source}）"
+                market.components.append(
+                    Component(
+                        id="", type="text",
+                        data={"title": "核心结论", "text": text[:220]},
+                    )
+                )
+
+    # ── roadmap 阶段：补周期与里程碑 ───────────────────────
+    if document.strategy and document.strategy.roadmap:
+        for tl in find_components("roadmap", "timeline"):
+            phases = tl.data.get("phases")
+            if not isinstance(phases, list):
+                continue
+            for phase in phases:
+                name = phase.get("name", "")
+                upstream = next(
+                    (p for p in document.strategy.roadmap if p.phase == name),
+                    None,
+                )
+                if upstream is None:
+                    continue
+                if not phase.get("period") and upstream.timeline:
+                    phase["period"] = upstream.timeline
+                if not phase.get("milestones") and upstream.milestones:
+                    phase["milestones"] = list(upstream.milestones)[:5]
+
+    # ── 组件 ID 归一化（充实新增组件同样保证唯一） ─────────
+    seen: set[str] = set()
+    for page in pages:
+        for comp in page.components:
+            if not comp.id or comp.id in seen:
+                comp.id = _unique_id(page.id, seen, f"{page.id}-auto")
+            else:
+                seen.add(comp.id)
+
+    return Presentation(title=presentation.title, theme=presentation.theme, pages=pages)
+
+
 def _unique_id(page_id: str, existing: set[str], prefix: str) -> str:
     candidate = prefix
     n = 2

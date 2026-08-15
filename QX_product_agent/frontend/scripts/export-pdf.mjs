@@ -169,10 +169,11 @@ async function exportHtml() {
   await page.waitForSelector('.export-page', { timeout: 30000 })
   await page.waitForTimeout(800)
 
-  const gate = await autoFitOverflow(page)
+  // 抓取干净 DOM（不跑 autoFitOverflow —— 播放器内独立做溢出缩放，
+  // 避免 inline 缩放副作用导致预览/导出排版不一致）
+  const gate = await runOverflowGate(page)
 
-  // ── 交互式演示快照（导出后与 Web 预览一致的翻页/动效） ─────
-  // 收集渲染样式 + DOM，注入原生 JS 播放器（翻页/键盘/进度点/过渡动画/自适应缩放）
+  // ── 交互式演示快照（与 Web 预览一致的排版/翻页/动效） ─────
   const html = await page.evaluate(() => {
     let css = ''
     for (const sheet of document.styleSheets) {
@@ -189,17 +190,17 @@ async function exportHtml() {
     const title = document.title || 'Presentation'
 
     const playerCss = `
-      html,body{margin:0;padding:0;background:#0f1117;height:100%;font-family:"PingFang SC","Microsoft YaHei",sans-serif}
+      html,body{margin:0;padding:0;background:#f5f4f1;height:100%;font-family:"Noto Sans SC","Source Han Sans SC","PingFang SC","Microsoft YaHei",sans-serif}
       .player-root{display:flex;flex-direction:column;height:100%;align-items:center;justify-content:center;gap:14px;padding:18px;box-sizing:border-box}
       .player-stage{position:relative;width:1280px;height:720px;flex-shrink:0;transform-origin:center center}
       .player-stage .export-page{position:absolute;top:0;left:0;opacity:0;pointer-events:none;transition:opacity .45s ease,transform .45s ease;transform:translateY(10px)}
       .player-stage .export-page.active{opacity:1;pointer-events:auto;transform:translateY(0)}
-      .player-nav{display:flex;align-items:center;gap:14px;color:#94a3b8;font-size:13px;position:relative;z-index:10}
-      .player-nav button{background:#1e2534;color:#cbd5e1;border:1px solid #2a3348;border-radius:8px;padding:7px 16px;cursor:pointer;font-size:13px;transition:background .2s}
-      .player-nav button:hover{background:#2a3348;color:#f1f5f9}
+      .player-nav{display:flex;align-items:center;gap:14px;color:#716e66;font-size:13px;position:relative;z-index:10}
+      .player-nav button{background:#f4f1ea;color:#3a3a35;border:1px solid #ddd8cd;border-radius:8px;padding:7px 16px;cursor:pointer;font-size:13px;transition:background .2s}
+      .player-nav button:hover{background:#e9e4d8;color:#1c2430}
       .player-dots{display:flex;gap:6px}
-      .player-dots .dot{width:7px;height:7px;border-radius:99px;background:#3a4560;border:none;cursor:pointer;padding:0;transition:width .2s,background .2s}
-      .player-dots .dot.active{width:20px;background:#6366f1}
+      .player-dots .dot{width:7px;height:7px;border-radius:99px;background:#d3cdbf;border:none;cursor:pointer;padding:0;transition:width .2s,background .2s}
+      .player-dots .dot.active{width:20px;background:#24415e}
       .player-counter{font-variant-numeric:tabular-nums;min-width:56px;text-align:center}
     `
 
@@ -210,6 +211,8 @@ async function exportHtml() {
         var dotsWrap=document.querySelector('.player-dots');
         var counter=document.querySelector('.player-counter');
         var idx=0,n=sections.length;
+        // 播放器内溢出自适应：每页按 scrollHeight 逐级缩字号（最多 4 级，最低 60%）
+        sections.forEach(function(s){s.style.fontSize='100%';for(var k=0;k<4;k++){if(s.scrollHeight<=722)break;var cur=parseFloat(s.style.fontSize||'100');s.style.fontSize=Math.max(cur-10,60)+'%'}});
         sections.forEach(function(s,j){var d=document.createElement('button');d.className='dot';d.setAttribute('aria-label','第'+(j+1)+'页');d.onclick=function(){show(j)};dotsWrap.appendChild(d)});
         var dots=Array.prototype.slice.call(dotsWrap.children);
         function show(i){idx=((i%n)+n)%n;sections.forEach(function(s,j){s.classList.toggle('active',j===idx)});dots.forEach(function(d,j){d.classList.toggle('active',j===idx)});counter.textContent=(idx+1)+' / '+n}

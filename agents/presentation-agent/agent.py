@@ -37,7 +37,7 @@ def _presentation_evaluator(presentation: Presentation) -> tuple[bool, str]:
     """Presentation 专用评估器：页数、组件密度与布局多样性。"""
     issues: list[str] = []
     pages = presentation.pages
-    if not (8 <= len(pages) <= 14):
+    if not (10 <= len(pages) <= 16):
         issues.append(f"页数 {len(pages)} 不在 8-14 区间")
     layouts = {p.layout for p in pages}
     if len(layouts) < 5:

@@ -6,7 +6,7 @@
  *   - exportMode：无 UI 外壳，每页一个固定 16:9 section（打印分页）
  */
 
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import {
   ChevronLeft,
   ChevronRight,
@@ -21,6 +21,47 @@ import { cn } from '@/lib/utils'
 import { productApi } from '@/lib/api'
 import type { PresentationDSL, QualityGateReport } from '@/types/presentation'
 import { PageFrame, THEMES, themeVars } from '@/components/presentation/layouts'
+
+// ─── 固定 1280×720 舞台（预览与导出 HTML/PDF 同坐标系） ────────
+const STAGE_W = 1280
+const STAGE_H = 720
+
+function useStageScale() {
+  const ref = useRef<HTMLDivElement>(null)
+  const [scale, setScale] = useState(1)
+
+  useLayoutEffect(() => {
+    const el = ref.current
+    if (!el) return
+    const update = () => {
+      const width = el.clientWidth
+      if (width > 0) setScale(width / STAGE_W)
+    }
+    update()
+    const observer = new ResizeObserver(update)
+    observer.observe(el)
+    return () => observer.disconnect()
+  }, [])
+
+  return { ref, scale }
+}
+
+// ─── 预览溢出自适应（与导出 autoFit 同逻辑，逐级 10% 缩放） ───
+function usePreviewAutoFit(pageEl: HTMLElement | null, scale: number, pageKey: string) {
+  useLayoutEffect(() => {
+    if (!pageEl) return
+    // 先重置再测量（避免累计）；坐标系为 stage 内 CSS 像素（720 上限）
+    pageEl.style.fontSize = '100%'
+    for (let i = 0; i < 4; i++) {
+      const scrollH = pageEl.scrollHeight
+      if (scrollH <= STAGE_H + 2) break
+      const current = parseFloat(pageEl.style.fontSize || '100')
+      const next = Math.max(current - 10, 60)
+      pageEl.style.fontSize = `${next}%`
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pageEl, pageKey]) // pageKey 变化（翻页）时重新测量
+}
 
 export function PresentationViewer({
   presentation,
@@ -102,6 +143,12 @@ export function PresentationViewer({
   // 主题切换（仅显示层覆盖，不改数据；导出时通过 ?theme= 传参）
   const activePalette = THEMES[themeId]?.palette ?? presentation.theme?.palette
   const vars = themeVars(activePalette)
+
+  // 预览固定舞台（与导出同坐标系）
+  const { ref: stageWrapRef, scale } = useStageScale()
+  const stageRef = useRef<HTMLDivElement>(null)
+  const currentPageEl = stageRef.current?.querySelector<HTMLElement>('.stage-page') ?? null
+  usePreviewAutoFit(currentPageEl, scale, page?.id ?? '')
 
   // ─── 导出模式：全量渲染，打印分页 ─────────────────────────
   if (exportMode) {
@@ -203,9 +250,22 @@ export function PresentationViewer({
         </div>
       </div>
 
-      {/* 16:9 画布 */}
-      <div className="aspect-video w-full" style={{ fontSize: `${fontScale * 100}%` }}>
-        <PageFrame page={page} index={index} total={pages.length} />
+      {/* 16:9 画布：固定 1280×720 舞台 + scale 适配（与导出 HTML/PDF 完全一致） */}
+      <div ref={stageWrapRef} className="relative w-full overflow-hidden rounded-xl" style={{ aspectRatio: '16 / 9' }}>
+        <div
+          ref={stageRef}
+          className="absolute left-1/2 top-1/2"
+          style={{
+            width: STAGE_W,
+            height: STAGE_H,
+            transform: `translate(-50%, -50%) scale(${scale})`,
+            transformOrigin: 'center center',
+          }}
+        >
+          <div className="stage-page h-full w-full" style={{ fontSize: '100%' }}>
+            <PageFrame page={page} index={index} total={pages.length} />
+          </div>
+        </div>
       </div>
 
       {/* 导航 */}

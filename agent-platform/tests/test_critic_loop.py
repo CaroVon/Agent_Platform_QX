@@ -60,8 +60,18 @@ def _presentation(**page_overrides) -> Presentation:
             "components": [{"id": "c7", "type": "timeline", "data": {"phases": [{"name": "P1"}]}}],
         },
         {
-            "id": "p8", "type": "conclusion", "layout": "closing", "title": "结语",
-            "components": [{"id": "c8", "type": "quote", "data": {"quote": "行动号召"}}],
+            "id": "p8", "type": "user_journey", "layout": "journey", "title": "用户旅程",
+            "insight": "完整旅程",
+            "components": [{"id": "c8a", "type": "timeline", "data": {"phases": [{"name": "注册"}]}}],
+        },
+        {
+            "id": "p9", "type": "product_architecture", "layout": "architecture", "title": "产品架构",
+            "insight": "分层架构",
+            "components": [{"id": "c8b", "type": "card", "data": {"title": "数据层", "description": "架构说明"}}],
+        },
+        {
+            "id": "p10", "type": "conclusion", "layout": "closing", "title": "结语",
+            "components": [{"id": "c8c", "type": "quote", "data": {"quote": "行动号召"}}],
         },
     ]
     return Presentation.model_validate({"title": IDEA, "pages": base_pages})
@@ -71,7 +81,7 @@ def test_quality_gate_passes_for_balanced_presentation():
     gate = run_quality_gate(_presentation())
     assert gate.passed is True
     assert gate.errors == []
-    assert gate.checks["page_count_8_14"] is True
+    assert gate.checks["page_count_10_16"] is True
 
 
 def test_quality_gate_flags_missing_metric_value():
@@ -91,10 +101,10 @@ def test_quality_gate_flags_duplicate_titles():
 
 def test_quality_gate_flags_page_count():
     pres = _presentation()
-    pres.pages = pres.pages[:3]
+    pres.pages = pres.pages[:5]
     gate = run_quality_gate(pres)
     assert gate.passed is False
-    assert any("8-14" in e for e in gate.errors)
+    assert any("10-16" in e for e in gate.errors)
 
 
 def _make_critic(script: list) -> _Agent:

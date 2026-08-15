@@ -467,3 +467,28 @@ Hero 想法输入 → ProjectHeader（项目/行业/状态/Critic 分）→ AI �
 - 平台 44 / agents 2 / 后端 50 / tsc+build ✅
 - HTML 快照：初始单页、键盘/按钮/跳点翻页、过渡动效 ✅（Playwright 实测）
 - PDF：10 页=10 页、0 溢出、字号统一 7.5-19.5、ECharts 嵌入 ✅
+
+---
+
+## 14. Presentation 五处微调（2026-08）
+
+1. **三端排版同构（根治预览/导出不一致）**：预览改为固定 1280×720 舞台 +
+   scale 适配容器（ResizeObserver）；预览与导出 HTML/PDF 共用同一坐标系，
+   文本换行/高度计算完全一致（实测 p5 三栏页预览与 HTML scrollH=720 一致）
+2. **预览溢出自适应**：usePreviewAutoFit 对当前页逐级缩字号（与导出 autoFit
+   同逻辑）；导出 HTML 抓取干净 DOM（不再受 autoFit inline 缩放副作用影响），
+   播放器内独立做溢出缩放
+3. **播放器米白底**：HTML 播放器底色深黑 → 米白 #f5f4f1 + 导航配色适配
+4. **内容量扩展**：
+   - 上游 prompt 详尽化：research（竞品 3-4 优劣势/痛点附数据/趋势附说明）、
+     product（10-16 功能附详述/画像 3-5 目标痛点/PRD 每章 200-400 字）
+     → 上游 9559 → **12281 字（+28%）**
+   - 演示密度目标 50-65%、预算页 2000/组件 360、页数 10-16
+   - 新增 `enrich_coverage` 确定性内容充实层（表格描述列/画像细节/核心结论/
+     阶段信息注入，不依赖 LLM 波动）
+   - 实测 v9：12 页、DSL 4325 字（vs v5 **+44%**）、密度 35%、无空白
+5. **思源字体组合**：正文 Noto Sans SC / 标题 font-editorial 改
+   Noto Serif SC（含 Source Han SC / 系统回退栈；HTML 播放器同步）
+
+验证：platform 46 / agents 2 / backend 50 / tsc+build ✅；
+三端一致性审计（预览=HTML 坐标一致）✅；v9 PDF 12 页 0 溢出 ✅
