@@ -643,11 +643,28 @@ HTML/PDF/PPTX 管线，三端一致不变。
 - 配置与验证步骤见 `agent-platform/docs/ppt-model-routing.md`
 
 ### ppt-master-skill 嵌入调研
-- **macrochen/ppt-master-skill（skill 包装层）：无 LICENSE** → 不可复制嵌入
-  （默认保留所有权利），仅可参考其方法论（Strategist/Executor 分工、
-  逐页 SVG 设计 → svg_to_pptx 导出、Office"转换为形状"可编辑）
-- **macrochen/ppt-master（上游工具）：MIT** → 工具可收编，但 71MB + 重依赖，
-  建议作为独立实验分支评估（SVG→PPTX 视觉保真高、文本可编辑性弱于
-  当前 DSL→PptxGenJS 路线），不接入主流水线
+- **hugohe3/ppt-master（正确调研对象，MIT，47k★）**：AI 演示工作流 Skill，
+  核心 = 逐页手写 SVG → svg_to_pptx 编译器导出**原生可编辑 PPTX**
+  （DrawingML 形状/真实图表/动画/旁白/公式），模型无关；依赖轻量
+  （多数脚本纯标准库），详见 `agent-platform/docs/ppt-master-research.md`
 - 结论：主路径 = 自有 presentation-cyberppt skill + MiniMax 分工；
-  SVG→PPTX 作为 export-pptx 的 P3+ 可选实验模式预留（manifest 已记录逐页构图）
+  ppt-master 方法论吸收（SVG 页设计契约/设计系统分层/门禁纪律）免费可行；
+  svg_to_pptx 编译器收编作为 export-pptx 的 `--backend svg` 实验模式（P3+，
+  DSL 仍是唯一事实源，SVG 为导出中间产物）——不整体替换流水线
+
+---
+
+## 19. hugohe3/ppt-master 嵌入调研（2026-08）
+
+见 `agent-platform/docs/ppt-master-research.md`（§18 曾误引 macrochen/ppt-master-skill，
+已更正为 hugohe3/ppt-master）。
+
+要点：
+- **MIT ✅ 可嵌入**；47k★、v4.7.0、模型无关、依赖轻量（svg_to_pptx 编译器 239 个 .py）
+- 管线：材料 → 事实调研 → 模板确认 → **逐页手写 SVG** → svg_to_pptx 导出
+  原生 DrawingML 形状（含真实图表/动画/旁白/公式）
+- 与我们架构：**方法论吸收免费可行**（SVG 页设计契约/设计系统分层/门禁纪律）；
+  **svg_to_pptx 收编**为 export-pptx `--backend svg` 实验模式（P3+，DSL 唯一事实源）；
+  不整体替换流水线（agent 逐页手写 + 用户确认门与自动化冲突）
+- MiniMax 分工不变：MiniMax-Text-01 承接 PPT skill 制作（PRESENTATION_LLM_*），
+  DeepSeek 主流水线；启用图片阶段时 MiniMax-Image-01 可接其 image_backends
