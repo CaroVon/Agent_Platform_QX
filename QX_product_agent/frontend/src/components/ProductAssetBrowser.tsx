@@ -1,16 +1,24 @@
 /**
  * ProductAssetBrowser —— 资产聚合页通用骨架
  *
- * 左侧：已完成产品列表（含资产概览徽标）
+ * 左侧：全部产品列表（含状态徽标：运行中/排队中/已完成/失败）
  * 右侧：选中产品的资产详情（由各模块页提供 renderDetail）
+ * 运行中/排队中的产品展示占位提示，并自动轮询刷新直至完成。
  */
 
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { useLocation } from 'react-router-dom'
 import { Boxes, ChevronRight, Loader2 } from 'lucide-react'
 import { productApi } from '@/lib/api'
 import type { StudioProduct } from '@/types/studio'
 import { cn } from '@/lib/utils'
+
+const STATUS_META: Record<string, { label: string; cls: string }> = {
+  running: { label: '进行中', cls: 'bg-[#24415E]/10 text-[#24415E] animate-soft-pulse' },
+  queued: { label: '排队中', cls: 'bg-slate-500/10 text-slate-500' },
+  completed: { label: '已完成', cls: 'bg-emerald-500/10 text-emerald-600' },
+  failed: { label: '失败', cls: 'bg-destructive/10 text-destructive' },
+}
 
 export function ProductAssetBrowser({
   renderDetail,
@@ -25,36 +33,57 @@ export function ProductAssetBrowser({
   const [products, setProducts] = useState<StudioProduct[]>([])
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
+  const timerRef = useRef<number | null>(null)
 
-  useEffect(() => {
-    let cancelled = false
-    const load = async () => {
-      try {
-        const list = await productApi.list(0, 100)
-        const completed = (await Promise.all(
-          list
-            .filter((i) => i.status === 'completed')
-            .map((i) => productApi.get(i.product_id).catch(() => null)),
-        )).filter((p): p is StudioProduct => p !== null)
-        if (cancelled) return
-        setProducts(completed)
-        const requested = (location.state as { productId?: string } | null)?.productId
-        setSelectedId(
-          requested && completed.some((p) => p.product_id === requested)
-            ? requested
-            : completed[0]?.product_id ?? null,
-        )
-      } finally {
-        if (!cancelled) setLoading(false)
-      }
-    }
-    load()
-    return () => {
-      cancelled = true
+  const load = useCallback(async () => {
+    try {
+      const list = await productApi.list(0, 100)
+      // 已完成产品拉全量详情（资产）；其余用列表轻量字段
+      const completed = (await Promise.all(
+        list
+          .filter((i) => i.status === 'completed')
+          .map((i) => productApi.get(i.product_id).catch(() => null)),
+      )).filter((p): p is StudioProduct => p !== null)
+      const byId = new Map(completed.map((p) => [p.product_id, p]))
+      const merged = list.map((i) => byId.get(i.product_id) ?? (i as StudioProduct))
+      setProducts(merged)
+      const requested = (location.state as { productId?: string } | null)?.productId
+      setSelectedId((prev) => {
+        if (prev && merged.some((p) => p.product_id === prev)) return prev
+        if (requested && merged.some((p) => p.product_id === requested)) return requested
+        return merged[0]?.product_id ?? null
+      })
+      return merged.some((p) => p.status === 'running' || p.status === 'queued')
+    } finally {
+      setLoading(false)
     }
   }, [location.state])
 
+  useEffect(() => {
+    let cancelled = false
+    const start = async () => {
+      if (cancelled) return
+      const stillActive = await load()
+      // 有运行/排队任务 → 每 15s 自动刷新直至全部落地
+      if (stillActive && !cancelled) {
+        timerRef.current = window.setInterval(async () => {
+          const active = await load()
+          if (!active && timerRef.current) {
+            window.clearInterval(timerRef.current)
+            timerRef.current = null
+          }
+        }, 15000)
+      }
+    }
+    start()
+    return () => {
+      cancelled = true
+      if (timerRef.current) window.clearInterval(timerRef.current)
+    }
+  }, [load])
+
   const selected = products.find((p) => p.product_id === selectedId) ?? null
+  const runningCount = products.filter((p) => p.status === 'running' || p.status === 'queued').length
 
   if (loading) {
     return (
@@ -79,14 +108,20 @@ export function ProductAssetBrowser({
   }
 
   return (
-    <div className="grid gap-6 lg:grid-cols-[260px_1fr]">
-      {/* ─── 产品列表 ─────────────────────────────────────────── */}
+    <div className="grid gap-6 lg:grid-cols-[280px_1fr]">
+      {/* ─── 产品列表（全部状态） ─────────────────────────────── */}
       <aside className="space-y-1.5">
         <div className="px-2 pb-2 text-[10px] font-medium uppercase tracking-widest text-muted-foreground">
-          已完成产品（{products.length}）
+          产品资产
+          {runningCount > 0 && (
+            <span className="ml-1.5 rounded-full bg-[#24415E]/10 px-1.5 py-0.5 text-[#24415E]">
+              {runningCount} 个任务进行中
+            </span>
+          )}
         </div>
         {products.map((p) => {
           const active = p.product_id === selectedId
+          const meta = STATUS_META[p.status] ?? STATUS_META.failed
           return (
             <button
               key={p.product_id}
@@ -99,8 +134,11 @@ export function ProductAssetBrowser({
                   : 'text-muted-foreground hover:bg-secondary/50 hover:text-foreground',
               )}
             >
-              <span className="min-w-0 flex-1 truncate">{p.idea}</span>
-              {p.critic_score != null && (
+              <span className="min-w-0 flex-1 truncate">{p.idea || '（未命名）'}</span>
+              <span className={cn('shrink-0 rounded-full px-1.5 py-0.5 text-[10px]', meta.cls)}>
+                {meta.label}
+              </span>
+              {p.critic_score != null && p.status === 'completed' && (
                 <span
                   className={cn(
                     'shrink-0 rounded-full px-1.5 py-0.5 text-[10px]',
@@ -117,7 +155,24 @@ export function ProductAssetBrowser({
       </aside>
 
       {/* ─── 资产详情 ─────────────────────────────────────────── */}
-      <div className="min-w-0 space-y-5">{selected ? renderDetail(selected) : null}</div>
+      <div className="min-w-0 space-y-5">
+        {!selected ? null : selected.status === 'completed' ? (
+          renderDetail(selected)
+        ) : (
+          <div className="flex min-h-[300px] flex-col items-center justify-center rounded-2xl border border-dashed bg-card/40 text-center animate-step-in">
+            <Loader2 className="h-7 w-7 animate-spin text-[#24415E]" />
+            <p className="mt-4 text-sm font-medium text-foreground">
+              {selected.status === 'queued' ? '任务排队中，等待调度…' : '任务执行中，资产生成后将自动出现'}
+            </p>
+            <p className="mt-1.5 text-xs text-muted-foreground">
+              「{selected.idea || '未命名'}」· 实时进度请前往 Product Workspace 查看
+            </p>
+            <p className="mt-0.5 text-[11px] text-muted-foreground/70">
+              页面每 15 秒自动刷新，完成后无需手动重载
+            </p>
+          </div>
+        )}
+      </div>
     </div>
   )
 }
