@@ -5,7 +5,7 @@
 
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { PenLine } from 'lucide-react'
+import { FileDown, PenLine } from 'lucide-react'
 import { PresentationViewer } from '@/components/presentation/PresentationViewer'
 import { SlidePreview } from '@/components/presentation/SlidePreview'
 import { SlideRenderer } from '@/components/SlideRenderer'
@@ -39,8 +39,34 @@ export function PresentationPage() {
             )
           }
           const dsl = presentation as PresentationDSL
+          const pptDesign = product.ppt_design
           return (
             <div className="space-y-6">
+              {/* ── PPT 资产（ppt-master 原生产出） ── */}
+              {pptDesign?.pptx_relative && (
+                <div className="flex items-center justify-between rounded-xl border border-emerald-600/20 bg-emerald-50/70 px-6 py-3.5">
+                  <div className="flex items-center gap-3">
+                    <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-emerald-600 text-white">
+                      <FileDown className="h-4 w-4" />
+                    </span>
+                    <div>
+                      <div className="text-sm font-medium text-foreground">
+                        PPT 已生成（ppt-master 原生 · 可编辑 .pptx）
+                      </div>
+                      <div className="text-[11px] text-muted-foreground">
+                        模型 {pptDesign.model ?? '—'} · {pptDesign.pages ?? '—'} 页 · 图片资产 {pptDesign.images?.length ?? 0} 张
+                      </div>
+                    </div>
+                  </div>
+                  <a
+                    href={`/api/v1/files/${pptDesign.pptx_relative}`}
+                    download
+                    className="flex items-center gap-1.5 rounded-lg bg-emerald-600 px-4 py-2 text-xs font-medium text-white transition-opacity hover:opacity-90"
+                  >
+                    <FileDown className="h-3.5 w-3.5" /> 下载 PPT
+                  </a>
+                </div>
+              )}
               <div className="flex items-center justify-between rounded-xl border bg-background/60 px-6 py-3.5">
                 <span className="text-sm text-muted-foreground">
                   编辑演示内容（文本 / 图片 / 基础元素 / 素材插入）

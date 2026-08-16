@@ -51,7 +51,22 @@ export function ProductAssetBrowser({
       setSelectedId((prev) => {
         if (prev && merged.some((p) => p.product_id === prev)) return prev
         if (requested && merged.some((p) => p.product_id === requested)) return requested
-        return merged[0]?.product_id ?? null
+        // 优先默认选中「PPT 最新产出」的已完成产品（用户最关心的新资产），
+        // 其次最新已完成产品；运行中任务在列表可见
+        const completed = merged.filter((p) => p.status === 'completed')
+        const withPpt = completed
+          .filter((p) => p.ppt_design?.pptx_relative)
+          .sort((a, b) => {
+            const ta = a.ppt_design?.created_at ? Date.parse(a.ppt_design.created_at) : 0
+            const tb = b.ppt_design?.created_at ? Date.parse(b.ppt_design.created_at) : 0
+            return tb - ta
+          })
+        return (
+          withPpt[0]?.product_id ??
+          completed[0]?.product_id ??
+          merged[0]?.product_id ??
+          null
+        )
       })
       return merged.some((p) => p.status === 'running' || p.status === 'queued')
     } finally {
@@ -135,6 +150,14 @@ export function ProductAssetBrowser({
               )}
             >
               <span className="min-w-0 flex-1 truncate">{p.idea || '（未命名）'}</span>
+              {p.status === 'completed' && p.ppt_design?.pptx_relative && (
+                <span
+                  title="已生成可编辑 PPT（ppt-master）"
+                  className="shrink-0 rounded-full bg-emerald-600/10 px-1.5 py-0.5 text-[10px] font-medium text-emerald-600"
+                >
+                  PPT
+                </span>
+              )}
               <span className={cn('shrink-0 rounded-full px-1.5 py-0.5 text-[10px]', meta.cls)}>
                 {meta.label}
               </span>

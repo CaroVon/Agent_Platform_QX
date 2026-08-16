@@ -188,7 +188,9 @@ export interface StudioProduct {
     pptx_path?: string
     pptx_relative?: string
     pages?: number
+    created_at?: string
     svg_files?: string[]
+    images?: Array<{ name: string; url: string; size: number }>
     model?: string
     design_brief?: string
     status?: string
