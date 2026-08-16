@@ -155,7 +155,7 @@ export function ProductWorkspacePage() {
         <>
           <Section step="01" title="AI Team Progress">
             <div className="grid gap-8 lg:grid-cols-[1fr_260px]">
-              <AgentTimeline nodeStatus={product.node_status ?? {}} />
+              <AgentTimeline nodeStatus={product.node_status ?? {}} nodeModels={product.node_models ?? {}} />
               <div className="border-l border-border/60 pl-6">
                 <div className="mb-2 text-[11px] font-medium uppercase tracking-wider text-muted-foreground/60">
                   工具与检查

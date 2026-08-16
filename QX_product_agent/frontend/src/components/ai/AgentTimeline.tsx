@@ -49,6 +49,13 @@ const TEAM: TeamRole[] = [
     task: '编排演示叙事，评审视觉质量…',
     doneTask: '✓ 演示资产已完成并通过评审',
   },
+  {
+    name: 'PPT Design Agent',
+    role: 'PPT 设计师',
+    nodes: ['ppt_design'],
+    task: '按 ppt-master 工作流设计逐页 SVG 并导出原生 PPTX…',
+    doneTask: '✓ 原生可编辑 PPTX 已生成',
+  },
 ]
 
 function phaseOf(nodes: string[], nodeStatus: Record<string, string>): AgentPhase {
@@ -60,8 +67,22 @@ function phaseOf(nodes: string[], nodeStatus: Record<string, string>): AgentPhas
   return 'pending'
 }
 
-export function AgentTimeline({ nodeStatus }: { nodeStatus: Record<string, string> }) {
+export function AgentTimeline({
+  nodeStatus,
+  nodeModels,
+}: {
+  nodeStatus: Record<string, string>
+  nodeModels?: Record<string, string>
+}) {
   const assembleDone = nodeStatus['assemble'] === 'completed'
+
+  /** 团队成员当前/所用模型（分工可见性：DeepSeek 主流水线，MiniMax 承接 PPT） */
+  const modelOf = (nodes: string[]): string | undefined => {
+    for (const n of nodes) {
+      if (nodeModels?.[n]) return nodeModels[n]
+    }
+    return undefined
+  }
 
   return (
     <div>
@@ -72,25 +93,31 @@ export function AgentTimeline({ nodeStatus }: { nodeStatus: Record<string, strin
         <div>
           <div className="text-sm font-medium">AI 产品团队</div>
           <div className="text-[11px] text-muted-foreground">
-            4 位专业 Agent 正在协作完成产品工作流
+            5 位专业 Agent 正在协作完成产品工作流（DeepSeek ↔ MiniMax 分工）
           </div>
         </div>
       </div>
 
       <div className="divide-y divide-border/60">
-        {TEAM.map((member) => (
-          <AgentStatus
-            key={member.name}
-            name={member.name}
-            task={
-              phaseOf(member.nodes, nodeStatus) === 'completed'
-                ? member.doneTask
-                : member.task
-            }
-            phase={phaseOf(member.nodes, nodeStatus)}
-            detail={member.role}
-          />
-        ))}
+        {TEAM.map((member) => {
+          const phase = phaseOf(member.nodes, nodeStatus)
+          const model = modelOf(member.nodes)
+          return (
+            <AgentStatus
+              key={member.name}
+              name={member.name}
+              task={
+                phase === 'completed'
+                  ? member.doneTask
+                  : model
+                    ? `${member.task}（模型：${model}）`
+                    : member.task
+              }
+              phase={phase}
+              detail={`${member.role}${model ? ' · ' + model : ''}`}
+            />
+          )
+        })}
         <AgentStatus
           name="交付打包"
           task={assembleDone ? '✓ 产品资产包已生成' : '汇总结构化资产为最终交付物…'}

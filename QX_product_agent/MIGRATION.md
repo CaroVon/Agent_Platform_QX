@@ -668,3 +668,48 @@ HTML/PDF/PPTX 管线，三端一致不变。
   不整体替换流水线（agent 逐页手写 + 用户确认门与自动化冲突）
 - MiniMax 分工不变：MiniMax-Text-01 承接 PPT skill 制作（PRESENTATION_LLM_*），
   DeepSeek 主流水线；启用图片阶段时 MiniMax-Image-01 可接其 image_backends
+
+---
+
+## 20. ppt-master 完整吸收 + PPT Design Agent + MiniMax 分工（2026-08）
+
+### 完整吸收（hugohe3/ppt-master，MIT）
+- `agents/ppt-design-agent/vendor/ppt-master/`：完整 skill 收编（SKILL.md/
+  workflows/scripts 239 个 py/templates 设计系统/references），保留 LICENSE；
+  依赖装入 venv：python-pptx/XlsxWriter/PyMuPDF/edge-tts/uharfbuzz（skia-pathops
+  可选未装）；已裁剪 references/ai-image-comparison（44MB 对比图，可从上游恢复）
+
+### 框架与过程适配
+- 新增独立成员 **PptDesignAgent**（agents/ppt-design-agent/，注册进 agents 包）：
+  输入 Presentation DSL → ppt-master 项目（设计规范与内容大纲.md + spec_lock.md
+  执行锁）→ **逐页确定性 SVG**（dsl_to_svg.py：1280×720、theme 驱动、原生
+  柱/折线/饼/象限图、文本换行防溢出、遵守页设计闭合契约）→ finalize_svg +
+  svg_to_pptx → **原生可编辑 PPTX**（DrawingML 形状）
+- LangGraph 新节点 `ppt_design`：critic 门后执行（presentation → critic →
+  ppt_design → assemble）；节点失败降级（retry → 跳过，不阻塞交付）
+- `export-pptx` 优先返回 ppt-master 产物（asset_package.ppt_design.pptx_relative），
+  无则回退 PptxGenJS 管线
+- 资产包/API 新增 `ppt_design` + `node_models`（节点→模型映射）
+
+### MiniMax 分工（已配置生效）
+- key 位置：`QX_product_agent/backend/.env`
+  （AGENT_PLATFORM_PRESENTATION_LLM_BASE_URL/MODEL/API_KEY 三行，模板已写入）
+- 实测：presentation/ppt_design/critic 走 MiniMax（api.minimax.chat），
+  其余节点 DeepSeek；前端 AgentTimeline 显示「模型：xxx」（5 位成员含
+  PPT Design Agent）
+- **MiniMax 适配修复**：
+  - 输出带 `<think>` 推理前缀 → `_extract_json_block` 先剥离 think 块
+  - M3 默认开启推理 → 新增 `AGENT_PLATFORM_PRESENTATION_LLM_EXTRA_JSON=
+    {"thinking":{"type":"disabled"}}`（官方参数，直出 JSON；LLMClient 支持
+    extra_body，配置在 backend/.env）
+  - 长文含字面换行/推理中花括号 → `complete_json` strict=False 阶梯 +
+    多 `{` 起点尝试
+  - 循环内覆盖评估器放宽为结构性检查（MiniMax 会改写表述；逐字覆盖由
+    critic 门在确定性注入后把关，避免无限修订）
+
+### 验证
+- platform 55 / agents 6（+4 PPT 设计） / backend 56 / tsc+build ✅
+- 端到端（MiniMax-M3 分工实测）：DeepSeek 主链 + MiniMax 三节点
+  （presentation/critic/ppt_design），node_models 入 API；ppt_design 产出
+  10 页 SVG → svg_to_pptx 原生 PPTX（243 文本/377 图形形状，CyberPPT QA
+  0 errors）；export-pptx 优先返回原生 PPTX（message 含模型名）

@@ -134,6 +134,7 @@ def run_product_studio_pipeline(self: ProductStudioTask, product_id: str):
 
     from agents.critic_agent.agent import CriticAgent
     from agents.design_agent.agent import DesignAgent
+    from agents.ppt_design_agent.agent import PptDesignAgent
     from agents.presentation_agent.agent import PresentationAgent
     from agents.product_agent.agent import ProductAgent
     from agents.research_agent.agent import ResearchAgent
@@ -147,10 +148,12 @@ def run_product_studio_pipeline(self: ProductStudioTask, product_id: str):
         research_agent=ResearchAgent(loop=loop),
         product_agent=ProductAgent(loop=loop),
         design_agent=DesignAgent(loop=loop),
-        # P3: Presentation Agent 使用专用模型（Kimi 等，未配置回退主 LLM）
+        # P3: Presentation Agent 使用专用模型（Kimi / MiniMax，未配置回退主 LLM）
         presentation_agent=PresentationAgent(memory=memory),
         # P5: Critic 评审 + 修订循环
         critic_agent=CriticAgent(),
+        # P6: PPT 设计成员（ppt-master 工作流，MiniMax 承接设计简报）
+        ppt_design_agent=PptDesignAgent(),
         llm=loop.llm,          # 需求解析复用同一模型客户端
         memory=memory,
         max_retries=settings.AGENT_PLATFORM_MAX_RETRIES
@@ -166,7 +169,8 @@ def run_product_studio_pipeline(self: ProductStudioTask, product_id: str):
 
     # ── 执行工作流 ───────────────────────────────────────────
     try:
-        package = graph.invoke(idea, memory_namespace=product_id)
+        package = graph.invoke(idea, memory_namespace=product_id,
+                                   extra_initial={"product_id": str(product_id)})
     except Exception as exc:  # noqa: BLE001 —— 记录失败，允许 Celery 重试
         logger.exception("[Product Studio] product=%s 流水线失败", product_id)
         _update_product(

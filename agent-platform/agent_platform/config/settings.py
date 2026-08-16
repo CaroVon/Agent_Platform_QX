@@ -55,6 +55,8 @@ class PlatformSettings(BaseSettings):
     PRESENTATION_LLM_API_KEY: str = Field(default="")
     PRESENTATION_LLM_BASE_URL: str = Field(default="")
     PRESENTATION_LLM_MODEL: str = Field(default="")
+    # 请求附加 JSON（如 MiniMax M3 关闭推理: {"thinking":{"type":"disabled"}}）
+    PRESENTATION_LLM_EXTRA_JSON: str = Field(default="")
 
     # ─── 工具层 ────────────────────────────────────────────────
     TAVILY_API_KEY: str = Field(default="")

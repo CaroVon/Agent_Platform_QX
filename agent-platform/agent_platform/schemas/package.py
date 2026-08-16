@@ -19,11 +19,14 @@ from agent_platform.schemas.product_document import ProductDocument
 
 
 class AssetPackageMeta(BaseModel):
-    """资产包元信息（进度与失败记录）。"""
+    """资产包元信息（进度与模型分工记录）。"""
 
     idea: str
     created_at: str = Field(description="ISO 时间戳")
     node_status: dict[str, str] = Field(default_factory=dict, description="节点名 → 状态")
+    node_models: dict[str, str] = Field(
+        default_factory=dict, description="节点名 → 模型名（前端展示当前工作的模型）"
+    )
     errors: dict[str, str] = Field(default_factory=dict, description="节点名 → 错误信息")
 
 
@@ -37,6 +40,10 @@ class ProductAssetPackage(BaseModel):
     strategy: ProductStrategy | None = None
     design: UXDesign | None = None
     presentation: Presentation | None = None
+    ppt_design: dict | None = Field(
+        default=None,
+        description="P6: PPT 设计成员产物（ppt-master 项目/pptx 路径/模型）",
+    )
     document: ProductDocument | None = Field(
         default=None,
         description="P1: Canonical Product Document（语义层，不含排版）",

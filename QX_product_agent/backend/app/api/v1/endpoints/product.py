@@ -50,6 +50,7 @@ _ASSET_KEYS = (
     "strategy",
     "design",
     "presentation",
+    "ppt_design",
 )
 
 
@@ -71,6 +72,7 @@ def _to_asset_response(product: StudioProduct) -> ProductAssetResponse:
         "created_at": product.created_at.isoformat() if product.created_at else None,
         "updated_at": product.updated_at.isoformat() if product.updated_at else None,
         "node_status": meta.get("node_status") or {},
+        "node_models": meta.get("node_models") or {},
         "errors": meta.get("errors") or {},
         "critic_score": package.get("critic_score"),
         "gate_report": package.get("gate_report"),
@@ -397,6 +399,22 @@ async def export_product_pptx(
     out_dir = Path(settings.OUTPUT_DIR).resolve() / "studio_assets"
     out_dir.mkdir(parents=True, exist_ok=True)
     pptx_path = out_dir / f"{product_id}.pptx"
+
+    # P6: 优先返回 ppt-master（PptDesignAgent）产出的原生可编辑 PPTX
+    ppt_design = package.get("ppt_design") or {}
+    pptx_relative = ppt_design.get("pptx_relative")
+    if pptx_relative and Path(settings.OUTPUT_DIR).resolve().joinpath(pptx_relative).is_file():
+        from pathlib import Path as _Path
+
+        _p = _Path(settings.OUTPUT_DIR).resolve().joinpath(pptx_relative)
+        return ExportPdfResponse(
+            product_id=str(product_id),
+            pdf_url=f"/api/v1/files/{pptx_relative.replace(os.sep, '/')}",
+            message=(
+                f"PPTX 导出成功（ppt-master 原生）| 页数 {ppt_design.get('pages', len(presentation['pages']))}"
+                f" | 模型 {ppt_design.get('model', '')}"
+            ),
+        )
 
     gate = await _export_via_node(str(product_id), "pptx", pptx_path)
 

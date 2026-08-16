@@ -42,7 +42,9 @@ class ProductAssetResponse(BaseModel):
     strategy: dict[str, Any] | None = None
     design: dict[str, Any] | None = None
     presentation: dict[str, Any] | None = None
+    ppt_design: dict[str, Any] | None = None
     document: dict[str, Any] | None = None
+    node_models: dict[str, str] | None = None
     # ── P5: 质量层 ──
     critic_score: int | None = None
     gate_report: dict[str, Any] | None = None

@@ -126,19 +126,12 @@ class PresentationAgent(BaseAgent):
         if revise_feedback:
             objective += f"\n\n【上一版评审意见（必须逐条修正）】\n{revise_feedback}"
 
-        # ── A3 强化：AgentLoop 内覆盖度评估器（每轮自检，反馈带缺失清单） ──
+        # ── A3 强化：AgentLoop 内评估器（结构性自检） ──
+        # 注：逐字覆盖度由 critic 质量门在确定性注入（enforce/enrich）之后
+        # 检查，循环内不再逐字比对 —— 兼容会改写表述的模型（如 MiniMax），
+        # 避免"改写 → 误判缺失 → 无限修订"。
         def coverage_evaluator(model: Presentation) -> tuple[bool, str]:
-            if document is None:
-                return _presentation_evaluator(model)
-            ok, feedback = _presentation_evaluator(model)
-            if not ok:
-                return ok, feedback
-            from agent_platform.harness.quality_gate import coverage_issues
-
-            issues = coverage_issues(model, document)
-            if issues:
-                return False, "；".join(issues[:4])
-            return True, ""
+            return _presentation_evaluator(model)
 
         artifacts: dict[str, Any] = {"canonical_product_document": document}
         if evidence_pack:

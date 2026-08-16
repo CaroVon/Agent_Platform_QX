@@ -183,9 +183,20 @@ export interface StudioProduct {
   design?: UXDesign | null
   document?: Record<string, unknown> | null
   presentation?: PresentationDSL | SlideDeck | null
+  ppt_design?: {
+    project_dir?: string
+    pptx_path?: string
+    pptx_relative?: string
+    pages?: number
+    svg_files?: string[]
+    model?: string
+    design_brief?: string
+    status?: string
+  } | null
   critic_score?: number | null
   gate_report?: QualityGateReport | null
   node_status: Record<string, string>
+  node_models?: Record<string, string>
   errors: Record<string, string>
 }
 

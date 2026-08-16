@@ -36,7 +36,12 @@ class LLMOutputParseError(ValueError):
 
 
 def _extract_json_block(text: str) -> str:
-    """从模型输出中提取 JSON 片段（容忍 ```json 围栏与前后缀文本）。"""
+    """从模型输出中提取 JSON 片段（容忍 ```json 围栏与前后缀文本）。
+
+    兼容带推理前缀的模型（MiniMax-Text-01/M3 等输出 <think>…</think>）：
+    先剥离推理块，再按围栏/首尾花括号提取。
+    """
+    text = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL)
     fenced = re.search(r"```(?:json)?\s*(.*?)```", text, re.DOTALL)
     if fenced:
         return fenced.group(1).strip()
@@ -59,6 +64,7 @@ class LLMClient:
         timeout: int = 180,
         max_tokens: int = 8192,
         temperature: float = 0.2,
+        extra_body: dict | None = None,
     ):
         self.api_key = api_key
         self.base_url = base_url.rstrip("/")
@@ -66,6 +72,7 @@ class LLMClient:
         self.timeout = timeout
         self.max_tokens = max_tokens
         self.temperature = temperature
+        self.extra_body = extra_body
 
     # ─── 文本补全 ────────────────────────────────────────────
     def complete(
@@ -88,6 +95,8 @@ class LLMClient:
             "max_tokens": self.max_tokens if max_tokens is None else max_tokens,
             "stream": False,
         }
+        if self.extra_body:
+            payload.update(self.extra_body)
         headers = {
             "Authorization": f"Bearer {self.api_key}",
             "Content-Type": "application/json",
@@ -135,6 +144,22 @@ class LLMClient:
         try:
             return json.loads(block)
         except json.JSONDecodeError as exc:
+            # 阶梯兜底：1) 宽松模式（容忍字符串内控制字符，MiniMax 长文常见）
+            # 2) 依次尝试其它 `{` 起点（推理文本中可能含花括号干扰）
+            for strict in (False, True):
+                try:
+                    return json.loads(block, strict=strict)
+                except json.JSONDecodeError:
+                    continue
+            idx = block.find("{")
+            while idx != -1:
+                candidate = block[idx : block.rfind("}") + 1]
+                for strict in (False, True):
+                    try:
+                        return json.loads(candidate, strict=strict)
+                    except json.JSONDecodeError:
+                        continue
+                idx = block.find("{", idx + 1)
             raise LLMOutputParseError(
                 f"模型输出无法解析为 JSON: {exc.msg}（原始输出前 200 字符: {raw[:200]!r}）"
             ) from exc
@@ -165,6 +190,12 @@ def _cached_presentation_client() -> LLMClient | None:
     if not (settings.PRESENTATION_LLM_MODEL and settings.PRESENTATION_LLM_API_KEY):
         return None
     base_url = settings.PRESENTATION_LLM_BASE_URL or settings.LLM_BASE_URL
+    extra_body = None
+    if settings.PRESENTATION_LLM_EXTRA_JSON.strip():
+        try:
+            extra_body = json.loads(settings.PRESENTATION_LLM_EXTRA_JSON)
+        except json.JSONDecodeError:
+            logger.warning("PRESENTATION_LLM_EXTRA_JSON 非合法 JSON，忽略")
     return LLMClient(
         api_key=settings.PRESENTATION_LLM_API_KEY,
         base_url=base_url,
@@ -172,6 +203,7 @@ def _cached_presentation_client() -> LLMClient | None:
         timeout=settings.LLM_TIMEOUT,
         max_tokens=settings.LLM_MAX_TOKENS,
         temperature=settings.LLM_TEMPERATURE,
+        extra_body=extra_body,
     )
 
 

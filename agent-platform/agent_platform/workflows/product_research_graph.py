@@ -54,7 +54,7 @@ from agent_platform.workflows.state import ProductStudioState
 
 logger = logging.getLogger(__name__)
 
-# 节点执行顺序（linear pipeline）
+# 节点执行顺序（linear pipeline；ppt_design 在 critic 门后执行）
 NODE_ORDER = [
     "requirement_parser",
     "research",
@@ -129,6 +129,7 @@ class ProductResearchGraph:
         memory: MemoryStore | None = None,
         max_retries: int = 2,
         critic_agent: BaseAgent | None = None,
+        ppt_design_agent: BaseAgent | None = None,
         score_threshold: int = 80,
         max_revisions: int = 2,
     ):
@@ -137,13 +138,35 @@ class ProductResearchGraph:
         self.design_agent = design_agent
         self.presentation_agent = presentation_agent
         self.critic_agent = critic_agent
+        self.ppt_design_agent = ppt_design_agent
         self.score_threshold = score_threshold
         self.max_revisions = max_revisions
         self.llm = llm
         self.memory = memory
         self.max_retries = max_retries
+        self.node_models = self._resolve_node_models()
         self._checkpointer = self._make_checkpointer()
         self.graph = self._build()
+
+    def _resolve_node_models(self) -> dict[str, str]:
+        """模型分工：DeepSeek 主流水线；presentation/critic/ppt_design
+        由 Presentation 专用模型（如 MiniMax）承接，未配置回退主 LLM。"""
+        def _model_name(client) -> str:
+            try:
+                return client.model if client is not None else "deterministic"
+            except Exception:
+                return "deterministic"
+
+        from agent_platform.llm.client import get_presentation_llm_client
+
+        pres_model = _model_name(get_presentation_llm_client()) or _model_name(self.llm)
+        main_model = _model_name(self.llm)
+        models: dict[str, str] = {}
+        for name in NODE_ORDER:
+            models[name] = pres_model if name in ("presentation",) else main_model
+        models["critic"] = pres_model
+        models["ppt_design"] = pres_model
+        return models
 
     # ─── 节点实现 ──────────────────────────────────────────
 
@@ -280,19 +303,41 @@ class ProductResearchGraph:
         }
 
     def _after_critic(self, state: dict) -> str:
-        """P5: 质量门决策 —— 达标/达修订上限/节点失败 → 收尾；否则修订。"""
+        """P5: 质量门决策 —— 达标/达修订上限/节点失败 → 进入 PPT 设计；否则修订。"""
         # presentation 节点失败时强制收尾，防止修订循环无法终止
         if state.get("node_status", {}).get("presentation") == "failed":
-            return "finalize"
+            return "ppt_design"
         score = state.get("critic_score")
         if score is None:
             score = 100  # 未评审视为通过
         revision = state.get("revision_count", 0)
         if score >= self.score_threshold:
-            return "finalize"
+            return "ppt_design"
         if revision >= self.max_revisions:
-            return "finalize"
+            return "ppt_design"
         return "revise"
+
+    def _ppt_design(self, state: dict) -> dict:
+        """PPT 设计成员：DSL → ppt-master 项目 → 原生可编辑 PPTX。"""
+        if self.ppt_design_agent is None:
+            return {
+                "ppt_design": {
+                    "status": "skipped",
+                    "reason": "未注入 PptDesignAgent",
+                    "model": self.node_models.get("ppt_design", ""),
+                }
+            }
+        result = self.ppt_design_agent.execute(
+            "ppt_design",
+            state,
+            memory=self.memory,
+            memory_namespace=state.get("memory_namespace", "default"),
+        )
+        if not result.success or result.data is None:
+            raise RuntimeError(result.error or "PptDesignAgent 执行失败")
+        updates: dict = {"ppt_design": result.data}
+        updates["ppt_design"]["model"] = self.node_models.get("ppt_design", "")
+        return updates
 
     def _assemble(self, state: dict) -> dict:
         """Final Product Asset Package：收敛全部节点产物 + Canonical Document。"""
@@ -310,6 +355,7 @@ class ProductResearchGraph:
             strategy=document.strategy,
             design=document.design,
             presentation=_get(Presentation, "presentation"),
+            ppt_design=state.get("ppt_design"),
             document=document,
             critic_score=state.get("critic_score"),
             gate_report=state.get("gate_report"),
@@ -320,6 +366,7 @@ class ProductResearchGraph:
                     **dict(state.get("node_status", {})),
                     "assemble": "completed",
                 },
+                node_models=dict(state.get("node_models") or {}),
                 errors=dict(state.get("errors", {})),
             ),
         )
@@ -339,18 +386,20 @@ class ProductResearchGraph:
         for name in NODE_ORDER:
             builder.add_node(name, _with_retry(self._node_fn(name), name, self.max_retries))
         builder.add_node("critic", _with_retry(self._critic, "critic", self.max_retries))
+        builder.add_node("ppt_design", _with_retry(self._ppt_design, "ppt_design", self.max_retries))
         builder.add_node("assemble", self._assemble)
 
         builder.add_edge(START, NODE_ORDER[0])
         for prev, nxt in zip(NODE_ORDER, NODE_ORDER[1:]):
             builder.add_edge(prev, nxt)
-        # P5: presentation → critic →（修订循环 | 收尾）
+        # P5: presentation → critic →（修订循环 | PPT 设计 → 收尾）
         builder.add_edge("presentation", "critic")
         builder.add_conditional_edges(
             "critic",
             self._after_critic,
-            {"revise": "presentation", "finalize": "assemble"},
+            {"revise": "presentation", "ppt_design": "ppt_design"},
         )
+        builder.add_edge("ppt_design", "assemble")
         builder.add_edge("assemble", END)
 
         if self._checkpointer is not None:
@@ -379,9 +428,15 @@ class ProductResearchGraph:
 
     # ─── 执行入口 ──────────────────────────────────────────
 
-    def invoke(self, idea: str, memory_namespace: str = "default") -> ProductAssetPackage:
+    def invoke(
+        self,
+        idea: str,
+        memory_namespace: str = "default",
+        extra_initial: dict | None = None,
+    ) -> ProductAssetPackage:
         """运行全流程，返回最终产品资产包。"""
         initial: ProductStudioState = {
+            **dict(extra_initial or {}),
             "idea": idea,
             "memory_namespace": memory_namespace,
             "requirement": None,
@@ -390,8 +445,10 @@ class ProductResearchGraph:
             "strategy": None,
             "design": None,
             "presentation": None,
+            "ppt_design": None,
             "document": None,
             "asset_package": None,
+            "node_models": self.node_models,
             "critic_score": None,
             "critic_issues": [],
             "revision_count": 0,
@@ -416,6 +473,7 @@ def build_product_research_graph(
     memory: MemoryStore | None = None,
     max_retries: int = 2,
     critic_agent: BaseAgent | None = None,
+    ppt_design_agent: BaseAgent | None = None,
     score_threshold: int = 80,
     max_revisions: int = 2,
 ) -> ProductResearchGraph:
@@ -444,6 +502,7 @@ def run_pipeline(
     memory: MemoryStore | None = None,
     max_retries: int = 2,
     critic_agent: BaseAgent | None = None,
+    ppt_design_agent: BaseAgent | None = None,
     score_threshold: int = 80,
     max_revisions: int = 2,
     memory_namespace: str = "default",
@@ -458,6 +517,7 @@ def run_pipeline(
         memory=memory,
         max_retries=max_retries,
         critic_agent=critic_agent,
+        ppt_design_agent=ppt_design_agent,
         score_threshold=score_threshold,
         max_revisions=max_revisions,
     )

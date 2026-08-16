@@ -25,8 +25,12 @@ class ProductStudioState(TypedDict, total=False):
     strategy: dict[str, Any] | None
     design: dict[str, Any] | None
     presentation: dict[str, Any] | None
+    ppt_design: dict[str, Any] | None
     document: dict[str, Any] | None
     asset_package: dict[str, Any] | None
+
+    # ─── 模型分工（节点名 → 模型名，前端展示"当前哪个模型在工作"） ──
+    node_models: dict[str, str]
 
     # ─── P5: Critic 质量闭环 ──────────────────────────────
     critic_score: int | None
