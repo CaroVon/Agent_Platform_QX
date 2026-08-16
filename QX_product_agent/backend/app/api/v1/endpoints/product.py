@@ -400,8 +400,42 @@ async def export_product_pptx(
 
     gate = await _export_via_node(str(product_id), "pptx", pptx_path)
 
+    # CyberPPT QA 门禁：validate_pptx.py（MIT，见 scripts/pptx_qa/LICENSE）
+    # 结果写入响应 message（不阻断导出；错误级别条目记日志）
+    qa_text = ""
+    try:
+        import asyncio
+        import functools
+        import subprocess
+        import tempfile
+
+        qa_script = Path(__file__).resolve().parents[4] / "scripts" / "pptx_qa" / "validate_pptx.py"
+        manifest = pptx_path.with_suffix(".pptx.manifest.json")
+        qa_out = Path(tempfile.gettempdir()) / f"pptx_qa_{product_id}.json"
+        import sys
+        qa_cmd = [sys.executable, str(qa_script), str(pptx_path), "--json-out", str(qa_out)]
+        if manifest.is_file():
+            qa_cmd += ["--manifest", str(manifest)]
+        loop = asyncio.get_running_loop()
+        qa_proc = await loop.run_in_executor(
+            None,
+            functools.partial(subprocess.run, qa_cmd, capture_output=True, text=True, timeout=60),
+        )
+        if qa_proc.returncode == 0 and qa_out.is_file():
+            qa = json.loads(qa_out.read_text())
+            qa_errors = len(qa.get("errors") or [])
+            qa_warnings = len(qa.get("warnings") or [])
+            qa_text = f" | QA:{qa.get('summary', {}).get('slide_count', '?')}页/errors {qa_errors}/warnings {qa_warnings}"
+            if qa_errors:
+                logger.warning("PPTX QA errors | product=%s | %s", product_id, qa["errors"][:2])
+    except Exception as exc:  # noqa: BLE001 —— QA 门禁不阻断导出
+        logger.warning("PPTX QA 门禁执行失败: %s", exc)
+
     return ExportPdfResponse(
         product_id=str(product_id),
         pdf_url=f"/api/v1/files/studio_assets/{product_id}.pptx",
-        message=f"PPTX 导出成功 | 页数 {gate.get('pages', len(presentation['pages']))}",
+        message=(
+            f"PPTX 导出成功 | 页数 {gate.get('pages', len(presentation['pages']))}"
+            f" | 图表嵌入 {gate.get('charts_embedded', 0)}{qa_text}"
+        ),
     )

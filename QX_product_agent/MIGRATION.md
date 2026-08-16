@@ -588,3 +588,42 @@ HTML/PDF/PPTX 管线，三端一致不变。
   PPTX 12 页经 CyberPPT validate_pptx.py：0 errors
 - 测试：platform 54（+5 证据包 +3 主题锁定）/ agents 2 / backend 56 /
   tsc+build ✅
+
+---
+
+## 17. CyberPPT P1-P3：内容保真 + 视觉层 + 结构化适配（2026-08）
+
+针对「生成 PPT 与 demo 差距」「research hub / PRD studio 模块化文本缺失」双问题，
+按 P1→P3 实施（结构性调整：ImageGen 蓝图以确定性构图层替代，成本 0，未来可插拔）。
+
+### P1 内容保真（确定性，不依赖 LLM 自觉）
+- `evidence_pack.py`：模块化文本块（PRD 章节全文/画像三段/竞品定位·定价·强弱项/
+  旅程步骤描述）截断上限 80→300 字符，保结构「标题：正文」入包（实测包 11KB）
+- Prompt：新增【模块化内容入页清单】+【组件清单声明】（生成规划=还原清单，
+  card items/timeline milestones/chart items 逐项兑现）
+- `enforce_coverage._inject_modular_content`（代码保底线）：竞品短板/定价未入页 →
+  competitor_matrix 补「竞品短板与定价」卡；PRD 章节未入页 → features/architecture
+  补「PRD 核心结论」卡。实测：PRD 三章全文 + 6 家竞品弱点/定价确定性入 DSL
+- PPTX 渲染器补全组件：card（标题+items+desc）、timeline（阶段+里程碑）、
+  quote、**chart/matrix 用本地 ECharts 渲染 PNG 嵌入**（与 Web 预览同图表语言，
+  primary/accent 双色、象限双系列）
+
+### P2 视觉层 + QA 门禁
+- 渲染器按 theme.palette 确定性构图层：页背景、标题强调条、指标/卡片圆角容器、
+  分隔线、封面居中+色条（8 套咨询风全链路：HTML/PDF/PPTX 一致）
+- 溢出保护：每组件前校验剩余版面（>6.4in 截断），高组件按余量收缩
+- `slide_manifest.json` 随导出生成（slide 键/组件清单/qa_expectations/
+  generation_engine=pptxgenjs/page_execution/image_assets）
+- **CyberPPT validate_pptx.py 收编**至 `backend/scripts/pptx_qa/`（MIT，附 LICENSE），
+  export-pptx 端点自动执行并回写响应 message：`QA:10页/errors 0/warnings 65`
+  （剩余 warnings 均为 agent 工作流产物类提示：blueprint/content-lock/final-merge
+  等，0 errors；结构检查含 SHAPE_OUTSIDE_SLIDE 已清零）
+
+### P3 结构化适配（蓝图层预留）
+- SKILL 更新：还原链路 = 确定性视觉层（palette+页型）+ ECharts PNG + manifest QA；
+  ImageGen 整页蓝图接口预留（未来接图像模型时替换构图层即可）
+
+### 验证
+- 实测：10 页 PPTX 含 chart PNG（slide4 象限图 16KB）、卡片内容完整 9/9、
+  时间线里程碑 2/2；HTML/PDF 导出正常；QA errors 0
+- 测试：platform 55 / agents 2 / backend 56 / tsc+build ✅

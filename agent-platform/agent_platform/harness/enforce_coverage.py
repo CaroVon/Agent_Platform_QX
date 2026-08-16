@@ -112,6 +112,10 @@ def enrich_coverage(
                 if not phase.get("milestones") and upstream.milestones:
                     phase["milestones"] = list(upstream.milestones)[:5]
 
+    # ── 模块化内容注入（CyberPPT 原生文本要求：竞品短板/定价、
+    #    PRD 章节全文必须按模块嵌入，不依赖 LLM 自觉） ─────
+    pages = _inject_modular_content(pages, presentation, document)
+
     # ── 组件 ID 归一化（充实新增组件同样保证唯一） ─────────
     seen: set[str] = set()
     for page in pages:
@@ -335,3 +339,73 @@ def ensure_consulting_theme(presentation: Presentation, seed: str = "") -> Prese
             )
         }
     )
+
+
+def _inject_modular_content(
+    pages: list[Page],
+    presentation: Presentation,
+    document: ProductDocument,
+) -> list[Page]:
+    """CyberPPT 模块化内容确定性注入：
+
+    1. 竞品 定价/短板（research/competitor_analysis）未入页 → 在
+       competitor_matrix 页补「竞品短板与定价」卡片
+    2. PRD 章节（strategy.prd_sections 全文）未入页 → 在
+       product_architecture / feature_priority 页补「PRD 核心结论」卡片
+    """
+    dsl_text = Presentation(title=presentation.title, pages=pages).model_dump_json()
+
+    def _norm(text: str | None) -> str:
+        return " ".join((text or "").split())
+
+    # ── 1) 竞品短板与定价 ─────────────────────────────────────
+    comp = document.competitor_analysis
+    if comp and comp.competitors:
+        missing: list[str] = []
+        for c in comp.competitors[:6]:
+            parts = [c.name]
+            if c.pricing and _norm(c.pricing)[:8] not in dsl_text:
+                parts.append(f"定价：{c.pricing}")
+            for w in (c.weaknesses or [])[:3]:
+                if _norm(w)[:10] not in dsl_text:
+                    parts.append(f"劣势：{_norm(w)[:60]}")
+            if len(parts) > 1:
+                missing.append("；".join(parts)[:180])
+        if missing:
+            matrix = next((p for p in pages if p.type == "competitor_matrix"), None)
+            if matrix is not None:
+                matrix.components.append(
+                    Component(
+                        id="",
+                        type="card",
+                        data={"title": "竞品短板与定价", "items": missing[:8]},
+                    )
+                )
+                dsl_text = Presentation(title=presentation.title, pages=pages).model_dump_json()
+
+    # ── 2) PRD 章节核心结论 ───────────────────────────────────
+    strat = document.strategy
+    if strat and strat.prd_sections:
+        missing_prd = [
+            s for s in strat.prd_sections[:4]
+            if _norm(s.content)[:10] not in dsl_text
+        ]
+        if missing_prd:
+            target = next(
+                (p for p in pages if p.type in ("product_architecture", "feature_priority")),
+                None,
+            )
+            if target is not None:
+                items = [
+                    f"{s.title}：{_norm(s.content)[:110]}"
+                    for s in missing_prd[:3]
+                ]
+                target.components.append(
+                    Component(
+                        id="",
+                        type="card",
+                        data={"title": "PRD 核心结论", "items": items},
+                    )
+                )
+
+    return pages

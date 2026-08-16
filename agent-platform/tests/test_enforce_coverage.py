@@ -138,3 +138,45 @@ def test_ensure_consulting_theme_fills_missing_palette():
     out = ensure_consulting_theme(pres, seed="x")
     assert out.theme.id == "cyber-crimson"
     assert out.theme.palette == THEME_PRESETS["cyber-crimson"]["palette"]
+
+
+def test_inject_modular_content_adds_prd_and_competitor_weaknesses():
+    """PRD 全文与竞品短板未入页时，确定性注入卡片（不依赖 LLM）。"""
+    from agent_platform.harness.enforce_coverage import enrich_coverage
+    from agent_platform.schemas.product_document import ProductDocument
+    from agent_platform.schemas.product import ProductStrategy
+    from agent_platform.schemas.research import CompetitorAnalysis, CompetitorProfile
+
+    doc = _rich_document()
+    # 上游补充 PRD 全文 + 竞品弱点/定价
+    doc.strategy = ProductStrategy(
+        positioning=doc.strategy.positioning,
+        personas=doc.strategy.personas,
+        features=doc.strategy.features,
+        roadmap=doc.strategy.roadmap,
+        prd_sections=[
+            {"title": "产品概述", "content": "这是一段必须进入演示的 PRD 核心结论全文" * 5},
+            {"title": "成功指标", "content": "北极星指标：周活跃训练用户数" * 3},
+        ],
+    )
+    doc.competitor_analysis = CompetitorAnalysis(
+        competitive_landscape=doc.competitor_analysis.competitive_landscape,
+        competitors=[
+            CompetitorProfile(name="Keep", positioning="大众健身", pricing="199元/年",
+                              strengths=["用户量大"], weaknesses=["个性化弱、缺乏教练实时纠错"]),
+        ],
+    )
+
+    pres = Presentation.model_validate(_full_deck())
+    out = enrich_coverage(pres, doc)
+    text = out.model_dump_json()
+
+    assert "PRD 核心结论" in text
+    assert "必须进入演示的 PRD 核心结论全文" in text
+    assert "竞品短板与定价" in text
+    assert "199元/年" in text
+    assert "个性化弱" in text
+
+    # 注入卡片 id 唯一
+    ids = [c.id for p in out.pages for c in p.components]
+    assert len(ids) == len(set(ids))

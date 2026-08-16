@@ -42,3 +42,13 @@
 - [ ] 关键数字（TAM/SAM/SOM/CAGR、竞品数、功能数、阶段数）是否全部入页
 - [ ] 每页组件数是否在预算内（见 density-planning.md）
 - [ ] theme 是否来自 8 套咨询风之一且全篇一致
+
+## 本平台还原链路（P3 结构化适配）
+
+- **蓝图层**：ImageGen 逐页蓝图以「确定性构图层」替代（theme.palette + 页型驱动：
+  背景/标题强调条/指标卡容器/分隔线），零成本；未来接入图像模型时替换本层即可
+- **还原层**：PptxGenJS 全组件兑现（card items / timeline 里程碑 / quote /
+  table / metric / chart·matrix 以本地 ECharts 渲染 PNG 嵌入，与 Web 预览同图表语言）
+- **质检层**：导出自动生成 slide_manifest.json 并执行 validate_pptx.py 门禁
+  （backend/scripts/pptx_qa/，MIT）；0 errors 为交付底线，
+  blueprint/content-lock 等 agent 工作流类 warnings 属预期提示

@@ -59,6 +59,22 @@ DECK_BUILDER_SYSTEM_V2 = """你是资深信息设计师与产品演示策略师�
 - prd_sections 核心结论（产品概述/成功指标/功能要点）→ 至少 1-2 页承载
 - design.user_flow 完整旅程 → journey 页（若上游提供）
 
+【模块化内容入页清单（CyberPPT 原生文本要求：材料包 text_block 条目
+  含完整模块文本，必须按模块嵌入对应页面，禁止只放标题）】
+- 竞品强弱项/定价（E 条目含 优势/劣势/定价）→ competitor_matrix 页
+  用对比卡/表逐条承载，不止象限散点
+- 画像 目标/痛点/行为 三段 → user_persona 每张卡三段全量
+- PRD 章节正文（产品概述/目标用户/核心功能，材料包有全文）→
+  至少 2 页：架构/功能页可嵌入章节要点 + 1 页 PRD 核心结论
+- 旅程步骤描述 → user_journey 每步附说明
+- 里程碑 3-5 条/阶段 → roadmap timeline 逐条列出（禁止只列阶段名）
+- 痛点/趋势原文附说明，禁止压缩成单条标题
+
+【组件清单声明（生成时规划、还原时逐项兑现）】
+- 每页输出组件即"还原清单"：card 的 items 逐条写入组件 data.items；
+  timeline 的 phases 含 name+period+milestones 数组；chart 用
+  chart_type+items、matrix 用 points——**不得用"仅标题"代替清单内容**
+
 写作规则：
 - 标题表达"信息"而非主题名（如"市场存在个性化缺口"优于"市场分析"）
 - bullet 每条 8-40 字、单条单结论；单组件文本 ≤ 360 字；页文本总量 ≤ 2000 字

@@ -35,6 +35,7 @@ DENSITY_BUDGET: dict[str, tuple[int, int]] = {
 
 _MAX_ENTRIES = 70
 _MAX_TEXT = 80
+_MAX_TEXT_BLOCK = 300  # 模块化文本块（PRD 章节/画像/竞品说明等）长度上限
 
 
 def _clip(text: str | None, limit: int = _MAX_TEXT) -> str:
@@ -49,16 +50,20 @@ def _add(
     claim: str,
     value: str | None = None,
     caveat: str | None = None,
+    text_block: bool = False,
 ) -> None:
+    """证据条目。text_block=True 用于模块化文本（PRD 章节/画像/竞品说明），
+    截断上限放宽到 _MAX_TEXT_BLOCK，保结构「标题：正文」供页面直接嵌入。"""
     if not claim:
         return
+    limit = _MAX_TEXT_BLOCK if text_block else _MAX_TEXT
     evidence.append(
         {
             "id": f"E{len(evidence) + 1:03d}",
             "source": source,
-            "claim": _clip(claim),
+            "claim": _clip(claim, limit),
             "value": _clip(value, 40) if value else "",
-            "caveat": _clip(caveat, 40) if caveat else "",
+            "caveat": _clip(caveat, 60) if caveat else "",
         }
     )
 
@@ -102,12 +107,18 @@ def build_evidence_pack(document: ProductDocument | None) -> dict[str, Any]:
     if comp:
         _add(evidence, "competitor_analysis.competitive_landscape", comp.competitive_landscape)
         for p in comp.competitors[:6]:
-            _add(evidence, "competitor_analysis.competitors", p.name,
-                 value=p.positioning,
-                 caveat=("优势:" + "、".join(p.strengths[:3])) if p.strengths else None)
+            # 模块化文本块：竞品 定位/定价/优势/劣势 完整入包
+            bits = [p.name]
+            if p.positioning:
+                bits.append(f"定位:{p.positioning}")
+            if p.pricing:
+                bits.append(f"定价:{p.pricing}")
+            if p.strengths:
+                bits.append("优势:" + "、".join(p.strengths[:4]))
             if p.weaknesses:
-                _add(evidence, f"competitor_analysis.{p.name}.weaknesses",
-                     "、".join(p.weaknesses[:3]))
+                bits.append("劣势:" + "、".join(p.weaknesses[:4]))
+            _add(evidence, "competitor_analysis.competitors", "；".join(bits),
+                 text_block=True)
         for i, d in enumerate(comp.differentiation_opportunities[:8]):
             _add(evidence, "competitor_analysis.differentiation_opportunities", d)
 
@@ -116,25 +127,45 @@ def build_evidence_pack(document: ProductDocument | None) -> dict[str, Any]:
     if strat:
         _add(evidence, "strategy.positioning", strat.positioning)
         for p in strat.personas[:4]:
-            _add(evidence, "strategy.personas", p.name,
-                 value=p.role,
-                 caveat=("痛点:" + "、".join(p.pain_points[:3])) if p.pain_points else None)
+            # 模块化文本块：画像三段（目标/痛点/行为）完整入包
+            _add(
+                evidence,
+                "strategy.personas",
+                f"{p.name}（{p.role}）：目标={p.goals[:3] and '、'.join(p.goals[:3]) or '—'}；"
+                f"痛点={'、'.join(p.pain_points[:3]) or '—'}；"
+                f"行为={p.behavior or '—'}",
+                text_block=True,
+            )
         for f in strat.features[:16]:
             _add(evidence, "strategy.features", f.name, value=f.description,
                  caveat=f.category)
         for r in strat.roadmap[:6]:
-            _add(evidence, "strategy.roadmap", f"{r.phase}·{r.title}",
-                 value=r.timeline,
-                 caveat=("里程碑:" + "、".join(r.milestones[:4])) if r.milestones else None)
+            _add(
+                evidence,
+                "strategy.roadmap",
+                f"{r.phase}·{r.title}",
+                value=r.timeline,
+                caveat=("里程碑:" + "、".join(r.milestones[:6])) if r.milestones else None,
+            )
         for s in strat.prd_sections[:6]:
-            _add(evidence, "strategy.prd_sections", s.title, value=s.content)
+            # 模块化文本块：PRD 章节全文（标题：正文）供页面直接嵌入
+            _add(
+                evidence,
+                "strategy.prd_sections",
+                f"{s.title}：{s.content}",
+                text_block=True,
+            )
 
-    # ── 旅程 ───────────────────────────────────────────────────
+    # ── 旅程（步骤 + 描述，模块化文本） ────────────────────────
     design = document.design
     if design and design.user_flow:
-        steps = [f"{s.step}" for s in design.user_flow[:10] if s.step]
+        steps = [
+            f"{s.step}（{s.description}）"
+            for s in design.user_flow[:8]
+            if s.step
+        ]
         if steps:
-            _add(evidence, "design.user_flow", "→".join(steps))
+            _add(evidence, "design.user_flow", "→".join(steps), text_block=True)
 
     # 关键数字封顶
     key_numbers = key_numbers[:10]
