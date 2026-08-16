@@ -713,3 +713,42 @@ HTML/PDF/PPTX 管线，三端一致不变。
   （presentation/critic/ppt_design），node_models 入 API；ppt_design 产出
   10 页 SVG → svg_to_pptx 原生 PPTX（243 文本/377 图形形状，CyberPPT QA
   0 errors）；export-pptx 优先返回原生 PPTX（message 含模型名）
+
+---
+
+## 21. PPT 质量改进 A/B/C 完成（2026-08）
+
+### A 溢出修复 + 图表增强
+- dsl_to_svg v2：页面预算器（字号阶梯 1.0→0.9→0.8 → 内容自适应截断 → 溢出
+  标记，不再静默丢内容）；换行校准（CJK 全角 1.0em）；表格独立最小缩放
+  (0.92) + 行数封顶 + "其余行见报告"；卡片/时间线绘制前余量检查；页脚上移
+- 图表库扩展：column/line/pie(donut)/radar/stacked 多系列 + 图例 + 数据标签；
+  高度随剩余空间收缩
+- 生成侧：cyberppt skill 增加【图表入页规则】；enrich_coverage 确定性注入
+  「功能优先级分布」柱状图（真实计数）
+- **实测：SHAPE_OUTSIDE_SLIDE 28 → 0；所有页面 max_y ≤ 700**
+
+### B 视觉系统（ppt-master 完整使用）
+- 图标系统：chunk-filled 图标内联（组件语义映射，currentColor→实际色值）
+- **原生图表 markers**：`data-pptx-replace-with="chart"` + JSON payload +
+  EMU bounds → svg_to_pptx `--native-charts-and-tables` 导出**真 PowerPoint
+  图表**（实测 2 个 chart parts）
+- 版式脚手架：封面 Hero 图槽、标题区配图、页脚页码、章节强调条、封面标题
+  36px 两行自适应
+
+### C MiniMax 生图 + 资产库
+- 复用 ppt-master `image_gen.py` + `backend_minimax.py`（零自研）：
+  backend/.env 配置 IMAGE_BACKEND=minimax / MINIMAX_MODEL=image-01 /
+  MINIMAX_API_KEY / MINIMAX_BASE_URL=https://api.minimax.chat
+- PptDesignAgent 生图阶段：image_prompts.json（封面 Hero + 每数据页 1 图）
+  → 批量生成 → 插入 SVG（Hero 背景/标题区配图）→ finalize 内嵌 → 导出图片
+- **资产库**：图片同步落盘 OUTPUT_DIR/assets/{product_id}/；新增
+  GET /product/{id}/assets；DesignStudioPage 增加「图片资产库」网格
+- 降级：生图失败（无 key/超时）自动跳过，不影响页面生产
+- 实测：6 图生成（hero + 5 页，1280×720）、PPTX 嵌入 7 图片对象、
+  资产库 API 返回 6 图
+
+### 验证
+- QA：errors 0；warnings 仅封面全幅背景类（Hero 设计使然）
+- 文本 208 / 图形 433 / 图片 7 / 原生图表 2（vs 上轮 229/470/7/0）
+- 测试：platform 55 / agents 6 / backend 56 / tsc+build ✅

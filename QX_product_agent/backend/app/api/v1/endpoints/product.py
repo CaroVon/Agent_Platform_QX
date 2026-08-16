@@ -320,6 +320,29 @@ async def update_presentation(
     return {"detail": "演示已更新"}
 
 
+@router.get("/{product_id}/assets")
+async def list_product_assets(
+    product_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+):
+    """DesignStudio 资产库：列出产品图片资产（生图/上传共用目录）。"""
+    product = await db.get(StudioProduct, product_id)
+    if product is None:
+        raise HTTPException(status_code=404, detail="产品不存在")
+    settings = get_settings()
+    asset_dir = Path(settings.OUTPUT_DIR).resolve() / "assets" / str(product_id)
+    items = []
+    if asset_dir.is_dir():
+        for f in sorted(asset_dir.iterdir()):
+            if f.is_file() and f.suffix.lower() in (".png", ".jpg", ".jpeg", ".webp", ".gif"):
+                items.append({
+                    "name": f.name,
+                    "url": f"/api/v1/files/assets/{product_id}/{f.name}",
+                    "size": f.stat().st_size,
+                })
+    return {"assets": items}
+
+
 @router.post("/{product_id}/search-images", response_model=ProductImageSearchResponse)
 async def search_product_images(
     product_id: uuid.UUID,

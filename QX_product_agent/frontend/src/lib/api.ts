@@ -372,6 +372,11 @@ export const productApi = {
     })
   },
 
+  /** DesignStudio 资产库：列出产品图片资产（生图/上传共用） */
+  listAssets(productId: string): Promise<{ assets: Array<{ name: string; url: string; size: number }> }> {
+    return request(`/product/${productId}/assets`)
+  },
+
   /** 编辑器本地上传图片素材，返回公开访问 URL */
   async uploadAsset(productId: string, file: File): Promise<{ url: string }> {
     const formData = new FormData()

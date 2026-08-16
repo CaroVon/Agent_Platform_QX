@@ -19,6 +19,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import subprocess
 import sys
 from datetime import datetime, timezone
@@ -197,16 +198,26 @@ class PptDesignAgent(BaseAgent):
             f"# 页面注释\n\n{spec}\n", encoding="utf-8"
         )
 
-        # ── 2) 逐页 SVG（确定性渲染，遵守页设计闭合） ──
+        # ── 2) 生图阶段（阶段 C：MiniMax-Image-01，可降级） ──
+        images = self._generate_images(project_dir, presentation, idea, str(state.get("product_id") or idea)[:40])
+
+        # ── 3) 逐页 SVG（确定性渲染 + 图片槽位，遵守页设计闭合） ──
         from agents.ppt_design_agent.dsl_to_svg import render_project_svgs
 
-        files = render_project_svgs(presentation, str(project_dir))
+        render_result = render_project_svgs(
+            presentation, str(project_dir),
+            assets={
+                "hero": images.get("hero"),
+                "pages": images.get("pages") or {},
+            },
+        )
+        files = render_result["files"]
 
-        # ── 3) finalize + svg_to_pptx（pptx-master 工具链，venv python） ──
+        # ── 4) finalize + svg_to_pptx（pptx-master 工具链，venv python） ──
         python = sys.executable
         for script, args in (
             ("finalize_svg.py", [str(project_dir)]),
-            ("svg_to_pptx.py", [str(project_dir), "-s", "final"]),
+            ("svg_to_pptx.py", [str(project_dir), "-s", "final", "--native-charts-and-tables"]),
         ):
             proc = subprocess.run(
                 [python, str(_SCRIPTS_DIR / script), *args],
@@ -222,7 +233,7 @@ class PptDesignAgent(BaseAgent):
         if pptx_path is None:
             raise RuntimeError("svg_to_pptx 未产出 PPTX 文件")
 
-        # ── 4) 模型记录（分工可见性） ──
+        # ── 5) 模型记录（分工可见性） ──
         try:
             model = get_presentation_llm_client().model if get_presentation_llm_client() else get_llm_client().model
         except Exception:
@@ -236,8 +247,114 @@ class PptDesignAgent(BaseAgent):
             "svg_files": files,
             "model": model,
             "design_brief": brief,
+            "images": images.get("list", []),
+            "overflow_pages": render_result.get("overflow_pages", []),
+            "max_y_by_page": render_result.get("max_y_by_page", {}),
             "created_at": datetime.now(timezone.utc).isoformat(),
         }
+
+    # ── 生图阶段（阶段 C）：MiniMax-Image-01 via ppt-master image_gen.py ──
+    _HERO_PROMPT = (
+        "高端咨询风格演示封面主视觉：{theme}，产品「{idea}」主题，"
+        "深色渐变背景 + 主色点缀，留白构图，无文字，16:9，商业摄影质感"
+    )
+    _PAGE_PROMPT = (
+        "咨询风格数据页配图（无文字）：{theme} 色系，主题「{topic}」，"
+        "抽象信息图形/数据可视化氛围，留白，16:9，高端商务质感"
+    )
+
+    def _generate_images(
+        self, project_dir: Path, presentation: dict, idea: str, product_id: str
+    ) -> dict:
+        """生成 image_prompts.json → image_gen.py 批量生成 → 资产库落盘。
+
+        降级：任何失败（无配置/超时/后端错误）→ 返回空，不影响页面生产。
+        """
+        result: dict = {"hero": None, "pages": {}, "list": [], "asset_dir": ""}
+        pages = presentation.get("pages") or []
+        theme = presentation.get("theme") or {}
+        theme_name = str(theme.get("name", "咨询风"))
+        image_dir = project_dir / "images"
+        image_dir.mkdir(exist_ok=True)
+
+        try:
+            items = [
+                {
+                    "filename": "hero.png",
+                    "prompt": self._HERO_PROMPT.format(theme=theme_name, idea=idea[:40]),
+                    "aspect_ratio": "16:9",
+                    "image_size": "1K",
+                    "status": "Pending",
+                    "purpose": "封面主视觉",
+                    "page_role": "hero_page",
+                }
+            ]
+            for i, page in enumerate(pages[:6]):
+                if page.get("type") in ("cover", "conclusion"):
+                    continue
+                items.append({
+                    "filename": f"page_{i + 1:02d}.png",
+                    "prompt": self._PAGE_PROMPT.format(
+                        theme=theme_name,
+                        topic=str(page.get("title") or page.get("type"))[:40],
+                    ),
+                    "aspect_ratio": "16:9",
+                    "image_size": "1K",
+                    "status": "Pending",
+                    "purpose": f"P{i + 1:02d} 配图",
+                    "page_role": "local",
+                })
+            manifest_path = image_dir / "image_prompts.json"
+            manifest_path.write_text(
+                json.dumps({"project": idea, "items": items}, ensure_ascii=False, indent=1),
+                encoding="utf-8",
+            )
+
+            proc = subprocess.run(
+                [sys.executable, str(_SCRIPTS_DIR / "image_gen.py"),
+                 "--manifest", str(manifest_path), "-o", str(image_dir)],
+                capture_output=True, text=True, timeout=900,
+                # cwd 继承工作目录（backend）：image_gen 需读取 backend/.env 的
+                # IMAGE_BACKEND/MINIMAX_API_KEY（vendor scripts 目录无 .env）
+            )
+            if proc.returncode != 0:
+                logger.warning("生图失败（降级跳过）: %s", (proc.stderr or proc.stdout)[-300:])
+                return result
+
+            out_dir = Path(os.environ.get("OUTPUT_DIR", "./outputs")).resolve()
+            asset_root = out_dir / "assets" / str(product_id)
+            asset_root.mkdir(parents=True, exist_ok=True)
+            hero_rel = None
+            page_map: dict[str, str] = {}
+            assets_list: list[dict] = []
+            for item in items:
+                fname = item["filename"]
+                src = image_dir / fname
+                if not src.is_file():
+                    continue
+                dst = asset_root / fname
+                dst.write_bytes(src.read_bytes())
+                assets_list.append({
+                    "name": fname,
+                    "url": f"/api/v1/files/assets/{product_id}/{fname}",
+                    "size": src.stat().st_size,
+                })
+                svg_ref = f"images/{fname}"
+                if item.get("page_role") == "hero_page":
+                    hero_rel = svg_ref
+                else:
+                    m = re.match(r"page_(\d+)\.png", fname)
+                    if m:
+                        page_map[f"{int(m.group(1)):02d}"] = svg_ref
+            result = {
+                "hero": hero_rel,
+                "pages": page_map,
+                "list": assets_list,
+                "asset_dir": str(asset_root),
+            }
+        except Exception as exc:  # noqa: BLE001 —— 生图失败不阻断生产
+            logger.warning("生图阶段异常（降级跳过）: %s", exc)
+        return result
 
 
 def get_ppt_design_agent() -> PptDesignAgent:

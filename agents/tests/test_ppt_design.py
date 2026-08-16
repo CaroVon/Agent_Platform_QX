@@ -31,8 +31,10 @@ def test_render_page_svg_contains_all_content():
     theme = Theme(id="cyber-ivory-navy", name="象牙白+深蓝", palette={
         "bg": "#F7F6F0", "surface": "#FFFFFF", "primary": "#12355B",
         "accent": "#3D6491", "text": "#101820", "muted": "#6F7275"})
-    svg = dsl.render_page_svg(_page(), theme.model_dump(), 0)
+    r = dsl.render_page_svg(_page(), theme.model_dump(), 0)
+    svg = r["svg"]
     assert svg.startswith("<svg")
+    assert r["overflow"] is False
     assert "500亿" in svg
     assert "新国潮设计" in svg
     assert "AI监测" in svg
@@ -47,15 +49,16 @@ def test_render_quadrant_svg():
             "points": [{"name": "A", "x": 0.2, "y": 0.7, "kind": "competitor"},
                        {"name": "本产品", "x": 0.8, "y": 0.8, "kind": "product"}]}}],
     }
-    svg = dsl.render_page_svg(page, Theme().model_dump(), 1)
+    svg = dsl.render_page_svg(page, Theme().model_dump(), 1)["svg"]
     assert "circle" in svg and "本产品" in svg
 
 
 def test_render_project_svgs_writes_files(tmp_path):
-    files = dsl.render_project_svgs(
+    result = dsl.render_project_svgs(
         {"pages": [_page()], "theme": Theme().model_dump()}, str(tmp_path))
-    assert files == ["slide_01_market_overview.svg"]
-    assert (tmp_path / "svg_output" / files[0]).is_file()
+    assert result["files"] == ["slide_01_market_overview.svg"]
+    assert result["overflow_pages"] == []
+    assert (tmp_path / "svg_output" / result["files"][0]).is_file()
 
 
 def test_spec_lock_and_design_spec():

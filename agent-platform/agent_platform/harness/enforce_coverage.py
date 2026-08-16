@@ -116,6 +116,33 @@ def enrich_coverage(
     #    PRD 章节全文必须按模块嵌入，不依赖 LLM 自觉） ─────
     pages = _inject_modular_content(pages, presentation, document)
 
+    # ── 图表入页（阶段 A：确定性图表注入，真实计数） ──────
+    if document.strategy and document.strategy.features:
+        from collections import Counter as _Counter
+
+        by_priority = _Counter(
+            (f.priority or "P1") for f in document.strategy.features
+        )
+        feature_page = next((p for p in pages if p.type == "feature_priority"), None)
+        has_chart = feature_page is not None and any(
+            c.type in ("chart", "matrix") for c in feature_page.components
+        )
+        if feature_page is not None and not has_chart and sum(by_priority.values()) >= 4:
+            order = [k for k in ("P0", "P1", "P2", "P3") if by_priority.get(k)]
+            feature_page.components.append(
+                Component(
+                    id="",
+                    type="chart",
+                    data={
+                        "chart_type": "bar",
+                        "title": "功能优先级分布",
+                        "items": [
+                            {"label": k, "value": by_priority.get(k, 0)} for k in order
+                        ],
+                    },
+                )
+            )
+
     # ── 组件 ID 归一化（充实新增组件同样保证唯一） ─────────
     seen: set[str] = set()
     for page in pages:

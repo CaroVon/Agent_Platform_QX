@@ -3,8 +3,10 @@
  * 用户旅程 / 页面结构 / UI 组件规格（UXDesign 结构化展示）
  */
 
-import { ArrowRight, LayoutGrid, MousePointerClick, Route } from 'lucide-react'
+import { useEffect, useState } from 'react'
+import { ArrowRight, ImageIcon, LayoutGrid, MousePointerClick, Route } from 'lucide-react'
 import { WorkspaceHeader } from '@/components/WorkspaceHeader'
+import { productApi } from '@/lib/api'
 import { ProductAssetBrowser } from '@/components/ProductAssetBrowser'
 import type { StudioProduct } from '@/types/studio'
 
@@ -21,11 +23,40 @@ export function DesignStudioPage() {
         emptyDescription="运行 Product Workspace 流水线后，UX 设计规格会自动归档到这里。"
         renderDetail={(product: StudioProduct) => {
           const design = product.design
-          if (!design) {
-            return <p className="text-sm text-muted-foreground">该产品暂无设计资产。</p>
-          }
+          // ── 图片资产库（阶段 C：MiniMax 生图 / 本地上传共用） ──
+          const [assets, setAssets] = useState<Array<{ name: string; url: string; size: number }>>([])
+          useEffect(() => {
+            let cancelled = false
+            productApi.listAssets(product.product_id).then((data) => {
+              if (!cancelled) setAssets(data.assets ?? [])
+            }).catch(() => {})
+            return () => { cancelled = true }
+          }, [product.product_id])
           return (
             <>
+              {assets.length > 0 && (
+                <div className="mb-6 rounded-xl border bg-card p-5 shadow-sm">
+                  <div className="mb-4 flex items-center gap-2">
+                    <ImageIcon className="h-4 w-4 text-primary" />
+                    <h3 className="text-sm font-semibold">图片资产库（{assets.length}）</h3>
+                  </div>
+                  <div className="grid grid-cols-3 gap-3 sm:grid-cols-4 lg:grid-cols-6">
+                    {assets.map((img) => (
+                      <div key={img.name} className="group overflow-hidden rounded-lg border">
+                        <img src={img.url} alt={img.name} loading="lazy"
+                          className="aspect-square w-full object-cover" />
+                        <div className="truncate border-t bg-background/60 px-2 py-1 text-[10px] text-muted-foreground">
+                          {img.name}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+              {!design && (
+                <p className="text-sm text-muted-foreground">该产品暂无设计资产。</p>
+              )}
+              {design && (<>
               {/* 用户旅程 */}
               {design.user_flow.length > 0 && (
                 <div className="rounded-xl border bg-card p-5 shadow-sm">
@@ -109,6 +140,7 @@ export function DesignStudioPage() {
                   </ul>
                 </div>
               )}
+              </>)}
             </>
           )
         }}
