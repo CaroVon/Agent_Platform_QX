@@ -225,6 +225,63 @@ export const THEMES: Record<string, { name: string; palette: Record<string, stri
       accent: '#B08A3C', text: '#1B1A17', muted: '#6B675E',
     },
   },
+  // ─── CyberPPT 咨询风 8 套（与 agent_platform THEME_PRESETS 一致） ───
+  'cyber-crimson': {
+    name: '经典深红咨询',
+    palette: {
+      bg: '#F3F4EF', surface: '#FFFFFF', primary: '#8B1E1E',
+      accent: '#B54B4B', text: '#111111', muted: '#555555',
+    },
+  },
+  'cyber-burgundy': {
+    name: '冷灰+勃艮第红',
+    palette: {
+      bg: '#F5F5F2', surface: '#FFFFFF', primary: '#7A1F2B',
+      accent: '#A04A55', text: '#000000', muted: '#6B6B6B',
+    },
+  },
+  'cyber-ivory-wine': {
+    name: '暖象牙白+暗酒红',
+    palette: {
+      bg: '#F4F1EA', surface: '#FFFFFF', primary: '#8A1538',
+      accent: '#B04A67', text: '#121212', muted: '#77736C',
+    },
+  },
+  'cyber-ivory-navy': {
+    name: '象牙白+深蓝',
+    palette: {
+      bg: '#F7F6F0', surface: '#FFFFFF', primary: '#12355B',
+      accent: '#3D6491', text: '#101820', muted: '#6F7275',
+    },
+  },
+  'cyber-grey-green': {
+    name: '浅灰白+墨绿',
+    palette: {
+      bg: '#F2F3EF', surface: '#FFFFFF', primary: '#1F5B4D',
+      accent: '#4E8577', text: '#111111', muted: '#666666',
+    },
+  },
+  'cyber-paper-copper': {
+    name: '纸张米色+铜棕',
+    palette: {
+      bg: '#F4F0E8', surface: '#FFFFFF', primary: '#9A5A2E',
+      accent: '#C08A5C', text: '#161616', muted: '#76716A',
+    },
+  },
+  'cyber-black-gold': {
+    name: '纯净浅灰+黑金',
+    palette: {
+      bg: '#F6F6F4', surface: '#FFFFFF', primary: '#2B2A26',
+      accent: '#A87932', text: '#000000', muted: '#707070',
+    },
+  },
+  'cyber-deep-purple': {
+    name: '冷白灰+深紫',
+    palette: {
+      bg: '#F4F5F6', surface: '#FFFFFF', primary: '#4B2E83',
+      accent: '#7A5FA8', text: '#111111', muted: '#6D7175',
+    },
+  },
 }
 
 // 供导出模式使用的主题变量样式辅助

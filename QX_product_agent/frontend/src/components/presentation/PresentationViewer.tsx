@@ -76,7 +76,10 @@ export function PresentationViewer({
   onIndexChange?: (index: number) => void
 }) {
   const [internalIndex, setInternalIndex] = useState(0)
-  const [themeId, setThemeId] = useState<string>('default')
+  // 初始主题取自 DSL（生成的咨询风主题直接生效）；切换器仍可覆盖
+  const [themeId, setThemeId] = useState<string>(() =>
+    presentation.theme?.id && THEMES[presentation.theme.id] ? presentation.theme.id : 'default',
+  )
   const [themeOpen, setThemeOpen] = useState(false)
   const pages = presentation.pages ?? []
   const index = currentIndex ?? internalIndex

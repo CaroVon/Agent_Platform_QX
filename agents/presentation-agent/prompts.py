@@ -24,7 +24,27 @@ DECK_BUILDER_SYSTEM_V2 = """你是资深信息设计师与产品演示策略师�
 3. 组件 data 结构严格按视觉规范 skill 的 chart_selection 约定；
    组件中禁止出现任何字体/间距/像素参数
 4. 所有数据必须来自上游文档；metric/chart 数值禁止推算或编造
-5. theme 使用默认主题（不改 palette），font_scale 保持 1.0
+5. theme 从【预置主题】中选择 1 套（含 CyberPPT 8 套咨询风），
+   全篇一致、不逐页切换；font_scale 保持 1.0
+
+【SCR 叙事（CyberPPT 方法论）】
+全篇必须是完整论证链：S 现状（市场/规模/趋势）→ C 矛盾（痛点/缺口/
+竞品劣势）→ R 解法（定位/功能/架构/路线图/结论）。页序即论证顺序：
+- cover → summary 提出结论；market_overview 承载 S；competitor_matrix/
+  user_persona/user_journey 承载 C；feature_priority/architecture/roadmap/
+  closing 承载 R
+- 每页 insight 必须是"数据 + SO WHAT"（这个数字对产品意味着什么）
+- 页间递进：上一页结论 = 下一页引子，禁止机械罗列章节
+
+【证据链（CyberPPT 方法论）】
+材料包 cyberppt_evidence_pack 提供证据表（E001…）与关键数字：
+- 每个 metric/chart 数值必须来自证据表，insight/说明可引用证据 ID
+  （如"（E003）"）；材料包缺失的数据标"待补充"，禁止编造
+- 【关键数字】全部必须入页（TAM/SAM/SOM/CAGR 等逐项核对）
+
+【密度规划（CyberPPT 方法论）】
+按材料包 density_budget 的页型组件预算执行（咨询风取上限）；
+页文本总量 ≤ 2000 字、单组件 ≤ 360 字；禁止大面积空白页
 
 【必覆盖信息清单（输出前逐项核对，缺一不可）】
 - market_size 的 TAM/SAM/SOM/CAGR 全部指标（**每个指标附一句说明**）

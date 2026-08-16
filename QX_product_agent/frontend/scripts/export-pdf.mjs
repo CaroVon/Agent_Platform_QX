@@ -261,6 +261,17 @@ async function exportPptx() {
     throw new Error('无 Presentation DSL 数据')
   }
 
+  // 主题 palette → PptxGenJS 颜色（CyberPPT 咨询风等；缺省回退咨询蓝）
+  const palette = presentation.theme?.palette ?? {}
+  const hex = (key, fallback) => (palette[key] ?? fallback).replace('#', '')
+  const C = {
+    primary: hex('primary', '4f46e5'),
+    accent: hex('accent', '6366f1'),
+    text: hex('text', '0f172a'),
+    muted: hex('muted', '64748b'),
+    surface: hex('surface', 'ffffff'),
+  }
+
   const pptx = new PptxGenJS()
   pptx.defineLayout({ name: 'WIDE_16X9', width: 13.333, height: 7.5 })
   pptx.layout = 'WIDE_16X9'
@@ -270,22 +281,22 @@ async function exportPptx() {
     if (pageDef.layout === 'cover' || pageDef.layout === 'closing') {
       slide.addText(pageDef.title, {
         x: 0.8, y: 2.6, w: 11.7, h: 1.6, fontSize: 40, bold: true,
-        align: 'center', color: '1e293b',
+        align: 'center', color: C.text,
       })
       if (pageDef.subtitle) {
         slide.addText(pageDef.subtitle, {
           x: 0.8, y: 4.3, w: 11.7, h: 0.6, fontSize: 18,
-          align: 'center', color: '64748b',
+          align: 'center', color: C.muted,
         })
       }
     } else {
       slide.addText(pageDef.title, {
-        x: 0.7, y: 0.4, w: 11.9, h: 0.7, fontSize: 24, bold: true, color: '0f172a',
+        x: 0.7, y: 0.4, w: 11.9, h: 0.7, fontSize: 24, bold: true, color: C.text,
       })
       if (pageDef.insight) {
         slide.addText(pageDef.insight, {
           x: 0.7, y: 1.15, w: 11.9, h: 0.5, fontSize: 14,
-          color: '4f46e5',
+          color: C.primary,
         })
       }
       let y = 1.9
@@ -294,8 +305,8 @@ async function exportPptx() {
         if (comp.type === 'metric') {
           slide.addText(
             [
-              { text: String(data.value ?? ''), options: { fontSize: 26, bold: true, color: '4f46e5' } },
-              { text: `  ${data.label ?? ''}`, options: { fontSize: 13, color: '64748b' } },
+              { text: String(data.value ?? ''), options: { fontSize: 26, bold: true, color: C.primary } },
+              { text: `  ${data.label ?? ''}`, options: { fontSize: 13, color: C.muted } },
             ],
             { x: 0.7, y, w: 11.9, h: 0.7 },
           )
@@ -303,7 +314,7 @@ async function exportPptx() {
         } else if (comp.type === 'table' && Array.isArray(data.rows)) {
           const columns = Array.isArray(data.columns) ? data.columns.map(String) : []
           const rows = data.rows.map((r) => (Array.isArray(r) ? r.map(String) : []))
-          const tableRows = columns.length ? [columns.map((c) => ({ text: c, options: { bold: true, color: 'ffffff', fill: { color: '4f46e5' } } })), ...rows] : rows
+          const tableRows = columns.length ? [columns.map((c) => ({ text: c, options: { bold: true, color: C.surface, fill: { color: C.primary } } })), ...rows] : rows
           slide.addTable(tableRows, { x: 0.7, y, w: 11.9, fontSize: 11 })
           y += Math.min(0.5 + rows.length * 0.4, 3.6)
         } else {
@@ -312,7 +323,7 @@ async function exportPptx() {
             : typeof data.title === 'string' ? data.title
             : typeof data.quote === 'string' ? data.quote : ''
           if (text) {
-            slide.addText(text, { x: 0.7, y, w: 11.9, h: 0.6, fontSize: 14, color: '334155' })
+            slide.addText(text, { x: 0.7, y, w: 11.9, h: 0.6, fontSize: 14, color: C.text })
             y += 0.7
           }
         }

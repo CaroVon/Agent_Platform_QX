@@ -55,8 +55,10 @@ def _presentation_evaluator(presentation: Presentation) -> tuple[bool, str]:
 
 
 def _build_system_prompt() -> str:
-    """System Prompt = 信息设计角色 + 视觉规范 skill + Layout Library。"""
+    """System Prompt = 信息设计角色 + 视觉规范 skill + CyberPPT skill
+    + Layout Library + 预置主题。"""
     skill_text = SkillLoader().load("presentation-design")
+    cyberppt_text = SkillLoader().load("presentation-cyberppt")
     library = json.dumps(
         {
             layout_id: {"name": spec["name"], "page_types": spec["page_types"]}
@@ -65,12 +67,22 @@ def _build_system_prompt() -> str:
         ensure_ascii=False,
         indent=1,
     )
+    from agent_platform.schemas.presentation import THEME_PRESETS
+
+    themes = json.dumps(
+        {tid: t["name"] for tid, t in THEME_PRESETS.items()},
+        ensure_ascii=False,
+        indent=1,
+    )
     return (
         DECK_BUILDER_SYSTEM_V2
         + "\n\n【Layout Library（只能从中选择布局）】\n"
         + library
+        + "\n\n【预置主题（theme.id 只能从其中选择）】\n"
+        + themes
         + "\n\n【视觉规范 Skill】\n"
         + skill_text
+        + ("\n\n【CyberPPT 咨询风 Skill】\n" + cyberppt_text if cyberppt_text else "")
     )
 
 
@@ -99,6 +111,7 @@ class PresentationAgent(BaseAgent):
         memory: MemoryStore | None = None,
         memory_namespace: str = "default",
         revise_feedback: str = "",
+        evidence_pack: dict | None = None,
     ) -> AgentResult:
         """构建 Presentation DSL；revise_feedback 用于 Critic 修订循环（P5）。"""
         objective = (
@@ -124,13 +137,20 @@ class PresentationAgent(BaseAgent):
                 return False, "；".join(issues[:4])
             return True, ""
 
+        artifacts: dict[str, Any] = {"canonical_product_document": document}
+        if evidence_pack:
+            # CyberPPT 材料包：证据表 + 关键数字 + SCR 提示 + 密度预算
+            from agent_platform.harness.evidence_pack import render_evidence_pack
+
+            artifacts["cyberppt_evidence_pack"] = render_evidence_pack(evidence_pack)
+
         result = self.loop.run(
             agent_name=self.name,
             system_prompt=self.system_prompt,
             objective=objective,
             schema=Presentation,
             inputs={"idea": idea},
-            artifacts={"canonical_product_document": document},
+            artifacts=artifacts,
             memory_namespace=memory_namespace,
             evaluator=coverage_evaluator,
         )
@@ -165,10 +185,13 @@ class PresentationAgent(BaseAgent):
                 strategy=_v(ProductStrategy, state.get("strategy")),
                 design=_v(UXDesign, state.get("design")),
             )
+        from agent_platform.harness.evidence_pack import build_evidence_pack
+
         return self.build_deck(
             state.get("idea", ""),
             document,
             memory=memory,
             memory_namespace=memory_namespace,
             revise_feedback=state.get("revision_feedback", ""),
+            evidence_pack=build_evidence_pack(document),
         )

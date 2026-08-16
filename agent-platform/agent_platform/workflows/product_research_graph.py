@@ -226,6 +226,13 @@ class ProductResearchGraph:
         presentation = enforce_coverage(presentation, document)
         # 内容充实层：确定性补全描述/细节（不依赖 LLM 波动）
         presentation = enrich_coverage(presentation, document)
+        # CyberPPT 风格锁定：未显式选主题时确定性分配 8 套咨询风之一
+        from agent_platform.harness.enforce_coverage import ensure_consulting_theme
+
+        presentation = ensure_consulting_theme(
+            presentation,
+            seed=state.get("product_id") or state.get("idea", ""),
+        )
         updates["presentation"] = presentation.model_dump()
         # 修订路径（revision_feedback 非空）→ 修订计数 +1
         if state.get("revision_feedback"):

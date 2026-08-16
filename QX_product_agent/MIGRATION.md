@@ -548,3 +548,43 @@ HTML/PDF/PPTX 管线，三端一致不变。
   在线搜索 12 图 ✅；图片 trait 替换（model+img tag 同步）✅
 - RTE 双击编辑 → 保存回写 DSL text ✅；style manager 尺寸/效果扇区 ✅；
   图层面板（35 项）✅；撤销/重做（undo/redo 均生效）✅
+
+---
+
+## 16. CyberPPT 咨询风集成（适配框架 + 上游数据喂料，2026-08）
+
+来源：[crazyykhllc-bit/CyberPPT](https://github.com/crazyykhllc-bit/CyberPPT)（MIT，Codex Skill）。
+不是整体替换生成器（其产物为 .pptx 而非 DSL），而是**方法论吸收 + 数据适配 +
+生产验证**三件套，产物仍为 Presentation DSL（编辑器/三端导出不变）。
+
+### 适配框架（新增）
+- `agent_platform/skills/presentation-cyberppt/`（MIT 声明见 NOTICE.txt）：
+  SKILL.md（SCR 叙事 + 证据链 + 密度 + 风格锁定的总纲）、scr-narrative.md
+  （S 现状→C 矛盾→R 解法 三幕页型映射）、density-planning.md（页型组件预算）、
+  visual-system.md（8 套咨询风色板 → theme palette tokens）
+- 8 套咨询风写入 `THEME_PRESETS`（schema）与前端 `THEMES`（渲染一致）：
+  cyber-crimson / burgundy / ivory-wine / ivory-navy / grey-green /
+  paper-copper / black-gold / deep-purple
+- `ensure_consulting_theme`（确定性风格锁定）：模型未决策主题时按
+  product_id 哈希轮换分配一套 cyber 风格；palette 缺失时从预置补全
+- `evidence_pack.py`（上游数据喂料）：把上游语义层确定性转换为
+  「证据表（E001… 带来源/数值/口径）+ 关键数字 + SCR 叙事提示 +
+  每页组件预算」材料包，注入 Presentation Agent（artifact:
+  cyberppt_evidence_pack），prompt 要求按证据 ID 引用、关键数字必入页
+- PresentationAgent system prompt 组装：信息设计角色 + 视觉规范 +
+  CyberPPT skill + Layout Library + 预置主题列表
+
+### 生产验证（Playwright/Celery 实测）
+- 新产品 11 页：cover→summary→market(S)→matrix/persona/journey(C)→
+  features/architecture/roadmap/closing(R)，SCR 三幕齐全
+- 质量门全绿：覆盖（指标/痛点/竞品/趋势/画像/路线图/功能）✓；
+  主题经风格锁定落入 8 套咨询风之一（palette 六键完整）
+- 证据包：材料包注入成功（证据表 + 关键数字 + SCR 提示进入上下文）
+- **主题全链路传导**：viewer 初始主题取自 DSL theme（生成风格直接呈现）；
+  HTML/PDF 快照与 PPTX 生成器均读取 theme.palette（实测 HTML
+  --p-primary=#12355B、PPTX slide XML 内嵌 #12355B）
+- **生产验证（新 worker 实测）**：12 页 SCR 三幕齐全，证据 ID 引用 20 处，
+  主题自动锁定 cyber-ivory-navy（palette 六键完整），critic 62→72；
+  PPTX 12 页经 CyberPPT validate_pptx.py：0 errors
+- 测试：platform 54（+5 证据包 +3 主题锁定）/ agents 2 / backend 56 /
+  tsc+build ✅

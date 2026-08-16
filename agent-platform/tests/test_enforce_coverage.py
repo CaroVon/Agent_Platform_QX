@@ -94,3 +94,47 @@ def test_enrich_adds_market_conclusion():
     texts = [c for c in market.components if c.type == "text"]
     assert len(texts) == 1
     assert "核心结论" in str(texts[0].data.get("title", ""))
+
+
+def test_ensure_consulting_theme_assigns_when_default():
+    """默认主题 → 确定性分配 cyber-* 咨询风，palette 完整、可复现。"""
+    from agent_platform.harness.enforce_coverage import ensure_consulting_theme
+    from agent_platform.schemas.presentation import THEME_PRESETS
+
+    pres = Presentation.model_validate(_full_deck())
+    assert pres.theme.id == "default"
+
+    r1 = ensure_consulting_theme(pres, seed="product-A")
+    r2 = ensure_consulting_theme(pres, seed="product-A")
+    assert r1.theme.id.startswith("cyber-")
+    assert r1.theme.id == r2.theme.id  # 同 seed 可复现
+    assert set(r1.theme.palette.keys()) == {"bg", "surface", "primary", "accent", "text", "muted"}
+    assert r1.theme.palette == THEME_PRESETS[r1.theme.id]["palette"]
+
+    r3 = ensure_consulting_theme(pres, seed="product-B")
+    assert r3.theme.id.startswith("cyber-")
+
+
+def test_ensure_consulting_theme_keeps_explicit_choice():
+    """已显式选择 cyber 主题且 palette 完整 → 保持不变。"""
+    from agent_platform.harness.enforce_coverage import ensure_consulting_theme
+    from agent_platform.schemas.presentation import THEME_PRESETS, Theme
+
+    pres = Presentation.model_validate(_full_deck())
+    pres.theme = Theme(id="cyber-ivory-navy", name="象牙白+深蓝",
+                       palette=dict(THEME_PRESETS["cyber-ivory-navy"]["palette"]))
+    out = ensure_consulting_theme(pres, seed="any")
+    assert out.theme.id == "cyber-ivory-navy"
+    assert out.theme.palette["primary"] == "#12355B"
+
+
+def test_ensure_consulting_theme_fills_missing_palette():
+    """cyber 主题 palette 缺失 → 从预置补全。"""
+    from agent_platform.harness.enforce_coverage import ensure_consulting_theme
+    from agent_platform.schemas.presentation import THEME_PRESETS, Theme
+
+    pres = Presentation.model_validate(_full_deck())
+    pres.theme = Theme(id="cyber-crimson", name="经典深红咨询", palette={})
+    out = ensure_consulting_theme(pres, seed="x")
+    assert out.theme.id == "cyber-crimson"
+    assert out.theme.palette == THEME_PRESETS["cyber-crimson"]["palette"]

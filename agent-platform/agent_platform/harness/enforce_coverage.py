@@ -298,3 +298,40 @@ def enforce_coverage(
                 seen.add(comp.id)
 
     return Presentation(title=presentation.title, theme=presentation.theme, pages=pages)
+
+
+def ensure_consulting_theme(presentation: Presentation, seed: str = "") -> Presentation:
+    """CyberPPT 风格锁定（确定性）：
+
+    - 主题已是 cyber-* 且 palette 完整 → 保持不变
+    - 主题是 cyber-* 但 palette 缺失 → 从预置补全
+    - 主题为 default/未知（模型未决策）→ 按 seed 哈希轮换分配 8 套咨询风之一
+    """
+    from agent_platform.schemas.presentation import THEME_PRESETS, Theme
+
+    presets = THEME_PRESETS
+    theme = presentation.theme
+    if theme.id in presets and theme.id != "default" and theme.palette:
+        return presentation
+    if theme.id in presets and theme.id != "default":
+        return presentation.model_copy(
+            update={
+                "theme": theme.model_copy(
+                    update={"palette": dict(presets[theme.id]["palette"])}
+                )
+            }
+        )
+    cyber_ids = [tid for tid in presets if tid.startswith("cyber-")]
+    idx = sum(ord(ch) for ch in seed) % len(cyber_ids) if seed else 0
+    tid = cyber_ids[idx]
+    preset = presets[tid]
+    return presentation.model_copy(
+        update={
+            "theme": Theme(
+                id=tid,
+                name=preset["name"],
+                palette=dict(preset["palette"]),
+                font_scale=theme.font_scale,
+            )
+        }
+    )
