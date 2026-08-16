@@ -9,8 +9,11 @@ Presentation Agent —— 信息设计（P3 升级）
 
 模型角色（layout.md 第 7 步）:
   - 默认使用主 LLM（DeepSeek）
-  - 配置 AGENT_PLATFORM_PRESENTATION_LLM_* 后自动切换到专用模型（如 Kimi）
-  - 视觉规范由 presentation-design skill 注入，模型可换、规范不漂移
+  - 配置 AGENT_PLATFORM_PRESENTATION_LLM_* 后自动切换到专用模型
+    （如 Kimi / MiniMax——与 DeepSeek 分工：主流水线用 DeepSeek，
+    PPT skill 制作由 MiniMax 承接）
+  - 视觉规范由 presentation-design + presentation-cyberppt skill 注入，
+    模型可换、规范不漂移
 """
 
 from __future__ import annotations

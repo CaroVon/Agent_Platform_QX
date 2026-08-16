@@ -627,3 +627,27 @@ HTML/PDF/PPTX 管线，三端一致不变。
 - 实测：10 页 PPTX 含 chart PNG（slide4 象限图 16KB）、卡片内容完整 9/9、
   时间线里程碑 2/2；HTML/PDF 导出正常；QA errors 0
 - 测试：platform 55 / agents 2 / backend 56 / tsc+build ✅
+
+---
+
+## 18. PPT 模型分工与 skill 调研（MiniMax + DeepSeek，2026-08）
+
+### MiniMax 分工（已支持，配置即用）
+- 平台本就支持 Presentation 专用模型（AGENT_PLATFORM_PRESENTATION_LLM_*）：
+  DeepSeek 承接 research/strategy/design/critic，MiniMax 承接 Presentation
+  节点与 PPT skill（presentation-cyberppt），零代码改动
+- MiniMax OpenAI 兼容端点（官方文档 platform.minimax.io/docs/api-reference/
+  text-chat-openai.md）：国内 https://api.minimax.chat/v1、国际
+  https://api.minimaxi.com/v1；模型 MiniMax-Text-01 / MiniMax-M2 / abab6.5s-chat；
+  JSON 输出由 harness 自愈重试兜底
+- 配置与验证步骤见 `agent-platform/docs/ppt-model-routing.md`
+
+### ppt-master-skill 嵌入调研
+- **macrochen/ppt-master-skill（skill 包装层）：无 LICENSE** → 不可复制嵌入
+  （默认保留所有权利），仅可参考其方法论（Strategist/Executor 分工、
+  逐页 SVG 设计 → svg_to_pptx 导出、Office"转换为形状"可编辑）
+- **macrochen/ppt-master（上游工具）：MIT** → 工具可收编，但 71MB + 重依赖，
+  建议作为独立实验分支评估（SVG→PPTX 视觉保真高、文本可编辑性弱于
+  当前 DSL→PptxGenJS 路线），不接入主流水线
+- 结论：主路径 = 自有 presentation-cyberppt skill + MiniMax 分工；
+  SVG→PPTX 作为 export-pptx 的 P3+ 可选实验模式预留（manifest 已记录逐页构图）

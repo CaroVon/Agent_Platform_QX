@@ -39,10 +39,19 @@ class PlatformSettings(BaseSettings):
     LLM_TIMEOUT: int = Field(default=180)
 
     # ─── Presentation Agent 专用模型（P3: 可选，如 Kimi） ───────
-    # 未配置时回退主 LLM；Kimi 示例:
+    # 未配置时回退主 LLM（DeepSeek）。模型分工：DeepSeek 承接
+    # research/strategy/design/critic，Presentation/PPT skill 由本组
+    # 模型（如 MiniMax）承接。Kimi 示例:
     #   AGENT_PLATFORM_PRESENTATION_LLM_BASE_URL=https://api.moonshot.cn/v1
     #   AGENT_PLATFORM_PRESENTATION_LLM_MODEL=kimi-k2-turbo-preview
     #   AGENT_PLATFORM_PRESENTATION_LLM_API_KEY=sk-xxx
+    # MiniMax（OpenAI 兼容；官方文档 platform.minimax.io/docs/api-reference/
+    # text-chat-openai.md）示例:
+    #   AGENT_PLATFORM_PRESENTATION_LLM_BASE_URL=https://api.minimax.chat/v1  # 国内
+    #   AGENT_PLATFORM_PRESENTATION_LLM_MODEL=MiniMax-Text-01   # 或 MiniMax-M2 / abab6.5s-chat
+    #   AGENT_PLATFORM_PRESENTATION_LLM_API_KEY=eyJhbGci...
+    # （国际区 base_url=https://api.minimaxi.com/v1；JSON 输出由 harness
+    #   自愈重试兜底，模型返回不稳定时自动重试）
     PRESENTATION_LLM_API_KEY: str = Field(default="")
     PRESENTATION_LLM_BASE_URL: str = Field(default="")
     PRESENTATION_LLM_MODEL: str = Field(default="")
