@@ -752,3 +752,31 @@ HTML/PDF/PPTX 管线，三端一致不变。
 - QA：errors 0；warnings 仅封面全幅背景类（Hero 设计使然）
 - 文本 208 / 图形 433 / 图片 7 / 原生图表 2（vs 上轮 229/470/7/0）
 - 测试：platform 55 / agents 6 / backend 56 / tsc+build ✅
+
+---
+
+## 22. ppt-master 完全重构（MiniMax 自由创作）+ 流水线实时进度（2026-08）
+
+### PPT 设计与制作模块重构（放弃前置模板）
+- **放弃确定性模板渲染**（dsl_to_svg 已删除）：PptDesignAgent v2 完全遵循
+  hugohe3/ppt-master skill 的「Executor 逐页手写 SVG」范式
+- **设计规范**：MiniMax（Strategist 角色）自由创作（设计简报/视觉方向/逐页大纲），
+  确定性大纲仅作兜底
+- **逐页 SVG**：MiniMax 按「页面 DSL + 视觉体系 + skill 硬性规则」逐页创作
+  （svg_author.py：构图要求/原生图表 markers/禁用元素），校验（XML 可解析 +
+  关键文本归一化匹配 + 越界 ≤715 + 无禁用元素）→ 带错误反馈重试 ×3 →
+  极简兜底页（仅保内容不丢）
+- **SVG 消毒层**：剔除 svg_to_pptx 不支持的文本属性（dx/dy/style/
+  dominant-baseline 等 35+ 项），避免整节点重试
+- 保留：MiniMax 生图 + 资产库、spec_lock、finalize、svg_to_pptx
+  （--native-charts-and-tables 真图表）
+
+### 流水线实时进度（前端可见当前步骤）
+- 后端：StudioProduct 新增 node_status 列（SQLite 迁移已执行）；
+  LangGraph 节点边界 progress_callback → 任务实时写库；GET 响应合并
+- 前端：AgentTimeline 升级——整体进度条（斜纹流动动画）、「当前步骤」横幅
+  （Agent + 说明 + 模型 + 打字动画）、每行步骤流转淡入（key=phase +
+  step-fade-in）、运行中行高亮；AgentStatus 加 TypingDots 与相变动画；
+  globals.css 新增 step-fade-in/typing-dot/progress-stripes
+- 实测：任务运行中 API 实时返回
+  {"requirement_parser":"completed",…,"presentation":"running"}

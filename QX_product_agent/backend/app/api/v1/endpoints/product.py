@@ -71,7 +71,10 @@ def _to_asset_response(product: StudioProduct) -> ProductAssetResponse:
         "error_message": product.error_message,
         "created_at": product.created_at.isoformat() if product.created_at else None,
         "updated_at": product.updated_at.isoformat() if product.updated_at else None,
-        "node_status": meta.get("node_status") or {},
+        "node_status": {
+            **(meta.get("node_status") or {}),
+            **(json.loads(product.node_status or "{}") or {}),
+        },
         "node_models": meta.get("node_models") or {},
         "errors": meta.get("errors") or {},
         "critic_score": package.get("critic_score"),

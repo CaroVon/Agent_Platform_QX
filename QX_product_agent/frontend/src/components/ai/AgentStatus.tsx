@@ -1,5 +1,5 @@
 /**
- * ai/AgentStatus —— 单个 AI Agent 的状态行（assistant-ui 风格）
+ * ai/AgentStatus —— 单个 AI Agent 的状态行（assistant-ui 风格 + 步骤流转动画）
  */
 
 import { AlertCircle, Check, Loader2 } from 'lucide-react'
@@ -17,6 +17,16 @@ const PHASE_META: Record<
   failed: { label: '失败', iconCls: 'bg-destructive text-white', rowCls: 'text-destructive' },
 }
 
+function TypingDots() {
+  return (
+    <span className="ml-1 inline-flex items-center text-[#24415E]">
+      <span className="typing-dot" />
+      <span className="typing-dot" />
+      <span className="typing-dot" />
+    </span>
+  )
+}
+
 export function AgentStatus({
   name,
   task,
@@ -31,7 +41,15 @@ export function AgentStatus({
   const meta = PHASE_META[phase]
 
   return (
-    <div className="flex items-start gap-4 py-3.5">
+    <div
+      key={phase}
+      className={cn(
+        'flex items-start gap-4 py-3.5 transition-colors',
+        phase === 'running' && 'rounded-lg bg-[#24415E]/4 px-2 -mx-2 animate-step-in',
+        phase === 'completed' && 'animate-step-in',
+        phase === 'failed' && 'animate-step-in',
+      )}
+    >
       {/* 状态图标 */}
       <span
         className={cn(
@@ -49,11 +67,12 @@ export function AgentStatus({
           <span className={cn('text-sm font-medium', meta.rowCls)}>{name}</span>
           <span className="text-[11px] text-muted-foreground/70">{meta.label}</span>
         </div>
-        <p className="mt-0.5 text-[13px] leading-relaxed text-muted-foreground">
+        <p className="mt-0.5 flex items-center text-[13px] leading-relaxed text-muted-foreground">
           {phase === 'running' && (
             <span className="mr-1.5 inline-block h-3 w-[2px] animate-pulse rounded bg-[#24415E]/50 align-middle" />
           )}
-          {task}
+          <span>{task}</span>
+          {phase === 'running' && <TypingDots />}
         </p>
         {detail && <p className="mt-0.5 text-[11px] text-muted-foreground/60">{detail}</p>}
       </div>

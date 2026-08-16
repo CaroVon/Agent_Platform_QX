@@ -185,3 +185,43 @@
     background: #fff;
   }
 }
+
+/* ─── 流水线进度：步骤流转动画 ─────────────────────────── */
+@keyframes step-fade-in {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.animate-step-in {
+  animation: step-fade-in 0.35s ease-out both;
+}
+
+@keyframes typing-dot {
+  0%, 60%, 100% { transform: translateY(0); opacity: 0.4; }
+  30% { transform: translateY(-3px); opacity: 1; }
+}
+.typing-dot {
+  display: inline-block;
+  width: 5px;
+  height: 5px;
+  margin-left: 3px;
+  border-radius: 9999px;
+  background: currentColor;
+  animation: typing-dot 1.2s ease-in-out infinite;
+}
+.typing-dot:nth-child(2) { animation-delay: 0.15s; }
+.typing-dot:nth-child(3) { animation-delay: 0.3s; }
+
+@keyframes progress-stripes {
+  0% { background-position: 0 0; }
+  100% { background-position: 28px 0; }
+}
+.progress-stripes {
+  background-image: linear-gradient(
+    45deg,
+    rgba(255, 255, 255, 0.22) 25%, transparent 25%,
+    transparent 50%, rgba(255, 255, 255, 0.22) 50%,
+    rgba(255, 255, 255, 0.22) 75%, transparent 75%
+  );
+  background-size: 28px 28px;
+  animation: progress-stripes 0.9s linear infinite;
+}

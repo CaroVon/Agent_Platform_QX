@@ -87,6 +87,24 @@ def _parse_product_id(product_id: str) -> "uuid.UUID":
     return uuid.UUID(str(product_id))
 
 
+_PROGRESS_SNAPSHOT: dict = {}
+
+
+def _persist_progress(product_id: str, event: dict) -> None:
+    """节点进度事件 → 合并快照 → 写库（幂等，供前端实时展示）。"""
+    node = event.get("node", "")
+    status = event.get("status", "")
+    if not node or not status:
+        return
+    snapshot = dict(_PROGRESS_SNAPSHOT.get(product_id, {}))
+    snapshot[node] = status
+    _PROGRESS_SNAPSHOT[product_id] = snapshot
+    try:
+        _update_product(product_id, node_status=json.dumps(snapshot, ensure_ascii=False))
+    except Exception as exc:  # noqa: BLE001 —— 进度写库失败不影响主流程
+        logger.warning("[Product Studio] 进度写库失败 %s: %s", product_id, exc)
+
+
 def _update_product(product_id: str, **fields) -> None:
     """同步更新 studio_products 记录（Celery Worker 同步上下文）。"""
     from sqlalchemy.orm import Session
@@ -165,6 +183,9 @@ def run_product_studio_pipeline(self: ProductStudioTask, product_id: str):
         max_revisions=settings.PRESENTATION_MAX_REVISIONS
         if settings.PRESENTATION_MAX_REVISIONS > 0
         else 2,
+        # 实时进度回写：节点状态流转（running/completed/failed）持久化到 DB，
+        # 前端轮询可见当前执行到哪一步
+        progress_callback=lambda event: _persist_progress(product_id, event),
     )
 
     # ── 执行工作流 ───────────────────────────────────────────

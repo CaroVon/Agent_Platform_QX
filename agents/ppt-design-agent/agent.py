@@ -5,7 +5,7 @@ PptDesign Agent —— 独立 PPT 设计成员（hugohe3/ppt-master 工作流适
 职责（框架适配）：
   1. 以 Presentation DSL（canonical）为输入，建立 ppt-master 项目：
      设计规范（设计规范与内容大纲.md）+ spec_lock.md（执行锁）
-  2. 逐页确定性渲染 SVG（dsl_to_svg.py，遵守 SVG 页设计闭合契约）
+  2. 逐页 SVG 由 MiniMax 按 skill 自由创作（svg_author.py：校验/重试/兜底）
   3. 调用 finalize_svg + svg_to_pptx 导出**原生可编辑 PPTX**（DrawingML 形状）
   4. 返回 {project_dir, pptx_path, pages, model, design_spec, spec_lock}
 
@@ -187,10 +187,9 @@ class PptDesignAgent(BaseAgent):
         (project_dir / "svg_output").mkdir(exist_ok=True)
         (project_dir / "notes").mkdir(exist_ok=True)
 
-        # ── 1) 设计规范 + spec_lock（确定性；简报可走 MiniMax） ──
+        # ── 1) 设计规范（MiniMax 自由创作，确定性兜底）+ spec_lock ──
         theme = presentation.get("theme") or {}
-        brief = _design_brief_llm(idea, str(theme.get("name", "默认主题")), len(presentation.get("pages") or []))
-        spec = _build_design_spec(presentation, idea, brief)
+        spec = self._compose_design_spec(presentation, idea)
         lock = _build_spec_lock(presentation, idea)
         (project_dir / "设计规范与内容大纲.md").write_text(spec, encoding="utf-8")
         (project_dir / "spec_lock.md").write_text(lock, encoding="utf-8")
@@ -201,23 +200,14 @@ class PptDesignAgent(BaseAgent):
         # ── 2) 生图阶段（阶段 C：MiniMax-Image-01，可降级） ──
         images = self._generate_images(project_dir, presentation, idea, str(state.get("product_id") or idea)[:40])
 
-        # ── 3) 逐页 SVG（确定性渲染 + 图片槽位，遵守页设计闭合） ──
-        from agents.ppt_design_agent.dsl_to_svg import render_project_svgs
-
-        render_result = render_project_svgs(
-            presentation, str(project_dir),
-            assets={
-                "hero": images.get("hero"),
-                "pages": images.get("pages") or {},
-            },
-        )
-        files = render_result["files"]
+        # ── 3) 逐页 SVG（MiniMax 按 skill 自由创作，校验+重试+兜底） ──
+        files, svg_stats = self._author_pages(project_dir, presentation, theme, spec, images)
 
         # ── 4) finalize + svg_to_pptx（pptx-master 工具链，venv python） ──
         python = sys.executable
         for script, args in (
             ("finalize_svg.py", [str(project_dir)]),
-            ("svg_to_pptx.py", [str(project_dir), "-s", "final", "--native-charts-and-tables"]),
+            ("svg_to_pptx.py", [str(project_dir), "-s", "final"]),
         ):
             proc = subprocess.run(
                 [python, str(_SCRIPTS_DIR / script), *args],
@@ -248,10 +238,94 @@ class PptDesignAgent(BaseAgent):
             "model": model,
             "design_brief": brief,
             "images": images.get("list", []),
-            "overflow_pages": render_result.get("overflow_pages", []),
-            "max_y_by_page": render_result.get("max_y_by_page", {}),
+            "svg_stats": svg_stats,
             "created_at": datetime.now(timezone.utc).isoformat(),
         }
+
+    # ── 设计规范（MiniMax 自由创作；确定性兜底） ──
+    _SPEC_SYSTEM = (
+        "你是咨询风演示设计总监（ppt-master Strategist）。根据产品信息与页面清单，"
+        "输出《设计规范与内容大纲》：1) 设计简报（受众/叙事基调/视觉语气，120 字内）；"
+        "2) 视觉方向（构图节奏/卡片语言/图表风格/留白策略，150 字内）；"
+        "3) 逐页大纲（每页：页面目标 + 设计要点，每页一行）。直接输出正文，不要格式标记。"
+    )
+
+    def _compose_design_spec(self, presentation: dict, idea: str) -> str:
+        try:
+            llm = get_presentation_llm_client() or get_llm_client()
+            if llm is None or not llm.api_key:
+                raise RuntimeError("无 LLM")
+            pages = presentation.get("pages") or []
+            outline = "\n".join(
+                f"- P{i + 1:02d} [{p.get('type', 'content')}] {str(p.get('title') or '')[:40]}"
+                for i, p in enumerate(pages)
+            )
+            user = (
+                f"产品：{idea}\n页数：{len(pages)}\n逐页清单：\n{outline}\n"
+                f"主题：{(presentation.get('theme') or {}).get('name', '咨询风')}"
+            )
+            spec = (llm.complete(
+                [{"role": "system", "content": self._SPEC_SYSTEM},
+                 {"role": "user", "content": user}],
+                temperature=0.5, max_tokens=900,
+            ) or "").strip()
+            if len(spec) > 60:
+                return spec[:1800]
+        except Exception as exc:  # noqa: BLE001 —— 规范失败回退确定性大纲
+            logger.warning("设计规范创作失败（回退大纲）: %s", exc)
+        return _build_design_spec(presentation, idea, "")
+
+    # ── 逐页 SVG（MiniMax 按 skill 创作：校验 → 重试 → 兜底） ──
+    def _author_pages(
+        self,
+        project_dir: Path,
+        presentation: dict,
+        theme: dict,
+        design_spec: str,
+        images: dict,
+    ) -> tuple[list[str], dict]:
+        from agents.ppt_design_agent import svg_author
+
+        svg_dir = project_dir / "svg_output"
+        svg_dir.mkdir(exist_ok=True)
+        pages = presentation.get("pages") or []
+        llm = get_presentation_llm_client() or get_llm_client()
+        files: list[str] = []
+        stats: dict = {"retries": 0, "fallbacks": 0, "per_page": {}}
+        img_assets = {"hero": images.get("hero"), "pages": images.get("pages") or {}}
+        for i, page in enumerate(pages):
+            name = f"slide_{i + 1:02d}_{page.get('type', 'page')}.svg"
+            svg = ""
+            status = "llm"
+            if llm is not None and llm.api_key:
+                for attempt in range(3):
+                    prompt = svg_author.build_page_prompt(page, theme, design_spec, i, img_assets)
+                    try:
+                        raw = llm.complete(
+                            [{"role": "system", "content": "你是资深咨询风演示 SVG 设计师。只输出 SVG。"},
+                             {"role": "user", "content": prompt}],
+                            temperature=0.6, max_tokens=8192,
+                        ) or ""
+                    except Exception as exc:  # noqa: BLE001
+                        logger.warning("P%d SVG 调用失败: %s", i + 1, str(exc)[:120])
+                        continue
+                    svg = svg_author.extract_svg(raw)
+                    ok, issue = svg_author.validate_svg(svg, page)
+                    if ok:
+                        break
+                    stats["retries"] += 1
+                    logger.warning("P%d SVG 校验失败（第 %d 次）: %s", i + 1, attempt + 1, issue)
+                    svg = ""
+            if not svg:
+                stats["fallbacks"] += 1
+                status = "fallback"
+                svg = svg_author.fallback_svg(page, theme)
+            svg = svg_author.sanitize_svg(svg)
+            (svg_dir / name).write_text(svg, encoding="utf-8")
+            files.append(name)
+            stats["per_page"][i + 1] = status
+        return files, stats
+
 
     # ── 生图阶段（阶段 C）：MiniMax-Image-01 via ppt-master image_gen.py ──
     _HERO_PROMPT = (

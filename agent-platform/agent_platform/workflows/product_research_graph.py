@@ -73,11 +73,16 @@ def _with_retry(
     node_fn: Callable[[dict], dict | None],
     node_name: str,
     max_retries: int,
+    progress: Callable[[dict], None] | None = None,
 ) -> Callable[[dict], dict]:
     """节点重试包装器：失败重试 → 记录错误并降级继续。
 
     LangGraph 规范：节点通过返回更新 dict 写回状态（而非原地修改）。
     """
+
+    def _emit(status_value: str, **extra) -> None:
+        if progress is not None:
+            progress({"node": node_name, "status": status_value, **extra})
 
     def wrapped(state: dict) -> dict:
         status = dict(state.get("node_status", {}))
@@ -85,15 +90,18 @@ def _with_retry(
 
         status[node_name] = "running"
         errors.pop(node_name, None)
+        _emit("running")
 
         last_exc: Exception | None = None
         for attempt in range(1, max_retries + 2):  # 总尝试 = max_retries + 1
             try:
                 updates = node_fn(state) or {}
                 status[node_name] = "completed"
+                _emit("completed")
                 return {**updates, "node_status": status, "errors": errors}
             except Exception as exc:  # noqa: BLE001 —— 统一收敛为节点失败
                 last_exc = exc
+                _emit("failed", error=str(exc)[:200])
                 logger.warning(
                     "[%s] 第 %d/%d 次尝试失败: %s",
                     node_name, attempt, max_retries + 1, exc,
@@ -132,6 +140,7 @@ class ProductResearchGraph:
         ppt_design_agent: BaseAgent | None = None,
         score_threshold: int = 80,
         max_revisions: int = 2,
+        progress_callback: Callable[[dict], None] | None = None,
     ):
         self.research_agent = research_agent
         self.product_agent = product_agent
@@ -145,6 +154,7 @@ class ProductResearchGraph:
         self.memory = memory
         self.max_retries = max_retries
         self.node_models = self._resolve_node_models()
+        self.progress_callback = progress_callback
         self._checkpointer = self._make_checkpointer()
         self.graph = self._build()
 
@@ -384,9 +394,9 @@ class ProductResearchGraph:
         builder = StateGraph(ProductStudioState)
 
         for name in NODE_ORDER:
-            builder.add_node(name, _with_retry(self._node_fn(name), name, self.max_retries))
-        builder.add_node("critic", _with_retry(self._critic, "critic", self.max_retries))
-        builder.add_node("ppt_design", _with_retry(self._ppt_design, "ppt_design", self.max_retries))
+            builder.add_node(name, _with_retry(self._node_fn(name), name, self.max_retries, self.progress_callback))
+        builder.add_node("critic", _with_retry(self._critic, "critic", self.max_retries, self.progress_callback))
+        builder.add_node("ppt_design", _with_retry(self._ppt_design, "ppt_design", self.max_retries, self.progress_callback))
         builder.add_node("assemble", self._assemble)
 
         builder.add_edge(START, NODE_ORDER[0])
@@ -506,6 +516,7 @@ def run_pipeline(
     score_threshold: int = 80,
     max_revisions: int = 2,
     memory_namespace: str = "default",
+    progress_callback: Callable[[dict], None] | None = None,
 ) -> ProductAssetPackage:
     """一步式便捷入口：构建图并执行。"""
     graph = build_product_research_graph(
@@ -520,5 +531,6 @@ def run_pipeline(
         ppt_design_agent=ppt_design_agent,
         score_threshold=score_threshold,
         max_revisions=max_revisions,
+        progress_callback=progress_callback,
     )
     return graph.invoke(idea, memory_namespace=memory_namespace)

@@ -1,16 +1,21 @@
 /**
  * ai/AgentTimeline —— AI 产品团队进度（"与 AI 团队协作"体验）
  *
- * 把八节点流水线映射为四个团队角色：
+ * 八节点流水线映射为五个团队角色 + 交付打包：
  *   Research Agent       research + competitor_analysis
  *   Product Agent        strategy
  *   Design Agent         design
  *   Presentation Agent   presentation + critic
- * （assemble 作为收尾步骤展示）
+ *   PPT Design Agent     ppt_design
+ * 进度由后端在节点边界实时回写（node_status 持久化）：
+ *   - 顶部「当前步骤」横幅：正在工作的 Agent + 说明 + 模型 + 打字动画
+ *   - 整体进度条（按节点顺序百分比，运行中斜纹流动）
+ *   - 每行步骤流转动画（pending→running→completed 淡入）
  */
 
+import { Loader2, Users } from 'lucide-react'
 import { AgentPhase, AgentStatus } from '@/components/ai/AgentStatus'
-import { Users } from 'lucide-react'
+import { cn } from '@/lib/utils'
 
 interface TeamRole {
   name: string
@@ -58,6 +63,25 @@ const TEAM: TeamRole[] = [
   },
 ]
 
+// 节点执行顺序（对齐 NODE_ORDER + critic/ppt_design/assemble）
+const NODE_ORDER = [
+  'requirement_parser', 'research', 'competitor_analysis', 'strategy',
+  'design', 'presentation', 'critic', 'ppt_design', 'assemble',
+]
+
+// 节点 → 人话说明（当前正在做什么）
+const NODE_MESSAGES: Record<string, string> = {
+  requirement_parser: '解析产品需求，明确目标与边界',
+  research: '市场研究：搜索行业规模、竞品与用户痛点',
+  competitor_analysis: '竞品分析：构建矩阵与差异化机会',
+  strategy: '产品策略：定位、画像、功能与路线图',
+  design: 'UX 设计：用户旅程与信息架构',
+  presentation: '演示编排：SCR 叙事与演示 DSL',
+  critic: '质量评审：覆盖度与视觉门禁',
+  ppt_design: 'PPT 制作：设计规范 → 逐页 SVG → 原生 PPTX',
+  assemble: '资产打包：收敛全部节点产物',
+}
+
 function phaseOf(nodes: string[], nodeStatus: Record<string, string>): AgentPhase {
   const statuses = nodes.map((n) => nodeStatus[n] ?? 'pending')
   if (statuses.some((s) => s === 'failed')) return 'failed'
@@ -65,6 +89,16 @@ function phaseOf(nodes: string[], nodeStatus: Record<string, string>): AgentPhas
   if (statuses.every((s) => s === 'completed')) return 'completed'
   if (statuses.some((s) => s === 'completed')) return 'running' // 部分完成视为进行中
   return 'pending'
+}
+
+function TypingDotsInline() {
+  return (
+    <span className="ml-1 inline-flex items-center text-[#24415E]">
+      <span className="typing-dot" />
+      <span className="typing-dot" />
+      <span className="typing-dot" />
+    </span>
+  )
 }
 
 export function AgentTimeline({
@@ -84,6 +118,16 @@ export function AgentTimeline({
     return undefined
   }
 
+  // ── 整体进度（按节点顺序） ──
+  const completedCount = NODE_ORDER.filter((n) => nodeStatus[n] === 'completed').length
+  const progressPct = Math.round((completedCount / NODE_ORDER.length) * 100)
+  const anyRunning = NODE_ORDER.some((n) => nodeStatus[n] === 'running')
+
+  // ── 当前步骤（正在运行的节点） ──
+  const activeNode = NODE_ORDER.find((n) => nodeStatus[n] === 'running')
+  const activeTeam = TEAM.find((m) => activeNode && m.nodes.includes(activeNode))
+  const activeMessage = activeNode ? (NODE_MESSAGES[activeNode] ?? '执行中…') : ''
+
   return (
     <div>
       <div className="mb-4 flex items-center gap-2 border-b pb-4">
@@ -98,13 +142,55 @@ export function AgentTimeline({
         </div>
       </div>
 
+      {/* ── 整体进度条 ── */}
+      <div className="mb-4">
+        <div className="mb-1 flex items-center justify-between text-[11px] text-muted-foreground">
+          <span>流水线进度</span>
+          <span>{completedCount}/{NODE_ORDER.length} 步骤 · {progressPct}%</span>
+        </div>
+        <div className="h-2 overflow-hidden rounded-full bg-secondary">
+          <div
+            className={cn(
+              'h-full rounded-full bg-[#24415E] transition-all duration-500',
+              anyRunning && 'progress-stripes',
+            )}
+            style={{ width: `${Math.max(progressPct, 4)}%` }}
+          />
+        </div>
+      </div>
+
+      {/* ── 当前步骤横幅（运行中显示，带打字动画） ── */}
+      {activeNode && (
+        <div className="mb-4 flex items-center gap-3 rounded-xl border border-[#24415E]/20 bg-[#24415E]/5 px-4 py-3 animate-step-in">
+          <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-[#24415E] text-white animate-soft-pulse">
+            <Loader2 className="h-4 w-4 animate-spin" />
+          </span>
+          <div className="min-w-0 flex-1">
+            <div className="flex items-center gap-1.5 text-[13px] font-medium text-foreground">
+              <span>{activeTeam?.name ?? activeNode}</span>
+              <span className="font-normal text-muted-foreground/70">正在</span>
+              <span className="text-[#24415E]">{activeMessage}</span>
+              <TypingDotsInline />
+            </div>
+            <div className="mt-0.5 text-[11px] text-muted-foreground">
+              模型：{modelOf(activeTeam?.nodes ?? [activeNode]) ?? '—'}
+            </div>
+          </div>
+        </div>
+      )}
+      {!activeNode && !assembleDone && (
+        <div className="mb-4 rounded-xl border border-dashed px-4 py-3 text-[12px] text-muted-foreground animate-step-in">
+          排队等待调度：任务即将开始…
+        </div>
+      )}
+
       <div className="divide-y divide-border/60">
         {TEAM.map((member) => {
           const phase = phaseOf(member.nodes, nodeStatus)
           const model = modelOf(member.nodes)
           return (
             <AgentStatus
-              key={member.name}
+              key={`${member.name}-${phase}`}
               name={member.name}
               task={
                 phase === 'completed'
