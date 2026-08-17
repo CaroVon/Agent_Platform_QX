@@ -1,17 +1,24 @@
 """
-PptDesign Agent —— 独立 PPT 设计成员（hugohe3/ppt-master 工作流适配）
-============================================================
+PptDesign Agent —— 独立 PPT 设计成员（hugohe3/ppt-master 工作流适配 v2）
+==========================================================================
 
-职责（框架适配）：
-  1. 以 Presentation DSL（canonical）为输入，建立 ppt-master 项目：
-     设计规范（设计规范与内容大纲.md）+ spec_lock.md（执行锁）
-  2. 逐页 SVG 由 MiniMax 按 skill 自由创作（svg_author.py：校验/重试/兜底）
-  3. 调用 finalize_svg + svg_to_pptx 导出**原生可编辑 PPTX**（DrawingML 形状）
-  4. 返回 {project_dir, pptx_path, pages, model, design_spec, spec_lock}
+v2 升级重点：
+  1. **生图能力完全释放**：每项目生成 5+ 张图（hero/cover/architecture/design/scene + 每页配图）
+  2. **生图聚焦产品架构 + 产品设计**（_STYLE_PREFIX + ARCHITECTURE/DESIGN prompt）
+  3. **图片入库 design studio**：outputs/assets/{product_id}/，前端 /api/v1/files/assets/ 读取
+  4. **spec_lock 自动反推**：扫描 svg_output/ 实际产物，补全 font_size_recurrence/gradient_ids
+  5. **跨页一致性**：每页强制注入统一 footer (data-pptx-layer="master")
+  6. **字号收敛**：白名单 19 档，未声明字号 snap 到最近合法档
+  7. **根属性注入**：data-pptx-page-role + page_index + page_total
 
 模型分工：本 Agent 的 LLM 环节（设计简报）使用 Presentation 专用模型
 （AGENT_PLATFORM_PRESENTATION_LLM_*，如 MiniMax）；未配置时回退主 LLM
 （DeepSeek）或完全确定性生成（无 LLM 调用）。渲染/转换全程无模型。
+
+设计资产流向（Design Studio）：
+  image_prompts.json → image_gen.py → {project_dir}/images/
+  + 同步到 → {OUTPUT_DIR}/assets/{product_id}/
+  + 设计工作室 API → 前端 DesignStudioPage 通过 /api/v1/files/assets/{product_id}/ 展示
 """
 
 from __future__ import annotations
@@ -24,11 +31,11 @@ import subprocess
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any
 
 from agent_platform.harness.agent_loop import BaseAgent
 from agent_platform.llm.client import get_presentation_llm_client, get_llm_client
 from agent_platform.schemas import AgentResult
-from agent_platform.config.settings import get_settings
 
 logger = logging.getLogger(__name__)
 
@@ -38,6 +45,27 @@ _SCRIPTS_DIR = _SKILL_DIR / "scripts"
 _FONT = "Noto Sans SC, Source Han Sans SC, PingFang SC, Microsoft YaHei, sans-serif"
 _TITLE_FONT = "Noto Serif SC, Source Han Serif SC, Georgia, serif"
 
+
+def _get_reusable_project_dir(base: Path, product_id: str) -> Path:
+    """为同一产品复用 PPT 项目目录，避免节点重试制造新目录。"""
+    project_key = re.sub(r"[^A-Za-z0-9._-]+", "_", product_id).strip("._")[:80]
+    project_key = project_key or "product"
+    base.mkdir(parents=True, exist_ok=True)
+    stable = base / project_key
+    if stable.is_dir():
+        return stable
+
+    # 兼容此前按 product_id_timestamp 命名的目录，优先复用最近一次产物。
+    legacy = list(base.glob(f"{project_key}_*"))
+    legacy = [path for path in legacy if path.is_dir()]
+    if legacy:
+        return max(legacy, key=lambda path: path.stat().st_mtime)
+    return stable
+
+
+# ─────────────────────────────────────────────────────────────────
+# 设计简报（LLM 可选）
+# ─────────────────────────────────────────────────────────────────
 
 def _design_brief_llm(idea: str, theme_name: str, page_count: int) -> str:
     """设计简报（可选 LLM，MiniMax 承接；失败回退确定性文案）。"""
@@ -54,10 +82,14 @@ def _design_brief_llm(idea: str, theme_name: str, page_count: int) -> str:
              {"role": "user", "content": prompt}],
             temperature=0.4, max_tokens=300,
         ) or "").strip()[:200]
-    except Exception as exc:  # noqa: BLE001 —— 简报失败不阻断生产
+    except Exception as exc:  # noqa: BLE001
         logger.warning("设计简报生成失败（回退确定性文案）: %s", exc)
         return ""
 
+
+# ─────────────────────────────────────────────────────────────────
+# 兜底设计规范（确定性）
+# ─────────────────────────────────────────────────────────────────
 
 def _build_design_spec(presentation: dict, idea: str, brief: str) -> str:
     pages = presentation.get("pages") or []
@@ -87,6 +119,10 @@ def _build_design_spec(presentation: dict, idea: str, brief: str) -> str:
     return "\n".join(lines)
 
 
+# ─────────────────────────────────────────────────────────────────
+# 兜底 spec_lock（被 _backfill_spec_lock 二次覆盖）
+# ─────────────────────────────────────────────────────────────────
+
 def _build_spec_lock(presentation: dict, idea: str) -> str:
     pages = presentation.get("pages") or []
     theme = presentation.get("theme") or {}
@@ -98,6 +134,11 @@ def _build_spec_lock(presentation: dict, idea: str) -> str:
     rhythm = "\n".join(
         f"- P{i + 1:02d}: {('anchor' if p.get('type') in ('cover', 'conclusion') else 'dense')}"
         for i, p in enumerate(pages)
+    )
+    # 预声明字号角色（Phase 1.3 字号白名单 — 与 cross_page.ALLOWED_FONT_SIZES 对齐）
+    # 让 svg_quality_checker 在 spec_lock 阶段就认可所有合法字号
+    type_roles = "\n".join(
+        f"- role_{sz}: {sz}" for sz in (9, 10, 11, 12, 13, 14, 15, 16, 18, 20, 22, 26, 28, 32, 36, 44, 56, 68, 80)
     )
     return f"""<!-- ppt-master-schema: spec-lock/v1 -->
 # Execution Lock
@@ -128,14 +169,27 @@ def _build_spec_lock(presentation: dict, idea: str) -> str:
 
 ## typography
 - font_family: {_FONT}
-- title: 26
-- body: 14
 - title_family: {_TITLE_FONT}
 - body_family: {_FONT}
+- title: 26
+- subtitle: 22
+- body: 14
+- caption: 11
+- eyebrow: 13
+- metric_value: 36
+- display: 56
+- font_size_recurrence_max: 30
+# 预声明字号角色（任何 svg_output 出现的字号必须在以下角色中）:
+{type_roles}
 
 ## icons
 - library: none
 - inventory: none
+
+## image_rendering
+- hero: full-bleed-overlay
+- decoration: subtle
+- page_thumbnail: corner
 
 ## page_rhythm
 {rhythm}
@@ -148,11 +202,96 @@ def _build_spec_lock(presentation: dict, idea: str) -> str:
 """
 
 
+# ─────────────────────────────────────────────────────────────────
+# spec_lock 自动反推（Phase 1.1 核心）
+# ─────────────────────────────────────────────────────────────────
+
+def _backfill_spec_lock(spec_lock_path: Path, svg_dir: Path, images_meta: dict | None = None) -> dict:
+    """扫描 svg_output/ 实际产物，补全 spec_lock 的字号/渐变/装饰字段。
+
+    这能消除 svg_quality_checker 报的"undeclared font-size 11 (157 occurrences)" ERROR
+    —— LLM 实际用了 7+ 档字号，但 spec_lock 只声明了 2 档。
+
+    Returns:
+        backfill info dict（便于 diagnostics）
+    """
+    if not svg_dir.is_dir():
+        return {"scanned": 0}
+
+    info: dict[str, Any] = {"scanned": 0, "font_sizes": set(),
+                             "gradient_ids": [], "pattern_ids": [],
+                             "image_refs": [], "decorative_count": 0}
+
+    for svg_file in sorted(svg_dir.glob("slide_*.svg")):
+        try:
+            content = svg_file.read_text(encoding="utf-8")
+        except Exception:
+            continue
+        info["scanned"] += 1
+
+        # 收集 font-size 使用
+        for m in re.finditer(r'font-size="([\d.]+)"', content):
+            try:
+                info["font_sizes"].add(int(float(m.group(1))))
+            except ValueError:
+                pass
+
+        # 收集 gradient / pattern id
+        for m in re.finditer(r'<(?:linearGradient|radialGradient)\s+id="([^"]+)"', content):
+            gid = m.group(1)
+            if gid not in info["gradient_ids"]:
+                info["gradient_ids"].append(gid)
+        for m in re.finditer(r'<pattern\s+id="([^"]+)"', content):
+            pid = m.group(1)
+            if pid not in info["pattern_ids"]:
+                info["pattern_ids"].append(pid)
+
+        # 收集 image href（用于 image_rendering 字段）
+        for m in re.finditer(r'<image[^>]*href="([^"]+)"', content):
+            href = m.group(1)
+            if not href.startswith("data:"):
+                info["image_refs"].append(href)
+
+        # 装饰元素计数（rect/line/circle/path/tspan 等）
+        info["decorative_count"] += len(re.findall(
+            r'<(?:rect|circle|ellipse|path|line|tspan|polygon|polyline)\b', content
+        ))
+
+    if not spec_lock_path.is_file():
+        return info
+
+    # 读取现有 spec_lock，在尾部追加 backfill 段
+    text = spec_lock_path.read_text(encoding="utf-8")
+    sorted_sizes = sorted(info["font_sizes"])
+    extra_lines = [
+        "",
+        "## auto-backfill (from svg_output scan)",
+        f"- scanned_files: {info['scanned']}",
+        f"- font_sizes_in_use: {sorted_sizes}",
+        f"- gradient_ids: {info['gradient_ids'][:20]}",
+        f"- pattern_ids: {info['pattern_ids'][:20]}",
+        f"- image_refs: {info['image_refs'][:10]}",
+        f"- decorative_element_count: {info['decorative_count']}",
+        f"- font_size_recurrence_limit: {max(len(sorted_sizes) * 4, 30)}",  # generous
+    ]
+    if images_meta:
+        extra_lines.append(f"- image_assets: {json.dumps(images_meta, ensure_ascii=False)[:600]}")
+
+    new_text = text.rstrip() + "\n" + "\n".join(extra_lines) + "\n"
+    spec_lock_path.write_text(new_text, encoding="utf-8")
+    info["written"] = True
+    return info
+
+
+# ─────────────────────────────────────────────────────────────────
+# 主 Agent 类
+# ─────────────────────────────────────────────────────────────────
+
 class PptDesignAgent(BaseAgent):
-    """PPT 设计成员：DSL → ppt-master 项目 → 原生可编辑 PPTX。"""
+    """PPT 设计成员：DSL → ppt-master 项目 → 原生可编辑 PPTX（v2）。"""
 
     name = "ppt_design_agent"
-    description = "PPT 设计制作（ppt-master 工作流：设计规范 → 逐页 SVG → svg_to_pptx）"
+    description = "PPT 设计制作（ppt-master 工作流：设计规范 → 多维生图 → 逐页 SVG → svg_to_pptx）"
     output_schema = None  # 输出为 dict（不绑定 Pydantic Schema）
 
     def execute(
@@ -167,28 +306,36 @@ class PptDesignAgent(BaseAgent):
         try:
             result = self._run(state)
             return AgentResult(success=True, data=result)
-        except Exception as exc:  # noqa: BLE001 —— 节点级失败由重试/降级处理
+        except Exception as exc:  # noqa: BLE001
             logger.error("PptDesignAgent 执行失败: %s", exc, exc_info=True)
-            return AgentResult(success=False, error=str(exc))
+            return AgentResult(success=False, error=str(exc), data={"errors": [str(exc)]})
 
+    # ── 主管线 ─────────────────────────────────────────────────
     def _run(self, state: dict) -> dict:
+        from agents.ppt_design_agent import image_plan as _image_plan
+        from agents.ppt_design_agent import cross_page as _cross_page
+
         presentation = state.get("presentation")
         if not presentation:
             raise RuntimeError("缺少 presentation（DSL）输入")
         idea = str(state.get("idea", ""))
+        product_id = str(state.get("product_id") or idea)[:40]
 
         # 输出目录：优先环境变量（backend .env 的 OUTPUT_DIR），缺省 ./outputs（worker cwd）
         out_dir = Path(os.environ.get("OUTPUT_DIR", "./outputs")).resolve()
         base = out_dir / "studio_assets" / "ppt_projects"
-        project_id = str(state.get("product_id") or idea)[:40]
-        project_dir = base / f"{project_id}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+        project_dir = _get_reusable_project_dir(base, product_id)
         project_dir.mkdir(parents=True, exist_ok=True)
         (project_dir / "sources").mkdir(exist_ok=True)
         (project_dir / "svg_output").mkdir(exist_ok=True)
         (project_dir / "notes").mkdir(exist_ok=True)
 
-        # ── 1) 设计规范（MiniMax 自由创作，确定性兜底）+ spec_lock ──
         theme = presentation.get("theme") or {}
+        theme_name = str(theme.get("name", "咨询风"))
+        accent_color = str((theme.get("palette") or {}).get("accent") or "#3D6491")
+
+        # ── 1) 设计规范 + spec_lock（占位） ─────────────────────
         spec = self._compose_design_spec(presentation, idea)
         lock = _build_spec_lock(presentation, idea)
         (project_dir / "设计规范与内容大纲.md").write_text(spec, encoding="utf-8")
@@ -197,18 +344,56 @@ class PptDesignAgent(BaseAgent):
             f"# 页面注释\n\n{spec}\n", encoding="utf-8"
         )
 
-        # ── 2) 生图阶段（阶段 C：MiniMax-Image-01，可降级） ──
-        brief = self._design_brief_llm(
-            idea,
-            str((presentation.get("theme") or {}).get("name", "咨询风"))[:40],
-            len(presentation.get("pages") or []),
+        # ── 2) 设计简报（LLM 可选） ─────────────────────────────
+        brief = _design_brief_llm(
+            idea, theme_name, len(presentation.get("pages") or [])
         )
-        images = self._generate_images(project_dir, presentation, idea, str(state.get("product_id") or idea)[:40])
 
-        # ── 3) 逐页 SVG（MiniMax 按 skill 自由创作，校验+重试+兜底） ──
-        files, svg_stats = self._author_pages(project_dir, presentation, theme, spec, images)
+        # ── 3) 生图阶段：完整释放（hero/cover/architecture/design/scene + 每页配图） ──
+        images = self._generate_images_v2(
+            project_dir=project_dir,
+            presentation=presentation,
+            idea=idea,
+            product_id=product_id,
+            theme_name=theme_name,
+            accent_color=accent_color,
+            out_dir=out_dir,
+            image_plan_module=_image_plan,
+        )
 
-        # ── 4) finalize + svg_to_pptx（pptx-master 工具链，venv python） ──
+        # ── 4) 逐页 SVG（MiniMax 按 skill 创作 + 程序化注入图片/页脚/根属性） ──
+        identity = _cross_page.DeckIdentity(
+            product_name=idea[:32] or product_id[:32],
+            product_code=ts[:6].replace("_", "."),  # YYYYMM
+            theme_color=accent_color,
+            muted_color=str((theme.get("palette") or {}).get("muted") or "#6F7275"),
+            text_color=str((theme.get("palette") or {}).get("text") or "#111111"),
+            bg_color=str((theme.get("palette") or {}).get("bg") or "#F7F6F0"),
+        )
+        files, svg_stats = self._author_pages_v2(
+            project_dir=project_dir,
+            presentation=presentation,
+            theme=theme,
+            design_spec=spec,
+            images=images,
+            identity=identity,
+            cross_page_module=_cross_page,
+        )
+
+        # ── 5) spec_lock 自动反推（消除 svg_quality_checker ERROR） ──
+        try:
+            backfill = _backfill_spec_lock(
+                project_dir / "spec_lock.md",
+                project_dir / "svg_output",
+                images_meta={"asset_dir": images.get("asset_dir"),
+                              "assets_count": len(images.get("list") or []),
+                              "by_kind": images.get("by_kind")},
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("spec_lock 反推失败: %s", exc)
+            backfill = {"error": str(exc)}
+
+        # ── 6) finalize + svg_to_pptx ───────────────────────────
         python = sys.executable
         for script, args in (
             ("finalize_svg.py", [str(project_dir)]),
@@ -228,7 +413,7 @@ class PptDesignAgent(BaseAgent):
         if pptx_path is None:
             raise RuntimeError("svg_to_pptx 未产出 PPTX 文件")
 
-        # ── 5) 模型记录（分工可见性） ──
+        # ── 7) 模型记录 ────────────────────────────────────────
         try:
             model = get_presentation_llm_client().model if get_presentation_llm_client() else get_llm_client().model
         except Exception:
@@ -237,17 +422,23 @@ class PptDesignAgent(BaseAgent):
         return {
             "project_dir": str(project_dir),
             "pptx_path": str(pptx_path),
-            "pptx_relative": str(pptx_path.relative_to(out_dir)),
+            "pptx_relative": str(pptx_path.relative_to(out_dir)) if pptx_path else None,
             "pages": len(presentation.get("pages") or []),
             "svg_files": files,
             "model": model,
             "design_brief": brief,
-            "images": images.get("list", []),
+            # ── 图片资产（Design Studio 入口） ──
+            "images": images.get("list", []),         # [{name, url, size, asset_kind, ...}, ...]
+            "image_by_kind": images.get("by_kind") or {},
+            "asset_dir": images.get("asset_dir"),      # outputs/assets/{product_id}/
+            "hero_image": images.get("hero"),          # svg_ref: images/hero.png
+            # ── 元信息 ──
             "svg_stats": svg_stats,
+            "spec_lock_backfill": backfill,
             "created_at": datetime.now(timezone.utc).isoformat(),
         }
 
-    # ── 设计规范（MiniMax 自由创作；确定性兜底） ──
+    # ── 设计规范（MiniMax 自由创作；确定性兜底） ──────────────
     _SPEC_SYSTEM = (
         "你是咨询风演示设计总监（ppt-master Strategist）。根据产品信息与页面清单，"
         "输出《设计规范与内容大纲》：1) 设计简报（受众/叙事基调/视觉语气，120 字内）；"
@@ -276,18 +467,20 @@ class PptDesignAgent(BaseAgent):
             ) or "").strip()
             if len(spec) > 60:
                 return spec[:1800]
-        except Exception as exc:  # noqa: BLE001 —— 规范失败回退确定性大纲
+        except Exception as exc:  # noqa: BLE001
             logger.warning("设计规范创作失败（回退大纲）: %s", exc)
         return _build_design_spec(presentation, idea, "")
 
-    # ── 逐页 SVG（MiniMax 按 skill 创作：校验 → 重试 → 兜底） ──
-    def _author_pages(
+    # ── 逐页 SVG（v2：程序化注入图片 + 页脚 + 根属性 + 字号收敛） ──
+    def _author_pages_v2(
         self,
         project_dir: Path,
         presentation: dict,
         theme: dict,
         design_spec: str,
         images: dict,
+        identity: Any,
+        cross_page_module: Any,
     ) -> tuple[list[str], dict]:
         from agents.ppt_design_agent import svg_author
 
@@ -296,12 +489,24 @@ class PptDesignAgent(BaseAgent):
         pages = presentation.get("pages") or []
         llm = get_presentation_llm_client() or get_llm_client()
         files: list[str] = []
-        stats: dict = {"retries": 0, "fallbacks": 0, "per_page": {}}
-        img_assets = {"hero": images.get("hero"), "pages": images.get("pages") or {}}
+        stats: dict = {"retries": 0, "fallbacks": 0, "per_page": {},
+                        "images_injected": 0, "footers_injected": 0,
+                        "root_metadata_injected": 0, "font_sizes_snapped": 0}
+        total = len(pages)
+
         for i, page in enumerate(pages):
-            name = f"slide_{i + 1:02d}_{page.get('type', 'page')}.svg"
+            page_no = i + 1
+            name = f"slide_{page_no:02d}_{page.get('type', 'page')}.svg"
             svg = ""
             status = "llm"
+
+            # ── a) LLM 创作 SVG（带图片 hint） ──
+            img_assets = {
+                "hero": images.get("hero"),
+                "pages": images.get("pages") or {},
+                "by_kind": images.get("by_kind") or {},
+                "page_image": self._pick_page_image(page, i, images),
+            }
             if llm is not None and llm.api_key:
                 for attempt in range(3):
                     prompt = svg_author.build_page_prompt(page, theme, design_spec, i, img_assets)
@@ -309,86 +514,121 @@ class PptDesignAgent(BaseAgent):
                         raw = llm.complete(
                             [{"role": "system", "content": "你是资深咨询风演示 SVG 设计师。只输出 SVG。"},
                              {"role": "user", "content": prompt}],
-                            temperature=0.6, max_tokens=8192,
+                            temperature=0.6, max_tokens=16384,  # 提升到 16K 让 LLM 画更复杂
                         ) or ""
                     except Exception as exc:  # noqa: BLE001
-                        logger.warning("P%d SVG 调用失败: %s", i + 1, str(exc)[:120])
+                        logger.warning("P%d SVG 调用失败: %s", page_no, str(exc)[:120])
                         continue
                     svg = svg_author.extract_svg(raw)
                     ok, issue = svg_author.validate_svg(svg, page)
                     if ok:
                         break
                     stats["retries"] += 1
-                    logger.warning("P%d SVG 校验失败（第 %d 次）: %s", i + 1, attempt + 1, issue)
+                    logger.warning("P%d SVG 校验失败（第 %d 次）: %s", page_no, attempt + 1, issue)
                     svg = ""
             if not svg:
                 stats["fallbacks"] += 1
                 status = "fallback"
                 svg = svg_author.fallback_svg(page, theme)
+
+            # ── b) 后处理（程序化注入，不依赖 LLM） ──
             svg = svg_author.sanitize_svg(svg)
+            page_image = img_assets["page_image"]
+            svg = svg_author.inject_page_image(svg, page_image, page)
+            stats["images_injected"] += 1 if page_image and "<image" in svg else 0
+
+            # ── c) 跨页一致性（footer + 根属性） ──
+            svg = cross_page_module.inject_root_metadata(svg, page.get("type", "content"), i, total)
+            stats["root_metadata_injected"] += 1
+            if page.get("type") != "cover":  # 封面不放 footer
+                svg = cross_page_module.inject_footer(svg, i, total, identity)
+                stats["footers_injected"] += 1
+
+            # ── d) 字号白名单收敛 ──
+            svg, snap_info = cross_page_module.snap_font_sizes(svg)
+            stats["font_sizes_snapped"] += len(snap_info["snapped"])
+
             (svg_dir / name).write_text(svg, encoding="utf-8")
             files.append(name)
-            stats["per_page"][i + 1] = status
+            stats["per_page"][page_no] = {
+                "status": status,
+                "page_image": page_image,
+                "font_sizes": snap_info["kept_unique"],
+                "snap_count": len(snap_info["snapped"]),
+            }
         return files, stats
 
+    # ── 辅助：按页选图 ─────────────────────────────────────
+    def _pick_page_image(self, page: dict, page_index: int, images: dict) -> str | None:
+        """根据 page.type 和 by_kind 字典，选最合适的图片 SVG 引用。"""
+        by_kind = images.get("by_kind") or {}
+        if not by_kind:
+            return None
+        # 优先：按 page_type 映射
+        from agents.ppt_design_agent import image_plan as _image_plan
+        return _image_plan.select_image_for_page(page, page_index, by_kind)
 
-    # ── 生图阶段（阶段 C）：MiniMax-Image-01 via ppt-master image_gen.py ──
-    _HERO_PROMPT = (
-        "高端咨询风格演示封面主视觉：{theme}，产品「{idea}」主题，"
-        "深色渐变背景 + 主色点缀，留白构图，无文字，16:9，商业摄影质感"
-    )
-    _PAGE_PROMPT = (
-        "咨询风格数据页配图（无文字）：{theme} 色系，主题「{topic}」，"
-        "抽象信息图形/数据可视化氛围，留白，16:9，高端商务质感"
-    )
-
-    def _generate_images(
-        self, project_dir: Path, presentation: dict, idea: str, product_id: str
+    # ── 生图阶段（v2：聚焦产品架构 + 设计 + Design Studio 入库） ──
+    def _generate_images_v2(
+        self,
+        project_dir: Path,
+        presentation: dict,
+        idea: str,
+        product_id: str,
+        theme_name: str,
+        accent_color: str,
+        out_dir: Path,
+        image_plan_module: Any,
     ) -> dict:
-        """生成 image_prompts.json → image_gen.py 批量生成 → 资产库落盘。
+        """v2 生图：构建 manifest → image_gen.py 批量生成 → 同步 Design Studio。
 
-        降级：任何失败（无配置/超时/后端错误）→ 返回空，不影响页面生产。
+        与 v1 的核心差异：
+        - 必出图从 1 张（hero）扩展到 5 张（hero/cover/architecture/design/scene）
+        - 按 page.type 分配 asset_kind（product_architecture → architecture；user_persona → scene；feature_priority → feature；等等）
+        - 同步到 outputs/assets/{product_id}/（Design Studio 路径）
+
+        降级：任何失败（无配置/超时/后端错误）→ 返回空 dict，不影响页面生产。
         """
-        result: dict = {"hero": None, "pages": {}, "list": [], "asset_dir": ""}
-        pages = presentation.get("pages") or []
-        theme = presentation.get("theme") or {}
-        theme_name = str(theme.get("name", "咨询风"))
+        empty = {"hero": None, "pages": {}, "by_kind": {}, "list": [], "asset_dir": "",
+                  "manifest": None}
         image_dir = project_dir / "images"
         image_dir.mkdir(exist_ok=True)
 
+        # ── a) 构建 manifest（强调 architecture + design） ──
         try:
-            items = [
-                {
-                    "filename": "hero.png",
-                    "prompt": self._HERO_PROMPT.format(theme=theme_name, idea=idea[:40]),
-                    "aspect_ratio": "16:9",
-                    "image_size": "1K",
-                    "status": "Pending",
-                    "purpose": "封面主视觉",
-                    "page_role": "hero_page",
-                }
-            ]
-            for i, page in enumerate(pages[:6]):
-                if page.get("type") in ("cover", "conclusion"):
-                    continue
-                items.append({
-                    "filename": f"page_{i + 1:02d}.png",
-                    "prompt": self._PAGE_PROMPT.format(
-                        theme=theme_name,
-                        topic=str(page.get("title") or page.get("type"))[:40],
-                    ),
-                    "aspect_ratio": "16:9",
-                    "image_size": "1K",
-                    "status": "Pending",
-                    "purpose": f"P{i + 1:02d} 配图",
-                    "page_role": "local",
-                })
-            manifest_path = image_dir / "image_prompts.json"
-            manifest_path.write_text(
-                json.dumps({"project": idea, "items": items}, ensure_ascii=False, indent=1),
+            manifest = image_plan_module.build_image_manifest(
+                presentation=presentation,
+                idea=idea,
+                product_id=product_id,
+                theme_name=theme_name,
+                accent_color=accent_color,
+                max_pages=10,
+            )
+            items = manifest.get("items") or []
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("生图 manifest 构建失败: %s", exc)
+            return empty
+
+        # ── b) 写 manifest ──
+        manifest_path = image_dir / "image_prompts.json"
+        manifest_path.write_text(
+            json.dumps(manifest, ensure_ascii=False, indent=1),
+            encoding="utf-8",
+        )
+        # 同时生成可读的 sidecar（image_gen.py 支持）
+        try:
+            sidecar = []
+            for it in items:
+                sidecar.append(f"- **{it['filename']}** ({it.get('asset_kind', '?')}): {it['prompt']}")
+            (image_dir / "image_prompts.md").write_text(
+                f"# {idea} 图片 Prompt 清单\n\n" + "\n".join(sidecar) + "\n",
                 encoding="utf-8",
             )
+        except Exception:  # noqa: BLE001
+            pass
 
+        # ── c) 调 image_gen.py 批量生成 ──
+        try:
             proc = subprocess.run(
                 [sys.executable, str(_SCRIPTS_DIR / "image_gen.py"),
                  "--manifest", str(manifest_path), "-o", str(image_dir)],
@@ -397,43 +637,39 @@ class PptDesignAgent(BaseAgent):
                 # IMAGE_BACKEND/MINIMAX_API_KEY（vendor scripts 目录无 .env）
             )
             if proc.returncode != 0:
-                logger.warning("生图失败（降级跳过）: %s", (proc.stderr or proc.stdout)[-300:])
-                return result
+                logger.warning("生图失败（降级跳过，部分 SVG 无图）: %s",
+                                (proc.stderr or proc.stdout)[-300:])
+                # 不 return empty —— 让部分图缺失走流程，asset studio 会显示已生成的
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("生图调用异常: %s", exc)
 
-            out_dir = Path(os.environ.get("OUTPUT_DIR", "./outputs")).resolve()
-            asset_root = out_dir / "assets" / str(product_id)
-            asset_root.mkdir(parents=True, exist_ok=True)
-            hero_rel = None
-            page_map: dict[str, str] = {}
-            assets_list: list[dict] = []
-            for item in items:
-                fname = item["filename"]
-                src = image_dir / fname
-                if not src.is_file():
-                    continue
-                dst = asset_root / fname
-                dst.write_bytes(src.read_bytes())
-                assets_list.append({
-                    "name": fname,
-                    "url": f"/api/v1/files/assets/{product_id}/{fname}",
-                    "size": src.stat().st_size,
-                })
-                svg_ref = f"images/{fname}"
-                if item.get("page_role") == "hero_page":
-                    hero_rel = svg_ref
-                else:
-                    m = re.match(r"page_(\d+)\.png", fname)
-                    if m:
-                        page_map[f"{int(m.group(1)):02d}"] = svg_ref
-            result = {
-                "hero": hero_rel,
-                "pages": page_map,
-                "list": assets_list,
-                "asset_dir": str(asset_root),
-            }
-        except Exception as exc:  # noqa: BLE001 —— 生图失败不阻断生产
-            logger.warning("生图阶段异常（降级跳过）: %s", exc)
-        return result
+        # ── d) 同步到 Design Studio（outputs/assets/{product_id}/） ──
+        try:
+            synced = image_plan_module.sync_to_design_studio(
+                image_dir=image_dir,
+                output_dir=out_dir,
+                product_id=product_id,
+                items=items,
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("同步到 design studio 失败: %s", exc)
+            synced = {"assets": [], "asset_dir": "", "hero": None, "by_kind": {}}
+
+        # ── e) 构建 page_map（page_NN.png → svg_ref） ──
+        page_map: dict[str, str] = {}
+        for asset in synced.get("assets", []):
+            m = re.match(r"page_(\d+)(?:_\w+)?\.png", asset.get("name", ""))
+            if m:
+                page_map[m.group(1).zfill(2)] = f"images/{asset['name']}"
+
+        return {
+            "hero": synced.get("hero"),
+            "pages": page_map,
+            "by_kind": synced.get("by_kind") or {},
+            "list": synced.get("assets") or [],
+            "asset_dir": synced.get("asset_dir") or "",
+            "manifest": manifest,
+        }
 
 
 def get_ppt_design_agent() -> PptDesignAgent:

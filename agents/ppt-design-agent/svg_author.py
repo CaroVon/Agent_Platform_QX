@@ -76,15 +76,62 @@ def build_page_prompt(
     colors = {**default_p, **{k: v for k, v in palette.items() if v}}
     theme_name = (theme or {}).get("name", "咨询风")
 
+    # ── 图片 hint（强调产品架构 + 设计） ──
     img_hint = ""
     if images:
         parts = []
         if images.get("hero"):
-            parts.append(f'<image href="images/hero.png" x="0" y="0" width="1280" height="720" preserveAspectRatio="xMidYMid slice" opacity="0.3"/>')
+            parts.append(
+                '<image href="images/hero.png" x="0" y="0" width="1280" height="720" '
+                'preserveAspectRatio="xMidYMid slice" opacity="0.35"/>'
+            )
+        # 按 by_kind 列出所有可用图（含 architecture / design / scene）
+        by_kind = images.get("by_kind") or {}
+        if by_kind:
+            kind_names = {
+                "hero": "封面主视觉",
+                "cover_decorative": "封面装饰",
+                "architecture": "产品技术架构图（isometric layered stack）",
+                "design": "产品工业设计图（isometric mockup）",
+                "scene": "使用场景图",
+                "feature": "功能特写",
+                "page_concept": "页面概念图",
+            }
+            for kind, ref in by_kind.items():
+                desc = kind_names.get(kind, kind)
+                parts.append(
+                    f'<image href="{ref}" width="280" height="158" opacity="0.92"/> '
+                    f'# {kind}：{desc}'
+                )
         for k, v in (images.get("pages") or {}).items():
-            parts.append(f'第 {k} 页可用配图 <image href="{v}" …>（标题区或页面右上，宽 ≤ 240）')
+            parts.append(f'第 {k} 页可用配图 <image href="{v}" …>')
+        # 当前页专用图
+        cur = images.get("page_image")
+        if cur:
+            parts.append(f'**当前页推荐配图**：<image href="{cur}" …>')
         if parts:
-            img_hint = "## 可用图片\n" + "\n".join(parts) + "\n（可选使用，使用后 finalize 会自动内嵌）\n"
+            img_hint = (
+                "## 可用图片资源（已生成并入库 Design Studio，可直接引用）\n"
+                + "\n".join(parts) + "\n\n"
+                "**重要**：SVG 引用图片时用 `href=\"images/<filename>.png\"` 相对路径，"
+                "finalize_svg 会自动 base64 嵌入。如不直接引用也没关系，agent 会自动注入到顶层。\n"
+            )
+
+    page_kind_hint = ""
+    page_type = (page.get("type") or "").lower()
+    if page_type == "product_architecture":
+        page_kind_hint = (
+            "\n## 视觉强调：本页是**产品架构**页——SVG 内可叠加半透明等距分层栈（4 层），"
+            "或与 architecture.png 配合呈现技术蓝图风格\n"
+        )
+    elif page_type == "user_persona" or page_type == "user_journey":
+        page_kind_hint = (
+            "\n## 视觉强调：本页是**用户场景**页——配合 scene.png 营造生活感\n"
+        )
+    elif page_type == "feature_priority":
+        page_kind_hint = (
+            "\n## 视觉强调：本页是**功能优先级**页——核心功能卡片 + feature.png 特写\n"
+        )
 
     return f"""你是资深咨询风演示 SVG 设计师（ppt-master Executor）。根据页面数据与视觉体系，逐页手写高质量 SVG 页面。
 
@@ -97,8 +144,7 @@ def build_page_prompt(
 - 强调 accent={colors['accent']} / 正文 text={colors['text']} / 次级 muted={colors['muted']}
 - 字体栈：{FONT}
 
-{img_hint}
-## 页面数据（Presentation DSL 页 {page_index + 1}）
+{img_hint}{page_kind_hint}## 页面数据（Presentation DSL 页 {page_index + 1}）
 {_page_json(page)}
 
 {_SKILL_RULES}
@@ -113,6 +159,7 @@ def build_page_prompt(
 - 图表：见硬性规则的原生 chart 标记（数据必须来自页面数据，禁止编造数值）
 - 页脚：底部细线 + 页码 {page_index + 1:02d}（y=700 附近，不超出画布）
 - 信息密度：宁满勿空，所有数据尽量呈现；页面高度用完但不超过 720
+- **图片使用**：如有产品图（architecture/design/scene），尽量以全宽或大尺寸呈现，作为页面氛围层
 
 只输出 <svg>…</svg>。"""
 
@@ -203,10 +250,16 @@ def validate_svg(svg: str, page: dict) -> tuple[bool, str]:
 
 def fallback_svg(page: dict, theme: dict | None) -> str:
     """极简兜底页（仅保证内容不丢；非创作模板）。"""
+    import html as _html
     palette = (theme or {}).get("palette") or {}
     default_p = {"bg": "#f8fafc", "surface": "#ffffff", "primary": "#4f46e5",
                  "accent": "#6366f1", "text": "#0f172a", "muted": "#64748b"}
     colors = {**default_p, **{k: v for k, v in palette.items() if v}}
+
+    def _esc(s: str) -> str:
+        """XML 安全转义（避免 < > & 引号导致 SVG 解析失败）。"""
+        return _html.escape(str(s or ""), quote=True)
+
     parts = [
         f'<svg xmlns="http://www.w3.org/2000/svg" width="{W}" height="{H}" viewBox="0 0 {W} {H}">',
         f'<rect width="{W}" height="{H}" fill="{colors["bg"]}"/>',
@@ -214,18 +267,149 @@ def fallback_svg(page: dict, theme: dict | None) -> str:
     page_type = page.get("type", "content")
     title = str(page.get("title") or "")
     if page_type in ("cover", "conclusion"):
-        parts.append(f'<text x="640" y="360" font-size="40" font-weight="bold" fill="{colors["text"]}" text-anchor="middle" font-family="{FONT}">{title[:40]}</text>')
+        parts.append(f'<text x="640" y="360" font-size="40" font-weight="bold" fill="{colors["text"]}" text-anchor="middle" font-family="{FONT}">{_esc(title[:40])}</text>')
     else:
-        parts.append(f'<text x="56" y="80" font-size="26" font-weight="bold" fill="{colors["text"]}" font-family="{FONT}">{title[:40]}</text>')
+        parts.append(f'<text x="56" y="80" font-size="26" font-weight="bold" fill="{colors["text"]}" font-family="{FONT}">{_esc(title[:40])}</text>')
         insight = str(page.get("insight") or "")
         if insight:
-            parts.append(f'<text x="56" y="120" font-size="14" fill="{colors["primary"]}" font-family="{FONT}">{insight[:80]}</text>')
+            parts.append(f'<text x="56" y="120" font-size="14" fill="{colors["primary"]}" font-family="{FONT}">{_esc(insight[:80])}</text>')
         ty = 190
         for c in page.get("components", [])[:8]:
             data = c.get("data") or {}
             label = str(data.get("value") or data.get("title") or data.get("text") or c.get("type"))[:60]
-            parts.append(f'<text x="56" y="{ty}" font-size="15" fill="{colors["text"]}" font-family="{FONT}">{label}</text>')
+            parts.append(f'<text x="56" y="{ty}" font-size="15" fill="{colors["text"]}" font-family="{FONT}">{_esc(label)}</text>')
             ty += 34
-    parts.append(f'<text x="56" y="700" font-size="11" fill="{colors["muted"]}" font-family="{FONT}">{page_type}</text>')
+    parts.append(f'<text x="56" y="700" font-size="11" fill="{colors["muted"]}" font-family="{FONT}">{_esc(page_type)}</text>')
     parts.append("</svg>")
     return "\n".join(parts)
+
+
+# ─────────────────────────────────────────────────────────────────
+# 程序化图片注入（Phase 1.2 / 2.5 核心 —— 不依赖 LLM）
+# ─────────────────────────────────────────────────────────────────
+
+# 各页类型的图片位置 + 尺寸规则（x, y, w, h, opacity）
+_IMAGE_LAYOUTS: dict[str, list[dict]] = {
+    # 封面：全幅铺底 + 半透明遮罩
+    "cover": [
+        {"x": 0, "y": 0, "w": 1280, "h": 720, "opacity": 0.35,
+         "preserveAspectRatio": "xMidYMid slice",
+         "name": "cover-bg", "role": "background"},
+    ],
+    # 通用内容页：右上角小图 280×158（4:2.25）
+    "content": [
+        {"x": 960, "y": 80, "w": 280, "h": 158, "opacity": 0.92,
+         "preserveAspectRatio": "xMidYMid slice",
+         "name": "page-thumb", "role": "decoration"},
+    ],
+    # 用户画像：右上角场景图
+    "user_persona": [
+        {"x": 940, "y": 70, "w": 300, "h": 200, "opacity": 0.90,
+         "preserveAspectRatio": "xMidYMid slice",
+         "name": "persona-scene", "role": "decoration"},
+    ],
+    # 用户旅程：右侧场景图
+    "user_journey": [
+        {"x": 940, "y": 70, "w": 300, "h": 200, "opacity": 0.90,
+         "preserveAspectRatio": "xMidYMid slice",
+         "name": "journey-scene", "role": "decoration"},
+    ],
+    # 产品架构：上半部分全宽架构图
+    "product_architecture": [
+        {"x": 60, "y": 145, "w": 1160, "h": 320, "opacity": 0.95,
+         "preserveAspectRatio": "xMidYMid meet",
+         "name": "arch-diagram", "role": "background"},
+    ],
+    # 工业设计：右侧产品图 320×220
+    "design": [
+        {"x": 900, "y": 220, "w": 320, "h": 220, "opacity": 0.92,
+         "preserveAspectRatio": "xMidYMid slice",
+         "name": "design-mockup", "role": "decoration"},
+    ],
+    # 功能优先级：右上角小图
+    "feature_priority": [
+        {"x": 940, "y": 80, "w": 300, "h": 170, "opacity": 0.92,
+         "preserveAspectRatio": "xMidYMid slice",
+         "name": "feature-visual", "role": "decoration"},
+    ],
+    # 竞品矩阵：右上角小图
+    "competitor_matrix": [
+        {"x": 940, "y": 80, "w": 300, "h": 170, "opacity": 0.85,
+         "preserveAspectRatio": "xMidYMid slice",
+         "name": "competitor-visual", "role": "decoration"},
+    ],
+    # 结论页：下半部分图
+    "conclusion": [
+        {"x": 940, "y": 320, "w": 300, "h": 200, "opacity": 0.85,
+         "preserveAspectRatio": "xMidYMid slice",
+         "name": "closing-visual", "role": "decoration"},
+    ],
+}
+
+
+def _image_layer_for_page(page: dict) -> list[dict]:
+    """根据 page.type 返回图片层定义。"""
+    ptype = (page.get("type") or "content").lower()
+    return _IMAGE_LAYOUTS.get(ptype, _IMAGE_LAYOUTS["content"])
+
+
+def inject_page_image(svg: str, page_image_ref: str | None, page: dict) -> str:
+    """在 SVG 顶层注入 <image> 元素（不依赖 LLM）。
+
+    Args:
+        svg: 原始 SVG 字符串
+        page_image_ref: SVG 内可解析的图片引用，如 "images/architecture.png" 或 None
+        page: page DSL dict（决定图片位置/尺寸/不透明度）
+
+    Returns:
+        注入了 <image> 的 SVG 字符串。
+        若 page_image_ref 为空，函数无效。
+    """
+    if not page_image_ref:
+        return svg
+
+    # 防御：避免重复注入
+    if page_image_ref in svg:
+        return svg
+
+    layers = _image_layer_for_page(page)
+    if not layers:
+        return svg
+
+    image_tags: list[str] = []
+    for layer in layers:
+        role = layer.get("role", "decoration")
+        name = layer.get("name", role)
+        x, y, w, h = layer["x"], layer["y"], layer["w"], layer["h"]
+        # 关键：data-pptx-role 必须是 lowercase kebab-case 合法枚举
+        # （background/decoration/footer/header/logo/watermark/chrome），
+        # 并把 <image> 包在 <g data-pptx-bounds="..."> 内（bounds 仅对 <g> 合法）
+        image_tags.append(
+            f'  <g id="page-image-{name}-wrap" data-pptx-bounds="{x} {y} {w} {h}">'
+            f'\n    <image id="page-image-{name}" data-name="{name}" '
+            f'data-pptx-role="{role}" '
+            f'href="{page_image_ref}" '
+            f'x="{x}" y="{y}" width="{w}" height="{h}" '
+            f'opacity="{layer.get("opacity", 0.92)}" '
+            f'preserveAspectRatio="{layer.get("preserveAspectRatio", "xMidYMid slice")}"/>'
+            f'\n  </g>'
+        )
+
+    image_block = "\n".join(image_tags) + "\n"
+
+    # 在 <svg> 后第一个非 defs 子元素之前注入（让图片在底层）
+    # 策略：找到 </defs>（兼容 ns0: 前缀），如果有就插到其后；否则插到 <svg ...> 后
+    has_defs = bool(re.search(r"</(?:ns\d+:)?defs>", svg))
+    if has_defs:
+        # 保留原命名空间前缀：分两种情况 sub
+        if "</ns0:defs>" in svg:
+            new_svg, n = re.subn(r"</ns0:defs>", "</ns0:defs>\n" + image_block, svg, count=1)
+        else:
+            new_svg, n = re.subn(r"</defs>", "</defs>\n" + image_block, svg, count=1)
+    else:
+        new_svg, n = re.subn(
+            r"(<(?:ns\d+:)?svg\b[^>]*>)",
+            r"\1\n" + image_block,
+            svg, count=1,
+        )
+    return new_svg if n > 0 else svg
