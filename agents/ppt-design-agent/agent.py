@@ -198,6 +198,11 @@ class PptDesignAgent(BaseAgent):
         )
 
         # ── 2) 生图阶段（阶段 C：MiniMax-Image-01，可降级） ──
+        brief = self._design_brief_llm(
+            idea,
+            str((presentation.get("theme") or {}).get("name", "咨询风"))[:40],
+            len(presentation.get("pages") or []),
+        )
         images = self._generate_images(project_dir, presentation, idea, str(state.get("product_id") or idea)[:40])
 
         # ── 3) 逐页 SVG（MiniMax 按 skill 自由创作，校验+重试+兜底） ──
