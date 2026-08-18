@@ -64,12 +64,17 @@ class LocalEmbeddingModel:
 embedding_model = LocalEmbeddingModel()
 
 
-def _resolve_persist_dirs(project_id: str | None = None):
+def _resolve_persist_dirs(project_id: str | None = None, scope: str | None = None):
     """
     解析向量库持久化目录。
 
-    优先使用集中配置中的路径；当 project_id 提供时创建
-    per-project 子目录，杜绝多项目并发覆盖。
+    三层知识库统一目录规划（CHROMA_PERSIST_DIR / BM25_PERSIST_DIR 之下）：
+      - 任务库:      {base}/{project_id}
+      - 全局库:      {base}/global
+      - 领域库:      {base}/domain_{sanitized_tag}
+      - 旧共享库:    {base}（无 project_id 且无 scope 时的兼容兜底）
+
+    scope 优先于 project_id（scope 用于全局/领域层）。
     """
     try:
         from app.core.config import get_settings
@@ -80,32 +85,42 @@ def _resolve_persist_dirs(project_id: str | None = None):
         chroma_base = os.environ.get("CHROMA_PERSIST_DIR", "./chroma_db")
         bm25_base = os.environ.get("BM25_PERSIST_DIR", "./bm25_db")
 
-    if project_id:
-        chroma_dir = os.path.join(chroma_base, project_id)
-        bm25_dir = os.path.join(bm25_base, project_id)
+    key: str | None = None
+    if scope:
+        # 领域标签可能含中文/斜杠，sanitize 为安全目录名
+        import re
+        key = re.sub(r"[^0-9a-zA-Z_\-.:\u4e00-\u9fff]", "_", scope)
+    elif project_id:
+        key = project_id
     else:
         warnings.warn(
-            "build_vector_store() 未提供 project_id——使用共享向量库目录。"
+            "build_vector_store() 未提供 project_id/scope——使用共享向量库目录。"
             "多项目并发时数据会互相覆盖，请尽快传入 project_id。",
             FutureWarning,
             stacklevel=3,
         )
         chroma_dir = chroma_base
         bm25_dir = bm25_base
+        return chroma_dir, bm25_dir
 
+    chroma_dir = os.path.join(chroma_base, key)
+    bm25_dir = os.path.join(bm25_base, key)
     return chroma_dir, bm25_dir
 
 
 def build_vector_store(
     chunk_data_list: list[dict],
     project_id: str | None = None,
+    scope: str | None = None,
 ):
     """
     接收带有元数据的切片列表，构建 Chroma + BM25 持久化存储。
 
     Args:
         chunk_data_list: [{"content": "...", "url": "https://..."}, ...]
-        project_id:      项目 UUID 字符串（用于 per-project 向量库隔离）。
+        project_id:      项目 UUID 字符串（任务层 L2 库隔离）。
+        scope:           知识范围键（全局库 "global" / 领域库 "domain:{tag}"）。
+                         scope 优先于 project_id。
 
     Returns:
         Chroma vector_store 实例。
@@ -114,7 +129,7 @@ def build_vector_store(
         logger.warning("build_vector_store: chunk_data_list 为空，跳过构建")
         return None
 
-    chroma_dir, bm25_dir = _resolve_persist_dirs(project_id)
+    chroma_dir, bm25_dir = _resolve_persist_dirs(project_id, scope)
 
     # ── 构建 LangChain Document 列表 ────────────────────
     docs = []
@@ -161,8 +176,8 @@ def build_vector_store(
     )
 
     logger.info(
-        "Vector Store + BM25 构建完毕 (project=%s, chunks=%d)",
-        project_id or "(共享)", len(docs),
+        "Vector Store + BM25 构建完毕 (scope=%s, project=%s, chunks=%d)",
+        scope or "(project)", project_id or "(none)", len(docs),
     )
     return vector_store
 

@@ -16,6 +16,8 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
+from agent_platform.schemas.common import SourceRef
+
 
 class Persona(BaseModel):
     """用户画像 —— 供前端 PersonaCard 组件渲染。"""
@@ -61,3 +63,4 @@ class ProductStrategy(BaseModel):
     features: list[Feature] = Field(default_factory=list)
     roadmap: list[RoadmapItem] = Field(default_factory=list)
     prd_sections: list[PRDSection] = Field(default_factory=list)
+    sources: list[SourceRef] = Field(default_factory=list, description="本资产使用的资料来源（必须来自审核资料列表）")

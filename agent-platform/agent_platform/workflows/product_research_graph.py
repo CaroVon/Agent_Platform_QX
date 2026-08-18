@@ -35,6 +35,7 @@ import logging
 from datetime import datetime, timezone
 from typing import Any, Callable
 
+from celery.exceptions import SoftTimeLimitExceeded
 from langgraph.graph import END, START, StateGraph
 
 from agent_platform.harness.agent_loop import BaseAgent
@@ -57,6 +58,7 @@ logger = logging.getLogger(__name__)
 # 节点执行顺序（linear pipeline；ppt_design 在 critic 门后执行）
 NODE_ORDER = [
     "requirement_parser",
+    "source_gathering",
     "research",
     "competitor_analysis",
     "strategy",
@@ -67,6 +69,15 @@ NODE_ORDER = [
 _REQUIREMENT_SYSTEM = """你是资深产品需求分析师。
 解析用户的产品想法，输出结构化的产品需求规格。
 只输出符合 Schema 的 JSON。"""
+
+
+class GatePause(Exception):
+    """节点级人工确认门（Plan/Act）：节点完成后暂停，等待用户批准。"""
+
+    def __init__(self, node: str, state_snapshot: dict):
+        self.node = node
+        self.state_snapshot = state_snapshot
+        super().__init__(f"等待人工确认节点: {node}")
 
 
 def _with_retry(
@@ -88,6 +99,13 @@ def _with_retry(
         status = dict(state.get("node_status", {}))
         errors = dict(state.get("errors", {}))
 
+        # 恢复路径：门控模式下已完成节点直接跳过（Plan/Act 门批准后续跑）。
+        # 注意：仅在启用门控时生效，避免误伤 critic 修订循环的节点重跑。
+        gate_enabled = bool(state.get("_gate_nodes"))
+        completed_nodes = set(state.get("_completed_nodes") or [])
+        if gate_enabled and node_name in completed_nodes:
+            return {"node_status": status, "errors": errors}
+
         status[node_name] = "running"
         errors.pop(node_name, None)
         _emit("running")
@@ -98,7 +116,37 @@ def _with_retry(
                 updates = node_fn(state) or {}
                 status[node_name] = "completed"
                 _emit("completed")
-                return {**updates, "node_status": status, "errors": errors}
+
+                # Plan/Act 门（可配置 GATE_NODES）：节点完成后暂停等待人工确认
+                gate_nodes = set(state.get("_gate_nodes") or [])
+                gate_passed = set(state.get("_gate_passed") or [])
+                if node_name in gate_nodes and node_name not in gate_passed:
+                    merged = {
+                        **state,
+                        **updates,
+                        "node_status": status,
+                        "errors": errors,
+                        "_completed_nodes": sorted(completed_nodes | {node_name}),
+                    }
+                    raise GatePause(node_name, merged)
+
+                completed_nodes.add(node_name)
+                # 节点自身可覆盖 _completed_nodes（如 critic 修订时移除 presentation）
+                completed_final = updates.get(
+                    "_completed_nodes", sorted(completed_nodes)
+                )
+                return {
+                    **updates,
+                    "node_status": status,
+                    "errors": errors,
+                    "_completed_nodes": completed_final,
+                }
+            except SoftTimeLimitExceeded:
+                # 超时不是节点质量问题：不允许重试（避免把昂贵副作用再跑一遍）
+                raise
+            except GatePause:
+                # Plan/Act 门暂停信号：透传给任务层持久化部分产物
+                raise
             except Exception as exc:  # noqa: BLE001 —— 统一收敛为节点失败
                 last_exc = exc
                 _emit("failed", error=str(exc)[:200])
@@ -141,6 +189,7 @@ class ProductResearchGraph:
         score_threshold: int = 80,
         max_revisions: int = 2,
         progress_callback: Callable[[dict], None] | None = None,
+        node_models: dict[str, str] | None = None,
     ):
         self.research_agent = research_agent
         self.product_agent = product_agent
@@ -153,12 +202,15 @@ class ProductResearchGraph:
         self.llm = llm
         self.memory = memory
         self.max_retries = max_retries
+        self._node_models_override = node_models or {}
         self.node_models = self._resolve_node_models()
         self.progress_callback = progress_callback
         self._checkpointer = self._make_checkpointer()
         self.graph = self._build()
 
     def _resolve_node_models(self) -> dict[str, str]:
+        if self._node_models_override:
+            return self._node_models_override
         """模型分工：DeepSeek 主流水线；presentation/critic/ppt_design
         由 Presentation 专用模型（如 MiniMax）承接，未配置回退主 LLM。"""
         def _model_name(client) -> str:
@@ -207,12 +259,39 @@ class ProductResearchGraph:
             raise RuntimeError(result.error or f"Agent {agent.name} 执行失败")
         return {field: result.data}
 
+    def _gather_sources(self, state: dict) -> dict:
+        """资料搜集节点：真实检索 + 权重标注 → 暂停等待用户审核（Plan/Act 门）。"""
+        idea = state.get("idea", "")
+        gather_fn = getattr(self.research_agent, "gather_sources", None)
+        if gather_fn is None:
+            # 防御：测试桩/旧实现无 gather_sources 时降级为空资料（research 自行搜索）
+            return {"_sources_review": [], "source_gathering_meta": {"total": 0, "selected": 0}}
+        gathered = gather_fn(idea)
+        return {
+            "_sources_review": gathered.get("sources", []),
+            "source_gathering_meta": {
+                "total": gathered.get("total", 0),
+                "selected": gathered.get("selected", 0),
+            },
+        }
+
+    @staticmethod
+    def _approved_sources(state: dict) -> list[dict]:
+        """用户审核后保留的资料（selected=True）。"""
+        return [
+            s for s in (state.get("_sources_review") or [])
+            if s.get("selected") is not False and s.get("url")
+        ]
+
     def _research(self, state: dict) -> dict:
+        # 仅使用用户审核后保留的资料（引用完全可控）
+        state = {**state, "_approved_sources": self._approved_sources(state)}
         updates = self._run_agent_node(self.research_agent, "market_research", state, "research")
         MarketResearch.model_validate(updates["research"])
         return updates
 
     def _competitor_analysis(self, state: dict) -> dict:
+        state = {**state, "_approved_sources": self._approved_sources(state)}
         updates = self._run_agent_node(
             self.research_agent, "competitor_analysis", state, "competitor_analysis"
         )
@@ -267,8 +346,8 @@ class ProductResearchGraph:
             seed=state.get("product_id") or state.get("idea", ""),
         )
         updates["presentation"] = presentation.model_dump()
-        # 修订路径（revision_feedback 非空）→ 修订计数 +1
-        if state.get("revision_feedback"):
+        # 修订计数：仅当本轮是"修订重跑"（critic 已发信号）时 +1
+        if state.get("_revise_requested"):
             updates["revision_count"] = state.get("revision_count", 0) + 1
         return updates
 
@@ -291,26 +370,49 @@ class ProductResearchGraph:
             if result.success and result.data:
                 critique = CritiqueResult.model_validate(result.data)
             else:
+                # Critic 注入但执行失败：按"未通过"处理（不允许假装满分）
                 critique = CritiqueResult(
-                    score=100, issues=[], summary=f"Critic 不可用，降级通过: {result.error}"
+                    score=0,
+                    issues=[{"severity": "error", "type": "critic_unavailable", "description": "Critic 执行失败"}],
+                    summary=f"Critic 不可用，按未通过处理: {result.error}",
                 )
         else:
-            critique = CritiqueResult(score=100, issues=[], summary="未注入 Critic（跳过）")
+            # 未注入 Critic：跳过 LLM 评审（score=None → 不触发修订循环）
+            critique = None
 
         # 质量门 error 级问题直接压分（每项 -20）
-        final_score = max(0, critique.score - 20 * len(gate.errors))
+        if critique is not None:
+            final_score = max(0, critique.score - 20 * len(gate.errors))
+        else:
+            final_score = None
 
         # 修订反馈 = Critic issues + 质量门问题
-        feedback_lines = [f"[{i.severity}] {i.type}: {i.description}" for i in critique.issues]
+        feedback_lines = [f"[{i.severity}] {i.type}: {i.description}" for i in (critique.issues if critique else [])]
         feedback_lines += [f"[error] quality_gate: {err}" for err in gate.errors]
         feedback = "；".join(feedback_lines) if feedback_lines else ""
 
-        return {
+        updates = {
             "critic_score": final_score,
-            "critic_issues": [i.model_dump() for i in critique.issues],
+            "critic_issues": [i.model_dump() for i in (critique.issues if critique else [])],
             "revision_feedback": feedback,
             "gate_report": gate.model_dump(),
+            # 关键修复：document 写回 state，Critic/下游才能拿到事实依据
+            "document": document.model_dump(),
         }
+        # 修订触发时（分数低于阈值，无论是否有 issue 文案）：把 presentation
+        # 移出"已完成"集合，确保修订循环真正重跑。
+        # 否则门控恢复模式下的跳过逻辑会让修订循环空转 → GraphRecursionError。
+        will_revise = final_score is not None and final_score < self.score_threshold
+        if will_revise:
+            # 修订信号：presentation 重跑时据此计数（低分无 issue 文案也能终止循环）
+            updates["_revise_requested"] = True
+            if state.get("_completed_nodes"):
+                updates["_completed_nodes"] = [
+                    n for n in state["_completed_nodes"] if n != "presentation"
+                ]
+        else:
+            updates["_revise_requested"] = False
+        return updates
 
     def _after_critic(self, state: dict) -> str:
         """P5: 质量门决策 —— 达标/达修订上限/节点失败 → 进入 PPT 设计；否则修订。"""
@@ -419,6 +521,7 @@ class ProductResearchGraph:
     def _node_fn(self, name: str) -> Callable[[dict], dict]:
         return {
             "requirement_parser": self._parse_requirement,
+            "source_gathering": self._gather_sources,
             "research": self._research,
             "competitor_analysis": self._competitor_analysis,
             "strategy": self._strategy,

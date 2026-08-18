@@ -8,7 +8,7 @@ Schemas —— Pydantic 结构化契约
   - 前端渲染器只消费这些结构，LLM 不直接生成 HTML/CSS
 """
 
-from agent_platform.schemas.common import AgentResult, NodeError, PlanStep
+from agent_platform.schemas.common import AgentResult, NodeError, PlanStep, SourceRef
 from agent_platform.schemas.requirement import RequirementSpec
 from agent_platform.schemas.research import (
     Competitor,

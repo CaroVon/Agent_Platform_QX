@@ -5,6 +5,7 @@
 
 import type { LucideIcon } from 'lucide-react'
 import { ChevronRight } from 'lucide-react'
+import type { ReactNode } from 'react'
 
 export function AssetCard({
   icon: Icon,
@@ -12,12 +13,15 @@ export function AssetCard({
   description,
   status = 'ready',
   onClick,
+  action,
 }: {
   icon: LucideIcon
   title: string
   description: string
   status?: 'ready' | 'empty' | 'running'
   onClick?: () => void
+  /** 右侧操作区（如"重新生成"），有值时替代 Chevron */
+  action?: ReactNode
 }) {
   const Wrapper = onClick ? 'button' : 'div'
   return (
@@ -47,9 +51,10 @@ export function AssetCard({
         </div>
         <p className="mt-0.5 truncate text-xs text-muted-foreground">{description}</p>
       </div>
-      {onClick && (
-        <ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground transition-transform group-hover:translate-x-0.5" />
-      )}
+      {action ??
+        (onClick && (
+          <ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground transition-transform group-hover:translate-x-0.5" />
+        ))}
     </Wrapper>
   )
 }

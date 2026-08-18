@@ -60,7 +60,8 @@ pytest==9.0.3
 pytest-asyncio==1.4.0
 
 # --- Local File Processing ---
-PyMuPDF==1.23.8          # PDF 解析 (app/rag/local_parser.py)
+PyMuPDF==1.28.2          # PDF 解析 (app/rag/local_parser.py; 提供 pymupdf 模块)
+python-docx==1.1.2        # DOCX 解析 (app/rag/local_parser.py; 可选, 缺失时上传报明确错误)
 
 # --- Image Search ---
 ddgs>=9.14.0 # DuckDuckGo 图片搜索 (app/search/image_search.py) — v9.x API: DDGS().images(query, ...)

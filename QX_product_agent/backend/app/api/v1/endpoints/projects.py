@@ -24,6 +24,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
 from app.core.config import get_settings
+from app.core.security import get_current_user
 from app.models.project import Project, ProjectStatus
 from app.schemas import (
     ProjectCreateRequest,
@@ -67,7 +68,7 @@ from app.models.user import User
 from app.models.document_block import DocumentBlock
 from app.models.document import Document
 from app.models.base import orm_to_dict
-from app.rag.local_parser import parse_local_pdf
+from app.rag.local_parser import parse_local_file
 from app.rag.vector_store import build_vector_store
 
 logger = logging.getLogger(__name__)
@@ -101,6 +102,7 @@ def log_state_transition(
 async def create_project(
     body: ProjectCreateRequest,
     db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
 ):
     """
     创建一个产品分析项目，自动触发「节点1：资料准备与大纲生成」。
@@ -115,8 +117,8 @@ async def create_project(
 
     返回项目 ID，前端可用 GET /status 轮询进度。
     """
-    # ─── 演示用户 ──────────────────────────────────────────────
-    current_user_id = uuid.UUID("00000000-0000-0000-0000-000000000001")
+    # ─── 当前用户（认证注入，替代硬编码演示用户） ──────────────
+    current_user_id = user.id
 
     # ─── 1. 创建 Project 记录（初始状态：PREPARING_DATA） ──────
     project = Project(
@@ -179,6 +181,7 @@ async def create_project(
 async def get_project_status(
     project_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
 ):
     """
     查询指定项目的完整进度状态。
@@ -197,6 +200,11 @@ async def get_project_status(
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"项目 {project_id} 不存在",
+        )
+    if project.owner_id != user.id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="无权访问该项目",
         )
 
     # ─── 查询所有任务步 ──────────────────────────────────────
@@ -419,35 +427,71 @@ async def upload_local_docs(
             ),
         )
 
-    # ── 3. 确保上传目录存在 ──────────────────────────────────
+    # ── 2.5 安全校验：文件名 sanitize + 扩展名白名单 ──────────
+    raw_name = (file.filename or "").strip()
+    if not raw_name:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="文件名不能为空")
+    # 关键：剥离所有目录成分，仅保留 basename，杜绝路径穿越
+    safe_name = Path(raw_name).name
+    ext = safe_name.rsplit(".", 1)[-1].lower() if "." in safe_name else ""
+    allowed = {e.strip().lower() for e in get_settings().ALLOWED_UPLOAD_EXTS.split(",") if e.strip()}
+    if ext not in allowed:
+        raise HTTPException(
+            status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
+            detail=f"不支持的文件类型 '.{ext}'，仅允许: {', '.join(sorted(allowed))}",
+        )
+
+    # ── 3. 确保上传目录存在（私有目录：不对外静态挂载） ─────
     settings = get_settings()
-    upload_dir = os.path.join(settings.OUTPUT_DIR, "uploads", str(project_id))
+    upload_dir = os.path.join(settings.OUTPUT_DIR, "private", "uploads", str(project_id))
     os.makedirs(upload_dir, exist_ok=True)
 
-    # ── 4. 保存上传文件到磁盘 ────────────────────────────────
-    file_path = os.path.join(upload_dir, file.filename)
-    content = await file.read()
+    # ── 3.5 大小限制（防磁盘 DoS，超限直接拒绝） ─────────────
+    max_bytes = get_settings().MAX_UPLOAD_MB * 1024 * 1024
+    content = b""
+    while True:
+        chunk = await file.read(1024 * 1024)
+        if not chunk:
+            break
+        content += chunk
+        if len(content) > max_bytes:
+            raise HTTPException(
+                status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                detail=f"文件超过大小上限 {get_settings().MAX_UPLOAD_MB}MB",
+            )
+
+    # ── 4. 保存上传文件到磁盘（sanitize 后的安全文件名） ─────
+    file_path = os.path.join(upload_dir, safe_name)
     with open(file_path, "wb") as f:
         f.write(content)
 
     logger.info("文件已保存 | project=%s | filename=%s | size=%d",
-                project_id, file.filename, len(content))
+                project_id, safe_name, len(content))
 
-    # ── 5. 解析 PDF → 切片 ──────────────────────────────────
+    # ── 5. 解析文件 → 切片（PDF/TXT/MD/DOCX 自动分派） ────────
     try:
-        chunks = parse_local_pdf(file_path, file.filename)
+        chunks = parse_local_file(file_path, safe_name)
     except Exception as e:
-        logger.error("PDF 解析失败 | project=%s | file=%s | error=%s",
-                     project_id, file.filename, str(e))
+        logger.error("文件解析失败 | project=%s | file=%s | error=%s",
+                     project_id, safe_name, str(e))
+        # 解析失败即清理已落盘文件，避免孤儿文件堆积
+        try:
+            os.remove(file_path)
+        except OSError:
+            pass
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=f"PDF 文件解析失败: {str(e)}",
+            detail=f"文件解析失败: {str(e)}",
         )
 
     if not chunks:
+        try:
+            os.remove(file_path)
+        except OSError:
+            pass
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="PDF 文件解析后无有效文本内容（可能为纯图片 PDF）。",
+            detail="文件解析后无有效文本内容（可能为纯图片 PDF）。",
         )
 
     # ── 6. 写入向量库 + BM25（追加模式，不覆盖已有数据） ────
@@ -460,12 +504,28 @@ async def upload_local_docs(
             detail=f"知识库写入失败: {str(e)}",
         )
 
+    # ── 6.5 回写 Document 表（知识页列表可见，含文件全文摘要） ─
+    try:
+        doc = Document(
+            project_id=project.id,
+            section_title=f"📎 {safe_name}",
+            section_order=0,
+            content="\n\n".join(c["content"] for c in chunks[:50])[:20000],
+            source_urls=json.dumps([f"local://{safe_name}"]),
+        )
+        db.add(doc)
+        await db.commit()
+    except Exception as e:
+        # 向量库已写入成功，Document 回写失败仅告警不阻断
+        logger.warning("上传文档回写 Document 表失败 | project=%s | error=%s",
+                       project_id, str(e))
+
     logger.info("本地文件已入库 | project=%s | file=%s | chunks=%d",
-                project_id, file.filename, len(chunks))
+                project_id, safe_name, len(chunks))
 
     # ── 7. 返回成功信息（不做任何 DB commit / 状态变更） ────
     return {
-        "message": f"文件 '{file.filename}' 已成功上传并入库",
+        "message": f"文件 '{safe_name}' 已成功上传并入库",
         "chunk_count": len(chunks),
         "project_id": str(project_id),
     }
@@ -928,6 +988,7 @@ async def download_report(
 @router.get("", response_model=list[ProjectResponse])
 async def list_projects(
     db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
     skip: int = Query(0, ge=0),
     limit: int = Query(20, ge=1, le=100),
 ):
@@ -936,6 +997,7 @@ async def list_projects(
     """
     result = await db.execute(
         select(Project)
+        .where(Project.owner_id == user.id)
         .order_by(Project.created_at.desc())
         .offset(skip)
         .limit(limit)
@@ -1001,6 +1063,7 @@ async def list_project_logs(
 async def delete_project(
     project_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
 ):
     """
     删除指定项目及其所有关联数据。
@@ -1018,6 +1081,11 @@ async def delete_project(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"项目 {project_id} 不存在",
         )
+    if project.owner_id != user.id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="无权访问该项目",
+        )
 
     # ── 1. 删除关联子记录（手动级联，因 ORM relationship 未配置 cascade） ──
     await db.execute(delete(Task).where(Task.project_id == project_id))
@@ -1033,6 +1101,21 @@ async def delete_project(
     if os.path.exists(crawled_path):
         os.remove(crawled_path)
         logger.info("已清理爬取数据缓存 | project=%s | path=%s", project_id, crawled_path)
+
+    # 任务向量库 + BM25（三层知识库：任务库目录）
+    import shutil
+    for base in (settings.CHROMA_PERSIST_DIR, settings.BM25_PERSIST_DIR):
+        vec_dir = os.path.join(base, str(project_id))
+        if os.path.isdir(vec_dir):
+            shutil.rmtree(vec_dir, ignore_errors=True)
+            logger.info("已清理向量库目录 | project=%s | path=%s", project_id, vec_dir)
+
+    # 上传文档目录 + 知识库图片目录
+    for sub in ("uploads", "kb_images"):
+        up_dir = os.path.join(settings.OUTPUT_DIR, "private", sub, str(project_id))
+        if os.path.isdir(up_dir):
+            shutil.rmtree(up_dir, ignore_errors=True)
+            logger.info("已清理私有目录 | project=%s | path=%s", project_id, up_dir)
 
     # PDF 文件
     if project.pdf_path:
@@ -1357,8 +1440,9 @@ async def get_project_images(
     result = await db.execute(stmt)
     images = result.scalars().all()
 
-    images_resp = [
-        ImageResultResponse(
+    images_resp = []
+    for img in images:
+        item = ImageResultResponse(
             id=img.id,
             query=img.query,
             title=img.title,
@@ -1368,8 +1452,21 @@ async def get_project_images(
             page_number=img.page_number,
             created_at=img.created_at,
         )
-        for img in images
-    ]
+        # ── 知识库图片字段（P1） ──
+        item.source = getattr(img, "source", "search") or "search"
+        item.status = getattr(img, "status", None)
+        item.analysis_text = getattr(img, "analysis_text", None)
+        item.thumbnail_url = getattr(img, "thumbnail_url", None)
+        item.file_path = getattr(img, "file_path", None)
+        raw_tags = getattr(img, "tags", None)
+        if raw_tags:
+            try:
+                item.tags = json.loads(raw_tags) if raw_tags.startswith("[") else [
+                    t.strip() for t in raw_tags.split(",") if t.strip()
+                ]
+            except (json.JSONDecodeError, AttributeError):
+                item.tags = []
+        images_resp.append(item)
 
     return ProjectImagesResponse(
         project_id=project_id,
@@ -1410,3 +1507,229 @@ async def delete_project_image(
     logger.info("图片已删除 | project=%s | image_id=%s", project_id, image_id)
 
     return MessageResponse(detail=f"图片 {image_id} 已删除")
+
+
+# ================================================================
+# POST /api/v1/projects/{project_id}/cancel —— 取消 v1 报告流水线
+# ================================================================
+
+@router.post("/{project_id}/cancel")
+async def cancel_project(
+    project_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """取消进行中的报告流水线：撤销 Celery 任务并置为 failed（原因=用户取消）。"""
+    from app.core.celery_ops import revoke_active_tasks_for
+
+    result = await db.execute(select(Project).where(Project.id == project_id))
+    project = result.scalar_one_or_none()
+    if project is None:
+        raise HTTPException(status_code=404, detail=f"项目 {project_id} 不存在")
+    if project.owner_id != user.id:
+        raise HTTPException(status_code=403, detail="无权访问该项目")
+    if project.status in (ProjectStatus.COMPLETED, ProjectStatus.FAILED):
+        raise HTTPException(
+            status_code=409,
+            detail=f"项目已处于 {project.status.value} 状态，无法取消",
+        )
+
+    revoke_active_tasks_for(str(project_id))
+
+    project.status = ProjectStatus.FAILED
+    project.error_message = "用户取消"
+    await db.commit()
+    return {"project_id": str(project_id), "status": "cancelled", "message": "项目流水线已取消"}
+
+
+# ================================================================
+# Canvas 编辑器持久化 —— POST/GET /projects/{id}/canvas
+# ================================================================
+
+@router.post("/{project_id}/canvas")
+async def save_project_canvas(
+    project_id: uuid.UUID,
+    body: dict,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """保存 Canvas 编辑器数据（Konva slides JSON）。修复「编辑永不保存、刷新即丢」。"""
+    result = await db.execute(select(Project).where(Project.id == project_id))
+    project = result.scalar_one_or_none()
+    if project is None:
+        raise HTTPException(status_code=404, detail=f"项目 {project_id} 不存在")
+    if project.owner_id != user.id:
+        raise HTTPException(status_code=403, detail="无权访问该项目")
+
+    slides = body.get("slides")
+    if slides is None:
+        raise HTTPException(status_code=422, detail="缺少 slides 字段")
+    project.canvas_data = json.dumps(slides, ensure_ascii=False)
+    await db.commit()
+    return {"project_id": str(project_id), "saved": True, "updated_at": project.updated_at.isoformat() if project.updated_at else None}
+
+
+@router.get("/{project_id}/canvas")
+async def get_project_canvas(
+    project_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """获取 Canvas 编辑器持久化数据。"""
+    result = await db.execute(select(Project).where(Project.id == project_id))
+    project = result.scalar_one_or_none()
+    if project is None:
+        raise HTTPException(status_code=404, detail=f"项目 {project_id} 不存在")
+    if project.owner_id != user.id:
+        raise HTTPException(status_code=403, detail="无权访问该项目")
+    try:
+        slides = json.loads(project.canvas_data) if project.canvas_data else {}
+    except json.JSONDecodeError:
+        slides = {}
+    return {"project_id": str(project_id), "slides": slides, "saved_at": project.updated_at.isoformat() if project.updated_at else None}
+
+
+# ================================================================
+# 🆕 POST /api/v1/projects/{project_id}/kb-images —— 图片知识库入库
+# ================================================================
+
+@router.post("/{project_id}/kb-images")
+async def upload_kb_images(
+    project_id: uuid.UUID,
+    files: list[UploadFile] = File(...),
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """
+    🖼️ **图片知识库入库 API**：接收本地图片（PNG/JPG/JPEG/WebP/GIF），
+    保存至私有目录后触发 Celery 异步执行 MiniMax VL 分析入库。
+
+    与 /assets（编辑器素材，不分析）的区别：
+    - 本端点保存到 outputs/private/kb_images/（不公开挂载）
+    - 写 project_images 行（source='upload'），返回 image_id 与 status=pending
+    - Celery knowledge.analyze_image 完成分析后 status=ready
+
+    前端轮询 GET /images 或刷新列表查看分析状态。
+    """
+    settings = get_settings()
+    IMG_EXTS = {"png", "jpg", "jpeg", "webp", "gif", "bmp"}
+    max_bytes = settings.KB_IMAGE_MAX_MB * 1024 * 1024
+    max_count = settings.KB_IMAGE_MAX_PER_BATCH * 2
+
+    # ── 1. 验证项目存在 + 归属 ─────────────────────────────
+    result = await db.execute(select(Project).where(Project.id == project_id))
+    project = result.scalar_one_or_none()
+    if project is None:
+        raise HTTPException(status_code=404, detail=f"项目 {project_id} 不存在")
+    if project.owner_id != user.id:
+        raise HTTPException(status_code=403, detail="无权访问该项目")
+
+    if not files or len(files) > max_count:
+        raise HTTPException(
+            status_code=422,
+            detail=f"一次最多上传 {max_count} 张图片",
+        )
+
+    # ── 2. 逐张校验 + 落盘 + 入库 ──────────────────────────
+    from app.repositories import ProjectRepo
+    repo = ProjectRepo()
+    saved: list[dict] = []
+    errors: list[str] = []
+
+    for file in files:
+        raw_name = (file.filename or "").strip()
+        safe_name = os.path.basename(raw_name)
+        ext = safe_name.rsplit(".", 1)[-1].lower() if "." in safe_name else ""
+        if ext not in IMG_EXTS:
+            errors.append(f"{safe_name}: 不支持的图片格式 .{ext}")
+            continue
+
+        content = await file.read()
+        if len(content) > max_bytes:
+            errors.append(f"{safe_name}: 超过大小上限 {settings.KB_IMAGE_MAX_MB}MB")
+            continue
+        if not content:
+            errors.append(f"{safe_name}: 空文件")
+            continue
+
+        img_dir = os.path.join(settings.OUTPUT_DIR, "private", "kb_images", str(project_id))
+        os.makedirs(img_dir, exist_ok=True)
+        stored_name = f"{uuid.uuid4().hex}.{ext}"
+        file_path = os.path.join(img_dir, stored_name)
+        with open(file_path, "wb") as f:
+            f.write(content)
+
+        img = repo.create_kb_image(
+            project_id=str(project_id),
+            title=safe_name,
+            file_path=file_path,
+            query="",
+            source="upload",
+        )
+        saved.append({
+            "image_id": str(img.id),
+            "title": safe_name,
+            "status": img.status,
+        })
+        logger.info("图片已入库待分析 | project=%s | image=%s | %s",
+                    project_id, img.id, safe_name)
+
+    # ── 3. 触发异步 VL 分析（逐个投递，互不阻塞） ────────────
+    from app.tasks.knowledge_tasks import analyze_image
+    for item in saved:
+        try:
+            analyze_image.delay(item["image_id"])
+        except Exception as e:
+            logger.warning("图片分析任务投递失败 | image=%s | %s", item["image_id"], e)
+
+    return {
+        "project_id": str(project_id),
+        "saved": saved,
+        "errors": errors,
+        "message": f"已接收 {len(saved)} 张图片进入分析，{len(errors)} 张失败",
+    }
+
+
+# ================================================================
+# 🆕 GET /api/v1/projects/{project_id}/similar —— 相似任务判别
+# ================================================================
+
+@router.get("/{project_id}/similar")
+async def get_similar_projects(
+    project_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """
+    🔗 **相似任务判别 API**（L1 领域知识层核心）：
+    计算当前任务与历史任务的相似度（主题向量 0.6 + 领域标签 0.3 + 模板 0.1），
+    返回可借用的相似任务及其经验包摘要。
+
+    相似度阈值与 top-k 由配置 SIMILARITY_BORROW_THRESHOLD / SIMILARITY_TOP_K 控制。
+    """
+    result = await db.execute(select(Project).where(Project.id == project_id))
+    project = result.scalar_one_or_none()
+    if project is None:
+        raise HTTPException(status_code=404, detail=f"项目 {project_id} 不存在")
+    if project.owner_id != user.id:
+        raise HTTPException(status_code=403, detail="无权访问该项目")
+
+    from app.rag.task_similarity import find_similar_projects, retrieve_experiences
+    settings = get_settings()
+    try:
+        similar = find_similar_projects(
+            str(project_id),
+            top_k=settings.SIMILARITY_TOP_K,
+            min_similarity=settings.SIMILARITY_BORROW_THRESHOLD,
+        )
+    except Exception as e:
+        logger.error("相似任务计算失败 | project=%s | %s", project_id, e)
+        raise HTTPException(status_code=500, detail=f"相似任务计算失败: {str(e)}")
+
+    return {
+        "project_id": str(project_id),
+        "topic": project.topic,
+        "threshold": settings.SIMILARITY_BORROW_THRESHOLD,
+        "similar_projects": similar,
+        "borrowable_experience": retrieve_experiences(str(project_id)),
+    }

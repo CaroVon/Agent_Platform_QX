@@ -20,33 +20,6 @@ export function useProjectList() {
   })
 }
 
-/** 获取单个项目状态（支持长轮询） */
-export function useProjectStatus(
-  projectId: string | undefined,
-  enabled: boolean,
-) {
-  return useQuery({
-    queryKey: [...PROJECTS_KEY, projectId, 'status'],
-    queryFn: () => projectsApi.getStatus(projectId!),
-    enabled: !!projectId && enabled,
-    // ─── 核心轮询策略 ──────────────────────────────────────
-    // 每 3 秒轮询一次进度，持续到项目完成或失败
-    refetchInterval: (query) => {
-      const data = query.state.data
-      if (!data) return 3000
-      const status = data.project_status
-      // 需要用户交互 → 暂停轮询
-      if (status === 'waiting_for_sources' || status === 'waiting_for_outline') return false
-      // 项目已终态 → 停止轮询
-      if (status === 'completed' || status === 'failed') return false
-      return 3000
-    },
-    // 页面不可见时依然继续轮询（后台 Tab）
-    refetchIntervalInBackground: true,
-    staleTime: 0, // 每次都走网络请求，保证进度实时性
-  })
-}
-
 /** 获取项目下载信息 */
 export function useProjectDownload(projectId: string | undefined) {
   return useQuery({

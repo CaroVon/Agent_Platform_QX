@@ -13,6 +13,7 @@ import {
   ChevronsRight,
   ChevronsUpDown,
   Database,
+  FileDown,
   FileText,
   LayoutDashboard,
   LayoutTemplate,
@@ -48,6 +49,7 @@ const NAV_GROUPS: { label: string; items: NavItem[] }[] = [
   {
     label: '管理',
     items: [
+      { to: '/ppt-assets', label: 'PPT 资产库', icon: FileDown },
       { to: '/knowledge', label: 'Knowledge Base', icon: Database },
       { to: '/templates', label: 'Templates', icon: LayoutTemplate },
       { to: '/settings', label: 'Settings', icon: Settings },
@@ -93,7 +95,7 @@ export function Sidebar({
         {!collapsed && (
           <div className="flex min-w-0 flex-col">
             <span className="font-editorial truncate text-sm font-semibold tracking-tight">
-              Product Studio
+              QX Product Studio
             </span>
             <span className="truncate text-[10px] text-sidebar-foreground/45">
               AI 产品研发工作室
@@ -113,7 +115,7 @@ export function Sidebar({
               QX
             </div>
             <div className="min-w-0 flex-1">
-              <div className="truncate text-xs font-medium">Agent Platform QX</div>
+              <div className="truncate text-xs font-medium">AI Product Workspace</div>
               <div className="truncate text-[10px] text-sidebar-foreground/45">Personal Workspace</div>
             </div>
             <ChevronsUpDown className="h-3.5 w-3.5 shrink-0 text-sidebar-foreground/40" />

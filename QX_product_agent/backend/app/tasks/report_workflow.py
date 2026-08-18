@@ -29,6 +29,7 @@ import logging
 import os
 
 from celery import chain, group, signature
+from celery.exceptions import Retry, SoftTimeLimitExceeded
 
 from app.core.celery_app import celery_app
 from app.core.celery_db import get_crawled_data_path
@@ -125,6 +126,9 @@ def prepare_sources_workflow(self, project_id: str):
     except Exception as exc:
         logger.error("[PHASE 1] ❌ 失败 | project=%s | error=%s", project_id, str(exc))
         repo.update_project_status(project_id, ProjectStatus.FAILED, error_message=str(exc))
+        if isinstance(exc, SoftTimeLimitExceeded):
+            # 超时不允许重试：避免整个阶段再跑一遍
+            raise
         try:
             self.retry(exc=exc)
         except Exception:
@@ -215,6 +219,9 @@ def generate_outline_workflow(self, project_id: str):
     except Exception as exc:
         logger.error("[PHASE 2] ❌ 失败 | project=%s | error=%s", project_id, str(exc))
         repo.update_project_status(project_id, ProjectStatus.FAILED, error_message=str(exc))
+        if isinstance(exc, SoftTimeLimitExceeded):
+            # 超时不允许重试：避免整个阶段再跑一遍
+            raise
         try:
             self.retry(exc=exc)
         except Exception:
@@ -306,6 +313,9 @@ def run_draft_sections_workflow(self, project_id: str):
                                         f"✅ 「{section_title}」撰写完成 ({len(content)} 字符)",
                                         LogLevel.MILESTONE, "✅")
 
+            except Retry:
+                # Celery 重试信号：放行，由 Celery 在后台重投（避免标记章节失败 + 幽灵重跑）
+                raise
             except Exception as e:
                 logger.error("  [FAIL] 章节 '%s' 撰写失败: %s", section_title, str(e))
                 repo.update_section_task_status(project_id, section_title, TaskStatus.FAILED, str(e))
@@ -326,6 +336,14 @@ def run_draft_sections_workflow(self, project_id: str):
                                 "🎉 AI 草稿分页生成完毕！已导入 Canvas 工作台。",
                                 LogLevel.MILESTONE, "🎉")
 
+        # ── 🆕 P2: 异步沉淀领域经验包（不阻断主流程） ──────────
+        try:
+            from app.tasks.knowledge_tasks import summarize_experience
+            summarize_experience.delay(project_id)
+            logger.info("[PHASE 3] 已投递经验包抽取任务 | project=%s", project_id)
+        except Exception as e:
+            logger.warning("[PHASE 3] 经验包任务投递失败（忽略）: %s", e)
+
         log_state(project_id, "completed",
                   f"✅ AI 草稿分页生成完毕！共撰写 {len(section_titles)} 个章节")
 
@@ -336,6 +354,11 @@ def run_draft_sections_workflow(self, project_id: str):
 
         return {"project_id": project_id, "status": "completed"}
 
+    except SoftTimeLimitExceeded:
+        # 软超时：直接失败，不重试（重试只会再跑一遍整个撰写阶段）
+        logger.error("[PHASE 3] ⏰ 撰写超时 | project_id=%s", project_id)
+        repo.update_project_status(project_id, ProjectStatus.FAILED, error_message="章节撰写超时（软超时触发）")
+        raise
     except Exception as exc:
         logger.error("[PHASE 3] ❌ 撰写失败 | project_id=%s | error=%s", project_id, str(exc), exc_info=True)
         repo.update_project_status(project_id, ProjectStatus.FAILED, error_message=str(exc))

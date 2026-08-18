@@ -13,6 +13,8 @@ from __future__ import annotations
 
 from pydantic import BaseModel, Field
 
+from agent_platform.schemas.common import SourceRef
+
 
 class UserFlowStep(BaseModel):
     """用户旅程中的单个步骤。"""
@@ -45,3 +47,4 @@ class UXDesign(BaseModel):
     user_flow: list[UserFlowStep] = Field(default_factory=list)
     pages: list[PageSpec] = Field(default_factory=list)
     components: list[ComponentSpec] = Field(default_factory=list)
+    sources: list[SourceRef] = Field(default_factory=list, description="本资产使用的资料来源（必须来自审核资料列表）")

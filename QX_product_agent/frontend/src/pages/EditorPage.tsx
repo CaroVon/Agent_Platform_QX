@@ -47,8 +47,9 @@ import {
   useProjectBlocks,
   getStatusFlags,
 } from '@/hooks/useProjectStatus'
-import { editorApi } from '@/lib/api'
+import { editorApi, projectsApi } from '@/lib/api'
 import { useCanvasStore } from '@/store/useCanvasStore'
+import type { CanvasElement } from '@/store/useCanvasStore'
 import type { EditorChatMessage } from '@/types/api'
 
 // ══════════════════════════════════════════════════════════════
@@ -295,6 +296,11 @@ export function EditorPage() {
   const [activeIndex, setActiveIndex] = useState(0)
   const [exportingPdf, setExportingPdf] = useState(false)
   const [rightPanelOpen, setRightPanelOpen] = useState(true)
+  // ── Canvas 自动保存（修复「编辑永不保存、刷新即丢」） ──
+  const [saveState, setSaveState] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle')
+  const [lastSavedAt, setLastSavedAt] = useState<string>('')
+  const saveTimer = useRef<number | null>(null)
+  const loadedCanvas = useRef(false)
 
   // ─── 数据获取 ──────────────────────────────────────────
   const { data: statusData, isLoading: statusLoading } = useProjectStatus({
@@ -311,7 +317,7 @@ export function EditorPage() {
   const topic = statusData?.topic ?? ''
   const logoUrl = statusData?.logo_url || undefined
 
-  // blocks → slides
+  // blocks → slides（存在已保存 canvas 时优先恢复用户布局）
   useEffect(() => {
     const blocks = blocksData?.blocks ?? []
     if (blocks.length > 0 && slides.length === 0) {
@@ -325,9 +331,49 @@ export function EditorPage() {
         storeSlides[slide.pageNumber] = slide.elements
       }
       useCanvasStore.getState().setSlides(storeSlides)
+
+      // 恢复已保存的 canvas 数据（用户编辑过的布局优先于 blocks 派生布局）
+      if (!loadedCanvas.current && projectId) {
+        loadedCanvas.current = true
+        projectsApi
+          .getCanvas(projectId)
+          .then((saved) => {
+            const savedSlides = saved.slides as { [page: number]: CanvasElement[] } | undefined
+            if (savedSlides && Object.keys(savedSlides).length > 0) {
+              useCanvasStore.getState().setSlides(savedSlides)
+              if (saved.saved_at) {
+                setLastSavedAt(new Date(saved.saved_at).toLocaleTimeString('zh-CN', { hour12: false }))
+              }
+            }
+          })
+          .catch(() => { /* 无历史保存或后端不支持 */ })
+      }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [blocksData, topic])
+
+  // ─── Canvas 自动保存（store 变更 → 防抖 1.5s → 后端持久化） ──
+  useEffect(() => {
+    if (!projectId || !statusData) return
+    const unsub = useCanvasStore.subscribe((state, prev) => {
+      if (state.slides === prev.slides) return
+      setSaveState('saving')
+      if (saveTimer.current) window.clearTimeout(saveTimer.current)
+      saveTimer.current = window.setTimeout(async () => {
+        try {
+          await projectsApi.saveCanvas(projectId, state.slides)
+          setSaveState('saved')
+          setLastSavedAt(new Date().toLocaleTimeString('zh-CN', { hour12: false }))
+        } catch {
+          setSaveState('error')
+        }
+      }, 1500)
+    })
+    return () => {
+      unsub()
+      if (saveTimer.current) window.clearTimeout(saveTimer.current)
+    }
+  }, [projectId, statusData])
 
   // ─── 导出 PDF（使用原生 Konva 离屏渲染，无 React 时序依赖） ──
   const handleExport = useCallback(async () => {
@@ -406,6 +452,17 @@ export function EditorPage() {
           <ArrowLeft className="h-3.5 w-3.5" />
           返回工作台
         </Link>
+        <span
+          className="ml-2 flex items-center gap-1.5 text-[11px] text-muted-foreground"
+          title={saveState === 'error' ? '保存失败，请检查网络后重试' : '画布编辑自动保存'}
+        >
+          {saveState === 'saving' && <Loader2 className="h-3 w-3 animate-spin" />}
+          {saveState === 'saved' && <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />}
+          {saveState === 'error' && <span className="h-1.5 w-1.5 rounded-full bg-red-500" />}
+          {saveState === 'saving' && '保存中…'}
+          {saveState === 'saved' && `已保存 ${lastSavedAt}`}
+          {saveState === 'idle' && '自动保存'}
+        </span>
 
         <span className="h-3 w-px bg-border" />
 

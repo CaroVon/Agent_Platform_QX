@@ -149,12 +149,20 @@ export function getStatusFlags(status: ProjectStatusEnum | undefined) {
  * 仅在 drafting / completed 状态下才启用
  */
 export function useProjectBlocks(projectId: string | undefined, enabled = false) {
+  const queryClient = useQueryClient()
   return useQuery({
     queryKey: [...PROJECTS_KEY, projectId, 'blocks'],
     queryFn: () => projectsApi.getBlocks(projectId!),
     enabled: !!projectId && enabled,
-    // drafting 阶段每 5 秒轮询新块（SSE 降级方案）
-    refetchInterval: 5000,
+    // drafting 阶段每 5 秒轮询新块（SSE 降级方案）；项目终态后停止轮询
+    refetchInterval: () => {
+      const statusData = queryClient.getQueryData<{ project_status?: string }>(
+        [...PROJECTS_KEY, projectId, 'status'],
+      )
+      const s = statusData?.project_status
+      if (s === 'completed' || s === 'failed') return false
+      return 5000
+    },
     refetchIntervalInBackground: false,  // 🆕 后台不轮询
     staleTime: 0,
   })

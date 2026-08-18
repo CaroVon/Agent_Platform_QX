@@ -780,3 +780,41 @@ HTML/PDF/PPTX 管线，三端一致不变。
   globals.css 新增 step-fade-in/typing-dot/progress-stripes
 - 实测：任务运行中 API 实时返回
   {"requirement_parser":"completed",…,"presentation":"running"}
+
+---
+
+## 23. Design Studio v2：任务级「设计思路 + 图片」资产库（2026-08）
+
+### 背景
+旧 DesignStudioPage 仅重复展示 UX 设计文本（用户旅程/页面结构/UI 组件规格），
+生图与文字分离、不可编辑、不可再生成。v2 重构为**任务级图片资产库**。
+
+### 核心能力
+- **结构化存储**：某任务的全部生图按「设计思路（文字）+ 图片」成对入库；
+  生图模型返回的文本输出（MiniMax data.text，如有）以 sidecar 保留并展示
+- **文字可改、图片可再生成**：任意条目修改附带文字 → 保存 → 按新文字重新生图
+- **组件化架构**：组件1 文字+图 / 组件2 文字+图 / … / 组合总图；
+  组件或整体文字可分别修改、分别重新生图；组合 prompt 自动聚合全部组件文字
+- **保存图片**：单张下载 + 全部打包下载（ZIP）
+- **其他优化**：LLM 智能拆解组件建议、版本历史（5 版）回滚、大图预览、
+  流水线完成自动导入、旧任务磁盘对账恢复（assets/ + ppt_projects/ manifest）
+
+### 存储与 API
+- 资产库：`{OUTPUT_DIR}/design_studio/{product_id}/`（index.json + 图片文件），
+  静态服务 `GET /api/v1/files/design_studio/{product_id}/{file}`
+- 新路由 `/api/v1/design-studio/*`（见 backend/app/api/v1/endpoints/design_studio.py）：
+  GET 资产库（惰性导入）｜POST suggest-components（LLM 拆解）
+  ｜POST composite（原子创建 组件+组合）｜POST items（建条目）
+  ｜PATCH items/{id}（改文字）｜POST items/{id}/generate（生成/重新生成）
+  ｜POST items/{id}/restore（版本回滚）｜DELETE items/{id}｜GET download（ZIP）
+- 生图执行：复用 ppt-master image_gen.py（IMAGE_BACKEND=minimax，image-01，
+  16:9 / 1K），单图模式（--filename 指定输出名，规避长 prompt 文件名）
+- 流水线集成：run_product_studio_pipeline 完成态自动
+  import_from_product_package（幂等，失败不阻断完成）
+
+### 兼容性修复（vendor）
+- backend_minimax.py：响应 data.text 以 {图片}.txt sidecar 落盘（纯增量）
+- workflow_transcript.py：_candidate_directory 对超长参数 stat 增加
+  ENAMETOOLONG 保护（单图模式长中文 prompt 触发）
+- app/rag/rag_pipeline.py：retrieve_task_context 参数默认值语法修复
+  （project_id 移后并给默认值，阻塞后端启动，属他人 WIP 遗留）

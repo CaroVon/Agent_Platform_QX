@@ -91,6 +91,34 @@ class Settings(BaseSettings):
     OUTPUT_DIR: str = Field(default="./outputs")
     # PDF 文件对外提供下载的 Base URL
     PDF_DOWNLOAD_BASE_URL: str = Field(default="/api/v1/files")
+    # 上传限制（安全加固）：单文件大小上限(MB) + 扩展名白名单
+    MAX_UPLOAD_MB: int = Field(default=20)
+    # 默认允许 pdf/md/markdown/txt（本地解析），doc/docx 需 python-docx
+    ALLOWED_UPLOAD_EXTS: str = Field(default="pdf,md,markdown,txt,doc,docx")
+
+    # ─── 认证（轻量 HMAC token） ────────────────────────────────
+    # AUTH_ENABLED=false 时所有端点匿名放行（仅限本地开发）
+    AUTH_ENABLED: bool = Field(default=True)
+    # 生产环境务必通过环境变量覆盖为强随机值
+    AUTH_SECRET: str = Field(default="dev-secret-change-me")
+    AUTH_ADMIN_USERNAME: str = Field(default="admin")
+    AUTH_ADMIN_PASSWORD: str = Field(default="admin")
+    # 本地开发便利：允许 POST /auth/bootstrap 免密签发 token；生产置 false
+    AUTH_BOOTSTRAP: bool = Field(default=True)
+    AUTH_TOKEN_TTL_HOURS: int = Field(default=24)
+
+    # ─── 节点级 Plan/Act 门（可配置，逗号分隔节点名，如 "research,strategy"） ──
+    # 节点完成后暂停等待人工批准；留空 = 全自动（默认）
+    GATE_NODES: str = Field(default="")
+    # 资料审核（默认开启）：source_gathering 节点搜索后暂停，用户审核资料权重后再继续
+    SOURCE_REVIEW: bool = Field(default=True)
+
+    # ─── 看门狗（卡死任务回收） ────────────────────────────────
+    # 超过该时长未更新的 running/queued 任务将被置为 failed
+    WATCHDOG_STALE_HOURS: int = Field(default=3)
+    # 周期性检查间隔（分钟）
+    WATCHDOG_INTERVAL_MINUTES: int = Field(default=15)
+
 
     # ─── 外部 API Key（优先从 .env 读取） ────────────────────────
     TAVILY_API_KEY: str = Field(default="")
@@ -98,6 +126,47 @@ class Settings(BaseSettings):
     DEEPSEEK_API_KEY: str = Field(default="")
     DEEPSEEK_BASE_URL: str = Field(default="https://api.deepseek.com/v1")
     DEEPSEEK_MODEL: str = Field(default="deepseek-chat")
+
+    # ─── 上传限制（安全加固）扩展白名单：与前端 DOC_EXT 对齐 ─────
+    # 默认允许 pdf/md/markdown/txt（本地解析），doc/docx 需 python-docx
+    # （未安装时解析会返回明确错误提示，不静默失败）
+    # ─── MiniMax 视觉分析（图片知识库入库） ──────────────────────
+    # 模型: minimax-vl-01；端点二选一：
+    #   OpenAI 兼容: https://api.minimax.chat/v1/chat/completions
+    #   官方 V2:     https://api.minimax.chat/v1/text/chatcompletion_v2
+    MINIMAX_VISION_MODEL: str = Field(default="minimax-vl-01")
+    MINIMAX_VISION_ENDPOINT: str = Field(
+        default="https://api.minimax.chat/v1/text/chatcompletion_v2",
+    )
+    KB_IMAGE_MAX_MB: int = Field(default=20, description="知识库图片单张大小上限(MB)")
+    KB_IMAGE_MAX_PER_BATCH: int = Field(default=6, description="单次 VL 请求最多图片数")
+
+    # ─── 三层知识库：全局 / 领域 / 任务 ─────────────────────────
+    # 领域库与全局库在 CHROMA_PERSIST_DIR / BM25_PERSIST_DIR 下以
+    # 保留字目录隔离：global（全局）、domain_{tag}（领域）。
+    # 任务相似度阈值：≥ SIMILARITY_BORROW_THRESHOLD 视为"可借用经验"
+    SIMILARITY_BORROW_THRESHOLD: float = Field(default=0.55)
+    SIMILARITY_TOP_K: int = Field(default=5)
+    # 三层检索每层召回数（任务/领域/全局）
+    RETRIEVE_TASK_K: int = Field(default=5)
+    RETRIEVE_DOMAIN_K: int = Field(default=3)
+    RETRIEVE_GLOBAL_K: int = Field(default=2)
+    # 三层融合权重（任务 1.0 / 领域 0.8 / 全局 0.6）
+    RETRIEVE_SCOPE_WEIGHTS: str = Field(
+        default='{"task": 1.0, "domain": 0.8, "global": 0.6}',
+        description="JSON: 各层 RRF 融合权重",
+    )
+    # 经验包抽取最大长度（字符）
+    EXPERIENCE_MAX_CHARS: int = Field(default=800)
+
+    # ─── Obsidian Vault 集成（P3） ───────────────────────────────
+    # Vault 目录留空 = 功能关闭。Vault 笔记以 obsidian://{rel_path} 为
+    # source URL 进入全局知识库（复用现有来源权重体系）。
+    OBSIDIAN_VAULT_PATH: str = Field(default="")
+    OBSIDIAN_SYNC_INTERVAL_MIN: int = Field(default=30)
+    # 可选增强：obsidian-local-rest-api 插件地址与 API Key（留空禁用）
+    OBSIDIAN_REST_API: str = Field(default="")
+    OBSIDIAN_REST_API_KEY: str = Field(default="")
 
     # ─── 多租户（向量库隔离） ────────────────────────────────────
     # 未来：当引入多租户时，每个 tenant 拥有独立的 Chroma 持久化路径
@@ -109,6 +178,15 @@ class Settings(BaseSettings):
     # ─── 硅基流动 (SiliconFlow) 图像生成 ─────────────────────────
     SILICONFLOW_API_KEY: str = Field(default="")
     SILICONFLOW_IMAGE_MODEL: str = Field(default="Tongyi-MAI/Z-Image-Turbo")
+
+    # ─── Model Router 多提供商（节点级模型路由） ──────────────────
+    MINIMAX_API_KEY: str = Field(default="")
+    MINIMAX_BASE_URL: str = Field(default="https://api.minimax.chat/v1")
+    MINIMAX_MODEL: str = Field(default="MiniMax-M3")
+    SILICONFLOW_BASE_URL: str = Field(default="https://api.siliconflow.cn/v1")
+    SILICONFLOW_MODEL: str = Field(default="deepseek-ai/DeepSeek-V3")
+    # 节点 → 模型路由（JSON：{"research": "deepseek", "presentation": "minimax"}）
+    NODE_MODEL_MAP: str = Field(default="")
     CONCEPT_IMAGE_WIDTH: str = Field(default="1024")
     CONCEPT_IMAGE_HEIGHT: str = Field(default="576")
 

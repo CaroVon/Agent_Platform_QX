@@ -17,9 +17,12 @@ import json
 import logging
 import os
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 
 from celery import Task
+from celery.exceptions import SoftTimeLimitExceeded
+from sqlalchemy import update
 
 from app.core.celery_app import celery_app
 from app.core.celery_db import get_sync_engine
@@ -55,7 +58,7 @@ def _bridge_env(settings) -> None:
     # 记忆目录放在业务输出目录下，随项目输出一起管理
     os.environ.setdefault(
         "AGENT_PLATFORM_MEMORY_DIR",
-        str(Path(settings.OUTPUT_DIR) / "studio_memory"),
+        str(Path(settings.OUTPUT_DIR) / "private" / "studio_memory"),
     )
 
 
@@ -91,16 +94,46 @@ _PROGRESS_SNAPSHOT: dict = {}
 
 
 def _persist_progress(product_id: str, event: dict) -> None:
-    """节点进度事件 → 合并快照 → 写库（幂等，供前端实时展示）。"""
+    """节点进度事件 → 合并快照 → 写库（幂等，供前端实时展示）。
+
+    状态优先级（防止重试窗口内的瞬时 failed 覆盖较新的运行中/完成态）：
+        completed > running > queued > failed
+    同一节点只有更高优先级的后续事件才允许覆盖写库；
+    failed 只作为「最低优先级的占位」，一旦节点随后 running/completed 即被替换。
+    """
     node = event.get("node", "")
     status = event.get("status", "")
     if not node or not status:
         return
+    _RANK = {"completed": 3, "running": 2, "queued": 1, "failed": 0}
+    prev = _PROGRESS_SNAPSHOT.get(product_id, {}).get(node)
+    if prev is not None and _RANK.get(status, 0) < _RANK.get(prev, 0):
+        return  # 不允许低优先级覆盖高优先级
     snapshot = dict(_PROGRESS_SNAPSHOT.get(product_id, {}))
     snapshot[node] = status
     _PROGRESS_SNAPSHOT[product_id] = snapshot
+
+    # 事件明细追加到 progress_log（JSON Lines，供前端真实进度展示）
+    entry = {
+        "ts": datetime.now(timezone.utc).isoformat(),
+        "node": node,
+        "status": status,
+        "detail": event.get("detail") or event.get("error") or "",
+    }
     try:
-        _update_product(product_id, node_status=json.dumps(snapshot, ensure_ascii=False))
+        from sqlalchemy.orm import Session
+
+        engine = get_sync_engine()
+        with Session(engine) as session:
+            product = session.get(StudioProduct, _parse_product_id(product_id))
+            if product is not None:
+                log = (product.progress_log or "").strip()
+                lines = log.splitlines() if log else []
+                lines.append(json.dumps(entry, ensure_ascii=False))
+                product.progress_log = "\n".join(lines[-500:])  # 上限 500 条防膨胀
+                product.node_status = json.dumps(snapshot, ensure_ascii=False)
+                product.updated_at = datetime.now(timezone.utc)
+                session.commit()
     except Exception as exc:  # noqa: BLE001 —— 进度写库失败不影响主流程
         logger.warning("[Product Studio] 进度写库失败 %s: %s", product_id, exc)
 
@@ -119,7 +152,53 @@ def _update_product(product_id: str, **fields) -> None:
         session.commit()
 
 
-@celery_app.task(bind=True, base=ProductStudioTask, max_retries=1, acks_late=True)
+def _claim_product_run(product_id: str, *, allow_retry: bool) -> tuple[str, str | None]:
+    """原子领取一次流水线执行，阻止 Celery 重投递并发跑同一产品。
+
+    只有 queued 能被首次任务领取；failed 仅允许 Celery 已安排的重试领取。
+    running/completed 的重复消息直接返回，不再调用任何 Agent 或外部模型。
+    """
+    from sqlalchemy.orm import Session
+
+    product_uuid = _parse_product_id(product_id)
+    with Session(get_sync_engine()) as session:
+        product = session.get(StudioProduct, product_uuid)
+        if product is None:
+            raise RuntimeError(f"产品不存在: {product_id}")
+        if product.status == StudioProductStatus.COMPLETED:
+            return "completed", None
+        if product.status == StudioProductStatus.RUNNING:
+            return "running", None
+
+        allowed = [StudioProductStatus.QUEUED, StudioProductStatus.WAITING_APPROVAL]
+        if allow_retry:
+            allowed.append(StudioProductStatus.FAILED)
+        claimed = session.execute(
+            update(StudioProduct)
+            .where(
+                StudioProduct.id == product_uuid,
+                StudioProduct.status.in_(allowed),
+            )
+            .values(status=StudioProductStatus.RUNNING, error_message=None)
+        ).rowcount
+        if claimed:
+            session.commit()
+            _PROGRESS_SNAPSHOT.pop(product_id, None)
+            return "claimed", product.idea
+        session.rollback()
+        return "running", None
+
+
+@celery_app.task(
+    bind=True,
+    base=ProductStudioTask,
+    max_retries=1,
+    acks_late=True,
+    # 覆盖全局 30/45min 超时：Product Studio 全链路（含 ppt_design 逐页 SVG，
+    # 每页可能重试多次）实测可达 60min+。软超时用于记录慢任务，硬超时兜底。
+    soft_time_limit=60 * 50,
+    time_limit=60 * 70,
+)
 def run_product_studio_pipeline(self: ProductStudioTask, product_id: str):
     """
     执行 Product Studio 流水线：
@@ -130,68 +209,190 @@ def run_product_studio_pipeline(self: ProductStudioTask, product_id: str):
     结果（ProductAssetPackage 结构化 JSON）写入 studio_products.asset_package；
     失败时状态置为 failed 并记录错误（工作流内部节点级失败不阻断整体）。
     """
+    retries = getattr(getattr(self, "request", None), "retries", 0)
+    action, idea = _claim_product_run(product_id, allow_retry=retries > 0)
+    if action == "completed":
+        logger.info("[Product Studio] product=%s 已完成，忽略重复投递", product_id)
+        return {"product_id": product_id, "status": "completed", "duplicate": True}
+    if action == "running":
+        logger.info("[Product Studio] product=%s 已在执行，忽略重复投递", product_id)
+        return {"product_id": product_id, "status": "running", "duplicate": True}
+
     settings = self.settings
     _bridge_env(settings)
     _ensure_paths(settings)
 
-    # ── 读取产品想法 ─────────────────────────────────────────
-    from sqlalchemy.orm import Session
-
-    with Session(get_sync_engine()) as session:
-        product = session.get(StudioProduct, _parse_product_id(product_id))
-        if product is None:
-            raise RuntimeError(f"产品不存在: {product_id}")
-        idea = product.idea
-
-    _update_product(product_id, status=StudioProductStatus.RUNNING, error_message=None)
-
-    # ── 构建平台层组件（此时才 import，避免模块级副作用） ──────
-    from agent_platform.harness.agent_loop import AgentLoop
-    from agent_platform.memory.memory_store import FileMemoryStore
-    from agent_platform.workflows.product_research_graph import ProductResearchGraph
-
-    from agents.critic_agent.agent import CriticAgent
-    from agents.design_agent.agent import DesignAgent
-    from agents.ppt_design_agent.agent import PptDesignAgent
-    from agents.presentation_agent.agent import PresentationAgent
-    from agents.product_agent.agent import ProductAgent
-    from agents.research_agent.agent import ResearchAgent
-
-    memory = FileMemoryStore(base_dir=settings.AGENT_PLATFORM_MEMORY_DIR
-                             if settings.AGENT_PLATFORM_MEMORY_DIR
-                             else str(Path(settings.OUTPUT_DIR) / "studio_memory"))
-    loop = AgentLoop(memory=memory)
-
-    graph = ProductResearchGraph(
-        research_agent=ResearchAgent(loop=loop),
-        product_agent=ProductAgent(loop=loop),
-        design_agent=DesignAgent(loop=loop),
-        # P3: Presentation Agent 使用专用模型（Kimi / MiniMax，未配置回退主 LLM）
-        presentation_agent=PresentationAgent(memory=memory),
-        # P5: Critic 评审 + 修订循环
-        critic_agent=CriticAgent(),
-        # P6: PPT 设计成员（ppt-master 工作流，MiniMax 承接设计简报）
-        ppt_design_agent=PptDesignAgent(),
-        llm=loop.llm,          # 需求解析复用同一模型客户端
-        memory=memory,
-        max_retries=settings.AGENT_PLATFORM_MAX_RETRIES
-        if settings.AGENT_PLATFORM_MAX_RETRIES >= 0
-        else 2,
-        score_threshold=settings.PRESENTATION_SCORE_THRESHOLD
-        if settings.PRESENTATION_SCORE_THRESHOLD > 0
-        else 80,
-        max_revisions=settings.PRESENTATION_MAX_REVISIONS
-        if settings.PRESENTATION_MAX_REVISIONS > 0
-        else 2,
-        # 实时进度回写：节点状态流转（running/completed/failed）持久化到 DB，
-        # 前端轮询可见当前执行到哪一步
-        progress_callback=lambda event: _persist_progress(product_id, event),
-    )
-
-    # ── 执行工作流 ───────────────────────────────────────────
     try:
+        # ── 构建平台层组件（此时才 import，避免模块级副作用） ──────
+        from agent_platform.harness.agent_loop import AgentLoop
+        from agent_platform.llm.client import LLMClient
+        from agent_platform.memory.memory_store import FileMemoryStore
+        from agent_platform.workflows.product_research_graph import GatePause, ProductResearchGraph
+
+        from agents.critic_agent.agent import CriticAgent
+        from agents.design_agent.agent import DesignAgent
+        from agents.ppt_design_agent.agent import PptDesignAgent
+        from agents.presentation_agent.agent import PresentationAgent
+        from agents.product_agent.agent import ProductAgent
+        from agents.research_agent.agent import ResearchAgent
+
+        memory = FileMemoryStore(base_dir=settings.AGENT_PLATFORM_MEMORY_DIR
+                                 if settings.AGENT_PLATFORM_MEMORY_DIR
+                                 else str(Path(settings.OUTPUT_DIR) / "private" / "studio_memory"))
+        loop = AgentLoop(memory=memory)
+
+        # ── C5 Model Router：按节点路由模型（NODE_MODEL_MAP JSON） ──
+        # 格式: {"research": "deepseek", "presentation": "minimax", ...}
+        # 值可为提供商名（deepseek/minimax/siliconflow）或完整 LLMClient 配置 dict
+        def _build_routed_loop(node: str) -> AgentLoop:
+            try:
+                import json as _json
+                mapping = _json.loads(settings.NODE_MODEL_MAP or "{}")
+            except Exception:  # noqa: BLE001
+                mapping = {}
+            spec = mapping.get(node)
+            if not spec:
+                return loop  # 未配置 → 默认主 LLM
+            if isinstance(spec, str):
+                provider = spec.lower()
+                if provider == "minimax" and settings.MINIMAX_API_KEY:
+                    return AgentLoop(
+                        memory=memory,
+                        llm=LLMClient(
+                            api_key=settings.MINIMAX_API_KEY,
+                            base_url=settings.MINIMAX_BASE_URL or "https://api.minimax.chat/v1",
+                            model=settings.MINIMAX_MODEL or "MiniMax-M3",
+                        ),
+                    )
+                if provider == "siliconflow" and settings.SILICONFLOW_API_KEY:
+                    return AgentLoop(
+                        memory=memory,
+                        llm=LLMClient(
+                            api_key=settings.SILICONFLOW_API_KEY,
+                            base_url=settings.SILICONFLOW_BASE_URL or "https://api.siliconflow.cn/v1",
+                            model=settings.SILICONFLOW_MODEL or settings.SILICONFLOW_IMAGE_MODEL,
+                        ),
+                    )
+                # deepseek / 默认
+                return AgentLoop(
+                    memory=memory,
+                    llm=LLMClient(
+                        api_key=settings.DEEPSEEK_API_KEY,
+                        base_url=settings.DEEPSEEK_BASE_URL,
+                        model=settings.DEEPSEEK_MODEL,
+                    ),
+                )
+            if isinstance(spec, dict):
+                return AgentLoop(
+                    memory=memory,
+                    llm=LLMClient(
+                        api_key=spec.get("api_key") or settings.DEEPSEEK_API_KEY,
+                        base_url=spec.get("base_url") or settings.DEEPSEEK_BASE_URL,
+                        model=spec.get("model") or settings.DEEPSEEK_MODEL,
+                    ),
+                )
+            return loop
+
+        loops = {
+            "research": _build_routed_loop("research"),
+            "strategy": _build_routed_loop("strategy"),
+            "design": _build_routed_loop("design"),
+            "presentation": _build_routed_loop("presentation"),
+            "critic": _build_routed_loop("critic"),
+        }
+        node_models = {
+            "requirement_parser": loop.llm.model,
+            "research": loops["research"].llm.model,
+            "competitor_analysis": loops["research"].llm.model,
+            "strategy": loops["strategy"].llm.model,
+            "design": loops["design"].llm.model,
+            "presentation": loops["presentation"].llm.model,
+            "critic": loops["critic"].llm.model,
+            "ppt_design": getattr(loop.llm, "model", "deterministic"),
+        }
+
+        graph = ProductResearchGraph(
+            research_agent=ResearchAgent(loop=loops["research"]),
+            product_agent=ProductAgent(loop=loops["strategy"]),
+            design_agent=DesignAgent(loop=loops["design"]),
+            presentation_agent=PresentationAgent(loop=loops["presentation"], memory=memory),
+            critic_agent=CriticAgent(llm=loops["critic"].llm),
+            ppt_design_agent=PptDesignAgent(),
+            llm=loop.llm,
+            memory=memory,
+            node_models=node_models,
+            max_retries=settings.AGENT_PLATFORM_MAX_RETRIES
+            if settings.AGENT_PLATFORM_MAX_RETRIES >= 0
+            else 2,
+            score_threshold=settings.PRESENTATION_SCORE_THRESHOLD
+            if settings.PRESENTATION_SCORE_THRESHOLD > 0
+            else 80,
+            max_revisions=settings.PRESENTATION_MAX_REVISIONS
+            if settings.PRESENTATION_MAX_REVISIONS > 0
+            else 2,
+            progress_callback=lambda event: _persist_progress(product_id, event),
+        )
+
+        # ── 初始状态：断点恢复（Plan/Act 门批准后续跑）或全新启动 ──
+        gate_nodes = [n.strip() for n in (settings.GATE_NODES or "").split(",") if n.strip()]
+        # 资料审核：source_gathering 节点默认门控（用户审核资料后再继续）
+        if settings.SOURCE_REVIEW and "source_gathering" not in gate_nodes:
+            gate_nodes.insert(0, "source_gathering")
+        extra_initial: dict = {"product_id": str(product_id), "_gate_nodes": gate_nodes}
+        # 读取产品记录判断是否从等待批准状态恢复
+        from app.core.celery_db import get_sync_engine
+        from sqlalchemy.orm import Session
+        from app.models.studio_product import StudioProduct as SP
+        with Session(get_sync_engine()) as _session:
+            _p = _session.get(SP, _parse_product_id(product_id))
+            _saved = json.loads(_p.asset_package or "{}") if _p and _p.asset_package else {}
+            if _saved.get("_resume"):
+                for key in ("requirement", "research", "competitor_analysis", "strategy",
+                            "design", "presentation", "node_status", "_completed_nodes",
+                            "_gate_passed", "critic_score", "revision_count",
+                            "_sources_review", "source_gathering_meta"):
+                    if key in _saved:
+                        extra_initial[key] = _saved[key]
+                extra_initial["idea"] = _saved.get("idea") or idea
+                idea = extra_initial["idea"]
+                logger.info("[Product Studio] product=%s 从断点恢复 | 已完成=%s",
+                            product_id, _saved.get("_completed_nodes"))
+
         package = graph.invoke(idea, memory_namespace=product_id,
-                                   extra_initial={"product_id": str(product_id)})
+                               extra_initial=extra_initial)
+    except GatePause as gp:
+        # Plan/Act 门：持久化部分产物并暂停，等待用户批准
+        snapshot = gp.state_snapshot
+        partial = {
+            "idea": snapshot.get("idea"),
+            "requirement": snapshot.get("requirement"),
+            "research": snapshot.get("research"),
+            "competitor_analysis": snapshot.get("competitor_analysis"),
+            "strategy": snapshot.get("strategy"),
+            "design": snapshot.get("design"),
+            "presentation": snapshot.get("presentation"),
+            "node_status": snapshot.get("node_status"),
+            "_completed_nodes": snapshot.get("_completed_nodes", []),
+            "_gate_passed": snapshot.get("_gate_passed", []),
+            "_paused_node": gp.node,
+            "_resume": True,
+            # 资料审核：待审核/已审核资料必须持久化（供前端审核界面 + 续跑使用）
+            "_sources_review": snapshot.get("_sources_review", []),
+            "source_gathering_meta": snapshot.get("source_gathering_meta", {}),
+        }
+        _update_product(
+            product_id,
+            status=StudioProductStatus.WAITING_APPROVAL,
+            asset_package=json.dumps(partial, ensure_ascii=False),
+            error_message=f"等待人工确认节点: {gp.node}",
+        )
+        logger.info("[Product Studio] product=%s 已暂停于节点 %s（等待人工批准）", product_id, gp.node)
+        return {"product_id": product_id, "status": "waiting_approval", "node": gp.node}
+    except SoftTimeLimitExceeded:
+        # 软超时：任务仍在执行（如长 LLM 调用/逐页 SVG），不重投递。
+        # 保持 running，等待硬超时兜底；避免软超时触发整条流水线重跑。
+        logger.warning("[Product Studio] product=%s 软超时（仍执行中，等待硬超时兜底）", product_id)
+        return {"product_id": product_id, "status": "running", "note": "soft_timeout"}
     except Exception as exc:  # noqa: BLE001 —— 记录失败，允许 Celery 重试
         logger.exception("[Product Studio] product=%s 流水线失败", product_id)
         _update_product(
@@ -201,12 +402,35 @@ def run_product_studio_pipeline(self: ProductStudioTask, product_id: str):
         )
         raise self.retry(exc=exc, countdown=30)
 
+    # ── C5: 收集各节点模型 token 用量（成本可观测） ──
+    usage = {
+        "models": {},
+        "total_tokens": 0,
+    }
+    for node, l in loops.items():
+        try:
+            u = l.llm.usage_summary
+            usage["models"][node] = u
+            usage["total_tokens"] += int(u.get("total_tokens") or 0)
+        except Exception:  # noqa: BLE001
+            continue
+
+    package_dict = package.model_dump()
+    package_dict["usage"] = usage
     _update_product(
         product_id,
         status=StudioProductStatus.COMPLETED,
-        asset_package=json.dumps(package.model_dump(), ensure_ascii=False),
+        # default=str 兜底：防御个别非 JSON 原生类型（如 set）导致整体失败
+        asset_package=json.dumps(package_dict, ensure_ascii=False, default=str),
         error_message=None,
     )
+    # ── Design Studio v2：任务完成后把生图（设计思路 + 图片）导入资产库 ──
+    try:
+        from app.services.design_studio import import_from_product_package
+
+        import_from_product_package(product_id, package_dict)
+    except Exception as exc:  # noqa: BLE001 —— 资产库导入失败不阻断流水线完成
+        logger.warning("[Design Studio] 完成态导入失败 | product=%s | %s", product_id, exc)
     failed_nodes = package.meta.errors
     logger.info(
         "[Product Studio] product=%s 完成 | 失败节点=%s",

@@ -186,6 +186,17 @@ def _generate_image(api_key: str, prompt: str,
 
     ext = detect_image_extension(image_bytes) or ".jpeg"
     path = resolve_output_path(prompt, output_dir, filename, ext)
+
+    # Design Studio 扩展：MiniMax 响应的文本输出（data.text，如有）以
+    # sidecar {图片路径}.txt 落盘，供后端结构化存储「生图文本输出」。
+    # 纯增量行为：无 text 字段或写入失败均不影响正常返回。
+    try:
+        model_text = (data.get("data") or {}).get("text")
+        if model_text and isinstance(model_text, str) and model_text.strip():
+            Path(str(path) + ".txt").write_text(model_text.strip(), encoding="utf-8")
+    except Exception:  # noqa: BLE001
+        pass
+
     return save_image_bytes(image_bytes, path)
 
 

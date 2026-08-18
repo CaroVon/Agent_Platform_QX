@@ -16,6 +16,8 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
+from agent_platform.schemas.common import SourceRef
+
 
 class MarketSize(BaseModel):
     """市场规模（结构化对象，替代原先的纯文本描述）。"""
@@ -43,6 +45,7 @@ class MarketResearch(BaseModel):
     competitors: list[Competitor] = Field(default_factory=list)
     customer_pain_points: list[str] = Field(default_factory=list, description="用户痛点")
     industry_trends: list[str] = Field(default_factory=list, description="行业趋势")
+    sources: list[SourceRef] = Field(default_factory=list, description="本资产使用的资料来源（必须来自审核资料列表）")
 
 
 class CompetitorProfile(BaseModel):
@@ -76,3 +79,4 @@ class CompetitorAnalysis(BaseModel):
     differentiation_opportunities: list[str] = Field(
         default_factory=list, description="差异化机会点"
     )
+    sources: list[SourceRef] = Field(default_factory=list, description="本资产使用的资料来源（必须来自审核资料列表）")

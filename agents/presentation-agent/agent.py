@@ -115,16 +115,19 @@ class PresentationAgent(BaseAgent):
         memory_namespace: str = "default",
         revise_feedback: str = "",
         evidence_pack: dict | None = None,
+        instruction: str = "",
     ) -> AgentResult:
         """构建 Presentation DSL；revise_feedback 用于 Critic 修订循环（P5）。"""
         objective = (
-            f"为产品「{idea}」构建 8-14 页演示（Presentation DSL）。"
+            f"为产品「{idea}」构建 10-16 页演示（Presentation DSL）。"
             "严格按视觉规范 skill：one slide = one message；"
             "每页选择布局枚举 + 2-8 个组件；数据必须来自上游产品文档，禁止编造；"
             "专有名词（功能/竞品/画像/阶段名）必须原文引用，禁止改写。"
         )
         if revise_feedback:
             objective += f"\n\n【上一版评审意见（必须逐条修正）】\n{revise_feedback}"
+        if instruction:
+            objective += f"\n\n【本次修订要求】{instruction}"
 
         # ── A3 强化：AgentLoop 内评估器（结构性自检） ──
         # 注：逐字覆盖度由 critic 质量门在确定性注入（enforce/enrich）之后
@@ -190,4 +193,5 @@ class PresentationAgent(BaseAgent):
             memory_namespace=memory_namespace,
             revise_feedback=state.get("revision_feedback", ""),
             evidence_pack=build_evidence_pack(document),
+            instruction=str(state.get("instruction") or ""),
         )

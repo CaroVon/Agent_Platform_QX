@@ -327,17 +327,28 @@ async def chat_with_editor(body: EditorChatRequest):
     # 🚀 RAG 检索逻辑（仅在 work 模式下触发，避免闲聊浪费 Token 和耗时）
     if body.chat_mode == "work" or "test" in body.message.lower():  # 兼容聊天模式下强制测试文档
         try:
-            # 去当前 project_id 的隔离库中召回 5 个相关切片
+            pid = str(body.project_id) if body.project_id else None
+            # 三层融合检索：任务库(L2) + 领域库(L1) + 全局库(L0)
             rag_context = retrieve_context(
                 query=body.message,
-                k=5,
-                project_id=str(body.project_id),
+                k=10,
+                project_id=pid,
             )
             if rag_context and rag_context.strip():
-                current_content += f"\n\n【项目知识库参考（含本地文档）】\n{rag_context}"
-                logger.info("editor/chat 成功召回 RAG 知识库内容 (project_id=%s)", body.project_id)
+                current_content += f"\n\n【知识库参考（任务+领域+全局三层）】\n{rag_context}"
+                logger.info("editor/chat 成功召回知识库内容 (project_id=%s)", pid)
         except Exception as e:
             logger.warning("editor/chat RAG 检索异常: %s", str(e))
+
+        # 🆕 相似任务经验注入（L1 领域知识：跨任务借用）
+        if body.project_id:
+            try:
+                from app.rag.task_similarity import retrieve_experiences
+                experiences = retrieve_experiences(str(body.project_id))
+                if experiences:
+                    current_content += f"\n\n{experiences}"
+            except Exception as e:
+                logger.warning("editor/chat 相似任务经验注入失败: %s", str(e))
 
     messages.append({"role": "user", "content": current_content})
 

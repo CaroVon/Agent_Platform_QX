@@ -60,13 +60,13 @@ class CriticAgent(BaseAgent):
                 max_retries=2,
                 temperature=0.1,
             )
-        except Exception as exc:  # noqa: BLE001 —— 评审失败降级为满分通过（不阻塞流水线）
+        except Exception as exc:  # noqa: BLE001 —— 评审失败记为"未通过"（不假装满分）
             return AgentResult(
                 success=True,
                 data={
-                    "score": 100,
-                    "issues": [],
-                    "summary": f"评审不可用（降级通过）: {exc}",
+                    "score": 0,
+                    "issues": [{"severity": "error", "type": "critic_unavailable", "description": "评审服务不可用"}],
+                    "summary": f"评审不可用（按未通过处理）: {exc}",
                 },
                 turns=1,
                 error=str(exc),

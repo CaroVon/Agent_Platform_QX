@@ -10,6 +10,14 @@ import os
 import uuid
 import asyncio
 
+# 测试环境关闭认证（认证行为由专门测试覆盖；避免每个用例携带 token）
+os.environ.setdefault("AUTH_ENABLED", "false")
+os.environ.setdefault("AUTH_BOOTSTRAP", "false")
+
+# 测试数据库（与 Celery 同步引擎/API 异步引擎统一指向，保证 repo 层与端点一致）
+TEST_DB_URL = "sqlite+aiosqlite:///./test_research.db"
+os.environ["DATABASE_URL"] = TEST_DB_URL
+
 # 确保 backend/ 在搜索路径中
 _backend_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _backend_dir not in sys.path:
@@ -28,8 +36,6 @@ from app.core.database import Base
 from app.models import User
 
 # ─── 测试数据库 ──────────────────────────────────────────────
-TEST_DB_URL = "sqlite+aiosqlite:///./test_research.db"
-
 test_engine = create_async_engine(TEST_DB_URL, echo=False)
 TestSessionLocal = async_sessionmaker(
     test_engine,
@@ -86,6 +92,9 @@ def event_loop():
 @pytest.fixture(autouse=True)
 async def setup_db():
     """每个测试前重建数据库表并插入默认用户"""
+    # 先清空再建表：保证新增列（知识系统 P1-P3）在既有 DB 文件上生效
+    async with test_engine.begin() as conn:
+        await conn.run_sync(Base.metadata.drop_all)
     async with test_engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
 

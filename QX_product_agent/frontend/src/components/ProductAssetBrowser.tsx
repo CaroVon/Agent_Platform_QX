@@ -100,6 +100,18 @@ export function ProductAssetBrowser({
   const selected = products.find((p) => p.product_id === selectedId) ?? null
   const runningCount = products.filter((p) => p.status === 'running' || p.status === 'queued').length
 
+  /** 展示名称：优先 idea；空 idea 时退回 presentation 标题（或恢复资产生成标题） */
+  const displayName = (p: StudioProduct) => {
+    if (p.idea) return p.idea
+    const pres = p.presentation as { title?: string } | null | undefined
+    if (pres?.title) return pres.title
+    if (p.ppt_design?.design_brief && p.ppt_design.pptx_relative) return p.ppt_design.design_brief
+    return '（未命名）'
+  }
+
+  const hasPpt = (p: StudioProduct) => Boolean(p.ppt_design?.pptx_relative)
+  const isRecoveredPpt = (p: StudioProduct) => Boolean(p.ppt_design?.pptx_relative && p.ppt_design?.recovered)
+
   if (loading) {
     return (
       <div className="flex items-center justify-center py-24 text-muted-foreground">
@@ -149,13 +161,14 @@ export function ProductAssetBrowser({
                   : 'text-muted-foreground hover:bg-secondary/50 hover:text-foreground',
               )}
             >
-              <span className="min-w-0 flex-1 truncate">{p.idea || '（未命名）'}</span>
-              {p.status === 'completed' && p.ppt_design?.pptx_relative && (
+              <span className="min-w-0 flex-1 truncate">{displayName(p)}</span>
+              {hasPpt(p) && (
                 <span
-                  title="已生成可编辑 PPT（ppt-master）"
-                  className="shrink-0 rounded-full bg-emerald-600/10 px-1.5 py-0.5 text-[10px] font-medium text-emerald-600"
+                  title={isRecoveredPpt(p) ? '已从磁盘资产对账恢复（可下载）' : '已生成可编辑 PPT（ppt-master）'}
+                  className="flex shrink-0 items-center gap-1 rounded-full bg-emerald-600/10 px-1.5 py-0.5 text-[10px] font-medium text-emerald-600"
                 >
                   PPT
+                  {isRecoveredPpt(p) && <span className="text-[9px] opacity-70">·恢复</span>}
                 </span>
               )}
               <span className={cn('shrink-0 rounded-full px-1.5 py-0.5 text-[10px]', meta.cls)}>
@@ -188,7 +201,7 @@ export function ProductAssetBrowser({
               {selected.status === 'queued' ? '任务排队中，等待调度…' : '任务执行中，资产生成后将自动出现'}
             </p>
             <p className="mt-1.5 text-xs text-muted-foreground">
-              「{selected.idea || '未命名'}」· 实时进度请前往 Product Workspace 查看
+              「{displayName(selected)}」· 实时进度请前往 Product Workspace 查看
             </p>
             <p className="mt-0.5 text-[11px] text-muted-foreground/70">
               页面每 15 秒自动刷新，完成后无需手动重载

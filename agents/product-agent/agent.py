@@ -33,6 +33,8 @@ class ProductAgent(BaseAgent):
         competitors: CompetitorAnalysis | None,
         memory: MemoryStore | None = None,
         memory_namespace: str = "default",
+        instruction: str = "",
+        sources: list[dict] | None = None,
     ) -> AgentResult:
         """产品策略：综合上游洞察 → ProductStrategy。"""
         objective = (
@@ -40,19 +42,42 @@ class ProductAgent(BaseAgent):
             "一句话定位、2-4 个用户画像、P0/P1/P2 功能清单、3 阶段路线图，"
             "并输出结构化 PRD 章节（产品概述/目标用户/核心功能/路线图/成功指标）。"
         )
+        if instruction:
+            objective += f"\n\n【本次修订要求】{instruction}"
         result = self.loop.run(
             agent_name=self.name,
             system_prompt=PRODUCT_STRATEGY_SYSTEM,
             objective=objective,
             schema=ProductStrategy,
-            inputs={"idea": idea},
+            inputs={
+                "idea": idea,
+                "参考资料（编号来源：关键论断必须标注 [编号]，未提供的资料禁止编造）": self._render_sources(sources),
+            },
             artifacts={
                 "market_research": research,
                 "competitor_analysis": competitors,
             },
             memory_namespace=memory_namespace,
         )
+        # 确定性兜底：模型未输出 sources 时，用审核资料前 5 条填充（禁止编造来源）
+        if result.success and sources:
+            data = result.data or {}
+            if not data.get("sources"):
+                data["sources"] = [
+                    {"url": s["url"], "title": s.get("title", ""), "weight": s.get("weight", 0.5)}
+                    for s in sources[:5]
+                ]
+                result.data = data
         return result
+
+    @staticmethod
+    def _render_sources(sources: list[dict] | None) -> str:
+        if not sources:
+            return "（无可用来源：所有论断必须标注为估算/假设，禁止编造来源）"
+        return "\n".join(
+            f"[{i + 1}] {s.get('title', '')} | {s.get('url', '')}"
+            for i, s in enumerate(sources)
+        )
 
     def execute(
         self,
@@ -74,4 +99,6 @@ class ProductAgent(BaseAgent):
             _get(CompetitorAnalysis, "competitor_analysis"),
             memory=memory,
             memory_namespace=memory_namespace,
+            instruction=str(state.get("instruction") or ""),
+            sources=state.get("_approved_sources"),
         )

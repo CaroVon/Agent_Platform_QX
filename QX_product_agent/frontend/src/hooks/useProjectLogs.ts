@@ -12,7 +12,7 @@
  * ============================================================
  */
 
-import { useRef, useCallback } from 'react'
+import { useRef, useCallback, useEffect } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { projectsApi } from '@/lib/api'
 import type { ProjectLogResponse } from '@/types/api'
@@ -32,6 +32,12 @@ export function useProjectLogs({ projectId, status, enabled = true }: UseProject
 
   // 累积的日志列表
   const allLogsRef = useRef<ProjectLogResponse[]>([])
+
+  // 项目切换时重置累积状态（同一路由组件复用，refs 不会自动清空 → 跨项目泄漏）
+  useEffect(() => {
+    lastSequenceRef.current = 0
+    allLogsRef.current = []
+  }, [projectId])
 
   const query = useQuery({
     queryKey: [...PROJECTS_KEY, projectId, 'logs'],

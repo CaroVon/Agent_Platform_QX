@@ -26,6 +26,14 @@ class AgentResult(BaseModel):
     turns: int = Field(default=1, ge=1, description="Agent 循环迭代轮数")
 
 
+class SourceRef(BaseModel):
+    """文本资产的数据来源索引（禁止编造：必须来自审核后的资料列表）。"""
+
+    url: str = Field(description="来源 URL（或 local:// 本地资料）")
+    title: str = Field(default="", description="来源标题")
+    weight: float = Field(default=0.5, ge=0, le=1, description="来源权重")
+
+
 class PlanStep(BaseModel):
     """规划器产出的单个执行步骤。"""
 

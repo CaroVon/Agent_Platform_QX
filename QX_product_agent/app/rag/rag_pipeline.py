@@ -1,15 +1,16 @@
 """
 ============================================================
-RAG Pipeline —— 知识库构建 + 上下文检索
+RAG Pipeline —— 知识库构建 + 三层上下文检索（任务/领域/全局）
 ============================================================
 """
+import json
 import logging
 
 from app.search.tavily_search import tavily_search
 from app.crawler.firecrawl_crawler import crawl_url
 from app.rag.chunker import chunk_text
 from app.rag.vector_store import build_vector_store
-from app.rag.retriever import retrieve
+from app.rag.retriever import retrieve, retrieve_scoped
 
 logger = logging.getLogger(__name__)
 
@@ -54,27 +55,111 @@ def build_knowledge_base(query: str, project_id: str | None = None):
                 len(all_chunks_with_meta), project_id or "(共享)")
 
 
-def retrieve_context(query: str, k: int = 5, project_id: str | None = None) -> str:
-    """
-    检索并格式化为 LLM 可消费的上下文块。
+def _get_scope_weights() -> dict[str, float]:
+    """读取三层融合权重配置（task/domain/global），失败回退默认。"""
+    try:
+        from app.core.config import get_settings
+        raw = get_settings().RETRIEVE_SCOPE_WEIGHTS
+        weights = json.loads(raw or "{}")
+        return {
+            "task": float(weights.get("task", 1.0)),
+            "domain": float(weights.get("domain", 0.8)),
+            "global": float(weights.get("global", 0.6)),
+        }
+    except Exception:  # noqa: BLE001
+        return {"task": 1.0, "domain": 0.8, "global": 0.6}
 
-    Args:
-        query:      检索查询字符串
-        k:          返回文档数量
-        project_id: 项目 UUID（用于 per-project 向量库隔离）
+
+def _get_project_domain_tags(project_id: str) -> list[str]:
+    """读取项目的领域标签（用于 L1 领域库检索）。"""
+    try:
+        from app.repositories import ProjectRepo
+        project = ProjectRepo().get_project(project_id)
+        if project.domain_tags:
+            return json.loads(project.domain_tags)
+    except Exception as e:  # noqa: BLE001
+        logger.debug("领域标签读取失败: %s", e)
+    return []
+
+
+def build_scopes(
+    project_id: str | None,
+    domain_tags: list[str] | None = None,
+) -> list[tuple[str, str | None, float]]:
+    """
+    构建三层检索范围列表。
 
     Returns:
-        格式化的上下文字符串（含来源 URL）。
+        [(scope_key, project_id, weight), ...]
+        scope_key 为空字符串 = 任务库（用 project_id）
     """
-    results = retrieve(query, k=k, project_id=project_id)
+    weights = _get_scope_weights()
+    scopes: list[tuple[str, str | None, float]] = []
+
+    if project_id:
+        scopes.append(("", project_id, weights["task"]))
+
+    for tag in (domain_tags or [])[:3]:
+        scopes.append((f"domain:{tag}", None, weights["domain"]))
+    if domain_tags:
+        # 兜底通用领域库（经验包 general 归档）
+        scopes.append(("domain:general", None, weights["domain"] * 0.5))
+
+    scopes.append(("global", None, weights["global"]))
+    return scopes
+
+
+def retrieve_context(
+    query: str,
+    k: int = 5,
+    project_id: str | None = None,
+    use_global: bool = True,
+) -> str:
+    """
+    三层融合检索并格式化为 LLM 可消费的上下文块。
+
+    Args:
+        query:       检索查询字符串
+        k:           总返回文档数量
+        project_id:  项目 UUID（任务库键；为空时仅检索全局库）
+        use_global:  是否包含全局库（默认 True）
+
+    Returns:
+        格式化的上下文字符串（含来源 URL 与层级标记）。
+    """
+    scopes = build_scopes(
+        project_id,
+        _get_project_domain_tags(project_id) if project_id else None,
+    )
+    if not use_global:
+        scopes = [s for s in scopes if s[0] != "global"]
+
+    results = retrieve_scoped(query, scopes, k=k) if scopes else []
     context_parts: list[str] = []
 
+    for idx, r in enumerate(results, start=1):
+        source_url = r.metadata.get("url", "unknown")
+        layer = r.metadata.get("layer", "")
+        layer_tag = f" [{layer}]" if layer else ""
+        context_parts.append(
+            f"[Chunk {idx}{layer_tag} | 来源: {source_url}]\n\n{r.page_content}\n"
+        )
+
+    return "\n".join(context_parts)
+
+
+# 兼容旧行为：单库检索（编辑器/报告撰写仍可显式只查任务库）
+def retrieve_task_context(query: str, k: int = 5, project_id: str | None = None) -> str:
+    """仅检索任务级知识库（L2），返回格式化上下文。"""
+    if not project_id:
+        return ""
+    results = retrieve(query, k=k, project_id=project_id)
+    context_parts: list[str] = []
     for idx, r in enumerate(results, start=1):
         source_url = r.metadata.get("url", "unknown")
         context_parts.append(
             f"[Chunk {idx} | 来源: {source_url}]\n\n{r.page_content}\n"
         )
-
     return "\n".join(context_parts)
 
 

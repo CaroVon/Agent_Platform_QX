@@ -129,8 +129,9 @@ def get_sync_engine():
 # ══════════════════════════════════════════════════════════════
 
 def _get_temp_dir() -> str:
-    """获取平台感知的临时目录路径"""
-    return settings.OUTPUT_DIR or tempfile.gettempdir()
+    """获取平台感知的临时目录路径（私有目录：不对外静态挂载）"""
+    base = settings.OUTPUT_DIR or tempfile.gettempdir()
+    return os.path.join(base, "private", "crawled_data")
 
 
 def get_crawled_data_path(project_id: str) -> str:

@@ -73,6 +73,21 @@ class LLMClient:
         self.max_tokens = max_tokens
         self.temperature = temperature
         self.extra_body = extra_body
+        # ── token 用量累计（成本可观测） ──
+        self.total_prompt_tokens = 0
+        self.total_completion_tokens = 0
+        self.total_requests = 0
+
+    @property
+    def usage_summary(self) -> dict:
+        """累计用量摘要。"""
+        return {
+            "model": self.model,
+            "requests": self.total_requests,
+            "prompt_tokens": self.total_prompt_tokens,
+            "completion_tokens": self.total_completion_tokens,
+            "total_tokens": self.total_prompt_tokens + self.total_completion_tokens,
+        }
 
     # ─── 文本补全 ────────────────────────────────────────────
     def complete(
@@ -118,9 +133,18 @@ class LLMClient:
 
         data = resp.json()
         try:
-            return data["choices"][0]["message"]["content"] or ""
+            content = data["choices"][0]["message"]["content"] or ""
         except (KeyError, IndexError, TypeError) as exc:
             raise LLMError(f"LLM 响应结构异常: {str(data)[:300]}") from exc
+        # ── usage 累计（多数兼容端点返回 usage 字段） ──
+        try:
+            usage = data.get("usage") or {}
+            self.total_prompt_tokens += int(usage.get("prompt_tokens") or 0)
+            self.total_completion_tokens += int(usage.get("completion_tokens") or 0)
+            self.total_requests += 1
+        except (TypeError, ValueError):
+            pass
+        return content
 
     # ─── 结构化 JSON 输出 ────────────────────────────────────
     def complete_json(

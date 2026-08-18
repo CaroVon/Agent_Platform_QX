@@ -5,6 +5,7 @@
 
 import { WorkspaceHeader } from '@/components/WorkspaceHeader'
 import { ProductAssetBrowser } from '@/components/ProductAssetBrowser'
+import { SourceIndex } from '@/components/product/SourceIndex'
 import { ResearchCard } from '@/components/research/ResearchCard'
 import { CompetitorCard } from '@/components/research/CompetitorCard'
 import { InsightCard } from '@/components/research/InsightCard'
@@ -34,6 +35,12 @@ export function ResearchHubPage() {
               </div>
 
               {research && <ResearchCard research={research} />}
+
+              <SourceIndex
+                sources={research?.sources}
+                marketSource={research?.market_size?.source}
+                fallbackUrls={(competitors?.competitors ?? []).map((c: { url?: string; name?: string }) => ({ url: c.url ?? '', title: c.url ? c.name : '' })).filter((c: { url: string }) => c.url)}
+              />
 
               {competitors && competitors.competitors.length > 0 && (
                 <div className="space-y-5">

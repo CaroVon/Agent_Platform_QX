@@ -61,3 +61,13 @@ celery_app.conf.update(
     # 注：Redis 3.x 需强制 RESP2 协议（不支持 HELLO 命令/RESP3）
     broker_transport_options={"protocol": 2},
 )
+
+# ─── 周期任务（Celery Beat）──────────────────────────────────────
+# Obsidian Vault 同步：仅在配置了 OBSIDIAN_VAULT_PATH 时启用
+if get_settings().OBSIDIAN_VAULT_PATH.strip():
+    celery_app.conf.beat_schedule = {
+        "sync-obsidian-vault": {
+            "task": "knowledge.sync_obsidian_vault",
+            "schedule": get_settings().OBSIDIAN_SYNC_INTERVAL_MIN * 60.0,
+        },
+    }

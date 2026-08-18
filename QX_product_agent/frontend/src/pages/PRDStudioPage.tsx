@@ -5,6 +5,7 @@
 
 import { WorkspaceHeader } from '@/components/WorkspaceHeader'
 import { ProductAssetBrowser } from '@/components/ProductAssetBrowser'
+import { SourceIndex } from '@/components/product/SourceIndex'
 import { PRDViewer } from '@/components/product/PRDViewer'
 import { PersonaCard } from '@/components/PersonaCard'
 import { FeatureMatrix } from '@/components/product/FeatureMatrix'
@@ -32,6 +33,7 @@ export function PRDStudioPage() {
               <div className="rounded-xl bg-secondary/50 px-5 py-3 text-sm text-muted-foreground">
                 定位：<span className="font-medium text-foreground">{strategy.positioning}</span>
               </div>
+              <SourceIndex sources={strategy.sources} />
               {strategy.personas.length > 0 && (
                 <div className="rounded-xl border bg-card p-5 shadow-sm">
                   <h3 className="mb-4 text-sm font-semibold">用户画像</h3>

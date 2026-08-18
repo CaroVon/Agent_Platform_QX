@@ -3,6 +3,7 @@
  *
  * 文本类（pdf/md/txt/doc/docx）→ POST /projects/{id}/upload-docs（入库检索）
  * 图片类（png/jpg/webp）      → POST /projects/{id}/assets（持久化为项目素材）
+ *                             → imageKb=true 时：POST /projects/{id}/kb-images（VL 分析入库）
  * 使用 XMLHttpRequest 提供真实上传进度。
  */
 
@@ -56,7 +57,14 @@ function uploadWithProgress(
   })
 }
 
-export function FileUploader({ projectId }: { projectId: string }) {
+export function FileUploader({
+  projectId,
+  imageKb = false,
+}: {
+  projectId: string
+  /** 图片知识库模式：图片走 /kb-images 触发 MiniMax VL 分析入库（而非仅存素材） */
+  imageKb?: boolean
+}) {
   const [items, setItems] = useState<UploadItem[]>([])
   const [dragging, setDragging] = useState(false)
   const inputRef = useRef<HTMLInputElement>(null)
@@ -84,10 +92,13 @@ export function FileUploader({ projectId }: { projectId: string }) {
         }
         setItems((prev) => [item, ...prev])
 
+        // 图片知识库模式：图片走 VL 分析入库；其余走原路径
         const url =
-          kind === 'image'
-            ? `${API_BASE}/projects/${projectId}/assets`
-            : `${API_BASE}/projects/${projectId}/upload-docs`
+          kind === 'image' && imageKb
+            ? `${API_BASE}/projects/${projectId}/kb-images`
+            : kind === 'image'
+              ? `${API_BASE}/projects/${projectId}/assets`
+              : `${API_BASE}/projects/${projectId}/upload-docs`
 
         const result = await uploadWithProgress(url, file, (pct) =>
           setItems((prev) => prev.map((i) => (i.key === key ? { ...i, progress: pct } : i))),
@@ -137,13 +148,19 @@ export function FileUploader({ projectId }: { projectId: string }) {
         <UploadCloud className="h-7 w-7 text-muted-foreground" />
         <p className="mt-3 text-sm font-medium">拖拽文件到此处，或点击选择</p>
         <p className="mt-1 text-xs text-muted-foreground">
-          支持 PDF / Markdown / TXT / DOC / DOCX 与 PNG / JPG / WEBP
+          {imageKb
+            ? '支持 PNG / JPG / WEBP，上传后由 MiniMax 视觉分析自动入库'
+            : '支持 PDF / Markdown / TXT / DOC / DOCX 与 PNG / JPG / WEBP'}
         </p>
         <input
           ref={inputRef}
           type="file"
           multiple
-          accept=".pdf,.md,.markdown,.txt,.doc,.docx,.png,.jpg,.jpeg,.webp"
+          accept={
+            imageKb
+              ? '.png,.jpg,.jpeg,.webp,.gif,.bmp'
+              : '.pdf,.md,.markdown,.txt,.doc,.docx,.png,.jpg,.jpeg,.webp'
+          }
           className="hidden"
           onChange={(e) => e.target.files && handleFiles(e.target.files)}
         />
@@ -195,7 +212,10 @@ export function FileUploader({ projectId }: { projectId: string }) {
                       <Loader2 className="h-3 w-3 animate-spin" /> 上传中 {item.progress}%
                     </>
                   )}
-                  {item.status === 'done' && '✓ 已入库（可被 Agent 检索）'}
+                  {item.status === 'done' &&
+                    (item.kind === 'image' && imageKb
+                      ? '✓ 已提交视觉分析入库'
+                      : '✓ 已入库（可被 Agent 检索）')}
                   {item.status === 'error' && (
                     <span className="text-destructive">{item.error}</span>
                   )}

@@ -43,7 +43,7 @@ from fastapi.responses import JSONResponse, HTMLResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from app.core.config import get_settings
-from app.core.database import engine, get_db
+from app.core.database import engine, get_db, AsyncSessionLocal
 from app.models import Base
 from app.api.v1.router import router as v1_router
 
@@ -91,6 +91,10 @@ async def lifespan(app: FastAPI):
         await conn.run_sync(Base.metadata.create_all)
         logger.info("[DB] 数据库表已就绪（create_all 幂等操作）")
 
+    # 轻量 schema 演进：为既有运行库补充新增列（owner_id/celery_task_id/progress_log 等）
+    from app.core.schema_evolve import ensure_columns
+    await ensure_columns(engine)
+
     # 确保 demo 用户存在（否则外键约束会导致项目创建失败）
     from sqlalchemy import text as sa_text
     async with engine.connect() as conn:
@@ -107,9 +111,19 @@ async def lifespan(app: FastAPI):
         else:
             logger.info("[DB] Demo 用户已存在")
 
+    # 启动时立即执行一次卡死任务回收
+    from app.services.watchdog import recover_stale_tasks
+    async with AsyncSessionLocal() as db:
+        await recover_stale_tasks(db)
+
+    # 周期性看门狗（后台任务，进程退出自动停止）
+    from app.services.watchdog import watchdog_loop
+    watchdog_task = asyncio.create_task(watchdog_loop())
+
     yield  # 应用运行中...
 
     # ─── 关闭 ──────────────────────────────────────────────────
+    watchdog_task.cancel()
     await engine.dispose()
     logger.info("[APP] 数据库连接已关闭，应用退出")
 

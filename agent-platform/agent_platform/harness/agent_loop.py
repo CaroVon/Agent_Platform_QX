@@ -37,13 +37,17 @@ Evaluator = Callable[[BaseModel], tuple[bool, str]]
 
 
 def default_evaluator(model: BaseModel) -> tuple[bool, str]:
-    """默认评估：所有字符串字段非空（列表字段允许为空）。"""
+    """默认评估：必填字符串非空；**必填列表字段不允许为空列表**。"""
     issues: list[str] = []
-    for name, value in model:
+    for name, field_info in model.model_fields.items():
+        value = getattr(model, name, None)
         if isinstance(value, str) and not value.strip():
             issues.append(f"字段 {name} 为空")
         if value is None:
             issues.append(f"字段 {name} 为 null")
+        # 仅对"无默认值"的必填 list 字段做非空校验（带默认值/可选的列表如 sources 允许为空）
+        if isinstance(value, list) and field_info.is_required() and len(value) == 0:
+            issues.append(f"字段 {name} 为空列表（必填内容缺失）")
     if issues:
         return False, "；".join(issues)
     return True, ""
@@ -103,6 +107,18 @@ class AgentLoop:
         last_result: BaseModel | None = None
         last_error = ""
 
+        # 记忆读回：把本项目最近产出注入上下文（记忆闭环，避免重复解释）
+        memory_context = ""
+        if self.memory is not None:
+            try:
+                recent_entries = self.memory.recent(memory_namespace, limit=3)
+                if recent_entries:
+                    memory_context = "\n\n".join(
+                        f"- [{e.kind}] {e.content[:400]}" for e in recent_entries
+                    )
+            except Exception as exc:  # noqa: BLE001 —— 记忆读回失败不阻塞
+                logger.warning("记忆读回失败: %s", exc)
+
         # ── 2~4. Execute / Evaluate / Reflect 循环 ──────────
         for turn in range(1, self.max_turns + 1):
             user_prompt = self.context.build_user_message(
@@ -112,6 +128,8 @@ class AgentLoop:
                 plan_text=plan_text,
                 reflection=reflection,
             )
+            if memory_context:
+                user_prompt += f"\n\n【本项目历史产出（仅作参考，勿重复生成相同内容）】\n{memory_context}" 
             try:
                 model = self.runner.run(
                     system_prompt=system_prompt,

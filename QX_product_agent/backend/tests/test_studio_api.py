@@ -109,6 +109,22 @@ async def test_create_product(client: AsyncClient):
 
 
 @pytest.mark.asyncio
+async def test_create_product_is_idempotent(client: AsyncClient):
+    """重复点击或重复投递相同想法只返回原产品，不再派发 Celery 任务。"""
+    with mock_pipeline:
+        first = await client.post(
+            "/api/v1/product/create", json={"idea": "  AI 睡眠助手  "}
+        )
+        second = await client.post(
+            "/api/v1/product/create", json={"idea": "AI   睡眠助手"}
+        )
+
+    assert first.status_code == 201
+    assert second.status_code == 200
+    assert second.json()["product_id"] == first.json()["product_id"]
+
+
+@pytest.mark.asyncio
 async def test_create_product_validates_idea(client: AsyncClient):
     resp = await client.post("/api/v1/product/create", json={"idea": ""})
     assert resp.status_code == 422

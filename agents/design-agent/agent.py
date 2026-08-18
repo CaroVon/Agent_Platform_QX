@@ -35,6 +35,8 @@ class DesignAgent(BaseAgent):
         strategy: ProductStrategy | None,
         memory: MemoryStore | None = None,
         memory_namespace: str = "default",
+        instruction: str = "",
+        sources: list[dict] | None = None,
     ) -> AgentResult:
         """UX 设计：基于产品策略 → UXDesign。"""
         objective = (
@@ -42,16 +44,39 @@ class DesignAgent(BaseAgent):
             "信息架构（页面清单）与关键 UI 组件清单。"
             "只产出结构化设计规格，不写任何视觉实现代码。"
         )
+        if instruction:
+            objective += f"\n\n【本次修订要求】{instruction}"
         result = self.loop.run(
             agent_name=self.name,
             system_prompt=UX_DESIGN_SYSTEM,
             objective=objective,
             schema=UXDesign,
-            inputs={"idea": idea},
+            inputs={
+                "idea": idea,
+                "参考资料（编号来源：关键论断必须标注 [编号]，未提供的资料禁止编造）": self._render_sources(sources),
+            },
             artifacts={"product_strategy": strategy},
             memory_namespace=memory_namespace,
         )
+        # 确定性兜底：模型未输出 sources 时，用审核资料前 5 条填充（禁止编造来源）
+        if result.success and sources:
+            data = result.data or {}
+            if not data.get("sources"):
+                data["sources"] = [
+                    {"url": s["url"], "title": s.get("title", ""), "weight": s.get("weight", 0.5)}
+                    for s in sources[:5]
+                ]
+                result.data = data
         return result
+
+    @staticmethod
+    def _render_sources(sources: list[dict] | None) -> str:
+        if not sources:
+            return "（无可用来源：所有论断必须标注为估算/假设，禁止编造来源）"
+        return "\n".join(
+            f"[{i + 1}] {s.get('title', '')} | {s.get('url', '')}"
+            for i, s in enumerate(sources)
+        )
 
     def execute(
         self,
@@ -74,4 +99,6 @@ class DesignAgent(BaseAgent):
             strategy,
             memory=memory,
             memory_namespace=memory_namespace,
+            instruction=str(state.get("instruction") or ""),
+            sources=state.get("_approved_sources"),
         )

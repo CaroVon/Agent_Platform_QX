@@ -111,14 +111,15 @@ ok "FastAPI 已启动 (PID: $FASTAPI_PID, 端口: 8000)"
 echo "   日志: backend/runtime/api.log"
 echo ""
 
-# ─── 6. Celery Worker (线程池模式，独立进程) ────────────────
+# ─── 6. Celery Worker (prefork 池，独立进程) ────────────────
+# prefork 使 task_time_limit 硬超时真正生效（threads 池无法强杀线程）
 info "启动 Celery Worker..."
 cd "$PROJECT_ROOT/backend"
 nohup "$PROJECT_ROOT/venv/bin/python" -m celery -A app.core.celery_app.celery_app worker \
-    --loglevel=info --concurrency=4 --pool=threads \
+    --loglevel=info --concurrency=4 --pool=prefork \
     > "$RUNTIME_DIR/celery.log" 2>&1 &
 CELERY_PID=$!
-ok "Celery Worker 已启动 (PID: $CELERY_PID, pool: threads)"
+ok "Celery Worker 已启动 (PID: $CELERY_PID, pool: prefork)"
 echo "   日志: backend/runtime/celery.log"
 echo ""
 

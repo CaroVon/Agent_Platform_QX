@@ -2,10 +2,10 @@
  * ai/AgentStatus —— 单个 AI Agent 的状态行（assistant-ui 风格 + 步骤流转动画）
  */
 
-import { AlertCircle, Check, Loader2 } from 'lucide-react'
+import { AlertCircle, Check, Loader2, RefreshCw } from 'lucide-react'
 import { cn } from '@/lib/utils'
 
-export type AgentPhase = 'pending' | 'running' | 'completed' | 'failed'
+export type AgentPhase = 'pending' | 'running' | 'completed' | 'recovered' | 'failed'
 
 const PHASE_META: Record<
   AgentPhase,
@@ -14,6 +14,7 @@ const PHASE_META: Record<
   pending: { label: '等待调度', iconCls: 'border-2 border-border', rowCls: 'text-muted-foreground/70' },
   running: { label: '工作中', iconCls: 'bg-[#24415E] text-white animate-soft-pulse', rowCls: 'text-foreground' },
   completed: { label: '已完成', iconCls: 'bg-emerald-600 text-white', rowCls: 'text-foreground' },
+  recovered: { label: '已恢复', iconCls: 'bg-emerald-500 text-white', rowCls: 'text-foreground' },
   failed: { label: '失败', iconCls: 'bg-destructive text-white', rowCls: 'text-destructive' },
 }
 
@@ -47,6 +48,7 @@ export function AgentStatus({
         'flex items-start gap-4 py-3.5 transition-colors',
         phase === 'running' && 'rounded-lg bg-[#24415E]/4 px-2 -mx-2 animate-step-in',
         phase === 'completed' && 'animate-step-in',
+        phase === 'recovered' && 'animate-step-in',
         phase === 'failed' && 'animate-step-in',
       )}
     >
@@ -58,6 +60,7 @@ export function AgentStatus({
         )}
       >
         {phase === 'completed' && <Check className="h-3.5 w-3.5" />}
+        {phase === 'recovered' && <RefreshCw className="h-3.5 w-3.5" />}
         {phase === 'running' && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
         {phase === 'failed' && <AlertCircle className="h-3.5 w-3.5" />}
       </span>

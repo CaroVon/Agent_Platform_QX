@@ -12,7 +12,7 @@ import uuid
 from datetime import datetime
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field, ConfigDict
+from pydantic import BaseModel, Field, ConfigDict, field_validator
 
 
 # ════════════════════════════════════════════════════════════════
@@ -66,6 +66,14 @@ class ProjectCreateRequest(BaseModel):
         description="产品分析主题，例如：'智能手表产品分析'",
         examples=["智能手表产品分析"],
     )
+
+    @field_validator("topic")
+    @classmethod
+    def _strip_topic(cls, v: str) -> str:
+        v = v.strip()
+        if len(v) < 2:
+            raise ValueError("主题不能为空或过短（去除首尾空格后至少 2 个字符）")
+        return v
     template_type: str = Field(
         default="product",
         description="模板类型：product（产品预研）或 design（工业设计推演）",
@@ -421,7 +429,10 @@ class EditorChatMessage(BaseModel):
 
 class EditorChatRequest(BaseModel):
     """侧边栏大模型对话请求"""
-    project_id: uuid.UUID = Field(..., description="项目 UUID")
+    project_id: uuid.UUID | None = Field(
+        default=None,
+        description="项目 UUID（可为空：仅检索全局/领域知识）",
+    )
     chat_mode: Literal["chat", "work"] = Field(
         default="work",
         description="对话模式：chat (自由闲聊) | work (专业工作型)",
@@ -476,7 +487,7 @@ class ImageSearchRequest(BaseModel):
 
 
 class ImageResultResponse(BaseModel):
-    """单条图片搜索结果"""
+    """单条图片搜索结果（含知识库分析字段，P1 扩展）"""
     id: uuid.UUID = Field(..., description="图片记录 UUID")
     query: str = Field(..., description="搜索关键词")
     title: str = Field(..., description="图片标题")
@@ -485,6 +496,13 @@ class ImageResultResponse(BaseModel):
     search_depth: int = Field(default=10, description="搜索强度")
     page_number: int | None = Field(None, description="关联的幻灯片页码（0-based），手动搜索时为 null")
     created_at: datetime = Field(..., description="创建时间")
+    # ── 知识库图片（P1） ──
+    source: str = Field(default="search", description="图片来源: search / upload")
+    status: str | None = Field(None, description="VL 分析状态: pending/analyzing/ready/failed")
+    analysis_text: str | None = Field(None, description="MiniMax VL 结构化分析 JSON")
+    tags: list[str] = Field(default_factory=list, description="分析标签")
+    thumbnail_url: str | None = Field(None, description="缩略图 URL")
+    file_path: str | None = Field(None, description="本地文件相对路径")
 
     model_config = ConfigDict(from_attributes=True)
 

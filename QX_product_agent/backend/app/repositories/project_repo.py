@@ -28,6 +28,8 @@ from app.models.document import Document
 from app.models.document_block import DocumentBlock
 from app.models.project_log import ProjectLog, LogLevel
 from app.models.project_image import ProjectImage
+from app.models.knowledge_asset import KnowledgeAsset
+from app.models.domain_experience import DomainExperience
 
 logger = logging.getLogger(__name__)
 
@@ -126,6 +128,14 @@ class ProjectRepo:
                 return
 
             if status is not None:
+                # 终态守卫：FAILED / COMPLETED 不允许被改回执行中状态（防幽灵任务复活）
+                if project.status in (ProjectStatus.FAILED, ProjectStatus.COMPLETED) \
+                        and status not in (ProjectStatus.FAILED, ProjectStatus.COMPLETED):
+                    logger.warning(
+                        "[Repo] 拒绝非法状态迁移 | project=%s | %s → %s（终态不可回退）",
+                        project_id, project.status.value, status.value,
+                    )
+                    return
                 project.status = status
             if error_message:
                 project.error_message = error_message[:1000]
@@ -368,6 +378,257 @@ class ProjectRepo:
             session.commit()
             session.expunge(img)
             return img
+
+    # ══════════════════════════════════════════════════════════
+    # 🆕 知识系统（P1-P3）：图片分析 / 任务画像 / 经验包 / 知识资产
+    # ══════════════════════════════════════════════════════════
+
+    def create_kb_image(
+        self,
+        project_id: str,
+        title: str,
+        file_path: str,
+        query: str = "",
+        source: str = "upload",
+    ) -> ProjectImage:
+        """创建一张"知识库图片"记录（status=pending，等待 VL 分析）。"""
+        pid = self._pid(project_id)
+        with Session(self._engine) as session:
+            img = ProjectImage(
+                project_id=pid,
+                query=query,
+                title=title,
+                image_url=f"image://{project_id}/{file_path.split('/')[-1]}",
+                source_url=f"local://{title}",
+                thumbnail_url=None,
+                source=source,
+                status="pending",
+                file_path=file_path,
+                search_depth=0,
+            )
+            session.add(img)
+            session.commit()
+            session.refresh(img)
+            session.expunge(img)
+            return img
+
+    def get_image(self, image_id: str) -> ProjectImage | None:
+        """按 ID 获取图片记录。"""
+        with Session(self._engine) as session:
+            img = session.execute(
+                select(ProjectImage).where(ProjectImage.id == uuid.UUID(image_id))
+            ).scalar_one_or_none()
+            if img is None:
+                return None
+            session.expunge(img)
+            return img
+
+    def update_image_analysis(
+        self,
+        image_id: str,
+        status: str,
+        analysis_text: str | None = None,
+        tags: list[str] | None = None,
+        error: str | None = None,
+    ) -> None:
+        """更新图片分析状态与结果。"""
+        with Session(self._engine) as session:
+            img = session.execute(
+                select(ProjectImage).where(ProjectImage.id == uuid.UUID(image_id))
+            ).scalar_one_or_none()
+            if img is None:
+                logger.warning("图片不存在: %s", image_id)
+                return
+            img.status = status
+            if analysis_text is not None:
+                img.analysis_text = analysis_text
+            if tags is not None:
+                img.tags = ",".join(tags)[:1000]
+            if error and status == "failed":
+                img.title = f"{img.title}（分析失败）"
+            session.commit()
+
+    # ── 任务画像（相似度） ──────────────────────────────────
+
+    def update_project_profile(
+        self,
+        project_id: str,
+        topic_embedding: list[float] | None = None,
+        domain_tags: list[str] | None = None,
+    ) -> None:
+        """持久化项目 topic 向量与领域标签。"""
+        pid = self._pid(project_id)
+        with Session(self._engine) as session:
+            project = session.execute(
+                select(Project).where(Project.id == pid)
+            ).scalar_one_or_none()
+            if project is None:
+                logger.warning("未找到项目: %s", project_id)
+                return
+            if topic_embedding is not None:
+                project.topic_embedding = json.dumps(topic_embedding)
+            if domain_tags is not None:
+                project.domain_tags = json.dumps(domain_tags, ensure_ascii=False)
+            session.commit()
+
+    def list_projects_for_similarity(self) -> list[Project]:
+        """列出参与相似度比较的项目（排除早期半成品状态）。"""
+        with Session(self._engine) as session:
+            rows = session.execute(
+                select(Project).where(
+                    Project.status.in_([
+                        ProjectStatus.WAITING_FOR_OUTLINE,
+                        ProjectStatus.DRAFTING,
+                        ProjectStatus.COMPLETED,
+                    ])
+                )
+            ).scalars().all()
+            for p in rows:
+                session.expunge(p)
+            return list(rows)
+
+    # ── 经验包 ──────────────────────────────────────────────
+
+    def save_domain_experience(
+        self,
+        project_id: str,
+        domain_tags: list[str],
+        topic: str,
+        summary: str,
+        source_url: str | None = None,
+    ):
+        """保存领域经验包，返回 DomainExperience 实例。"""
+        pid = self._pid(project_id)
+        with Session(self._engine) as session:
+            exp = DomainExperience(
+                project_id=pid,
+                domain_tags=json.dumps(domain_tags, ensure_ascii=False),
+                topic=topic,
+                summary=summary,
+                source_url=source_url,
+            )
+            session.add(exp)
+            session.commit()
+            session.refresh(exp)
+            session.expunge(exp)
+            return exp
+
+    def list_domain_experiences(self, project_id: str, limit: int = 5) -> list[DomainExperience]:
+        """列出某项目产出的经验包（时间倒序）。"""
+        with Session(self._engine) as session:
+            rows = session.execute(
+                select(DomainExperience)
+                .where(DomainExperience.project_id == uuid.UUID(project_id))
+                .order_by(DomainExperience.created_at.desc())
+                .limit(limit)
+            ).scalars().all()
+            for e in rows:
+                session.expunge(e)
+            return list(rows)
+
+    def list_all_domain_experiences(self, limit: int = 100) -> list[DomainExperience]:
+        """列出全部经验包（管理面板用）。"""
+        with Session(self._engine) as session:
+            rows = session.execute(
+                select(DomainExperience).order_by(DomainExperience.created_at.desc()).limit(limit)
+            ).scalars().all()
+            for e in rows:
+                session.expunge(e)
+            return list(rows)
+
+    # ── 知识资产（全局/领域登记表） ─────────────────────────
+
+    def save_knowledge_asset(
+        self,
+        scope: str,
+        title: str,
+        source: str,
+        source_url: str | None = None,
+        tags: list[str] | None = None,
+        chunk_count: int = 0,
+        owner_id: str | None = None,
+        extra: dict | None = None,
+        stale_at=None,
+    ) -> KnowledgeAsset:
+        """登记一条知识资产（幂等：source_url+scope 重复则更新）。"""
+        with Session(self._engine) as session:
+            existing = None
+            if source_url:
+                existing = session.execute(
+                    select(KnowledgeAsset).where(
+                        KnowledgeAsset.source_url == source_url,
+                        KnowledgeAsset.scope == scope,
+                    )
+                ).scalar_one_or_none()
+            if existing:
+                existing.title = title
+                existing.tags = json.dumps(tags, ensure_ascii=False) if tags else existing.tags
+                existing.chunk_count = chunk_count
+                if stale_at is not None:
+                    existing.stale_at = stale_at
+                session.commit()
+                session.refresh(existing)
+                session.expunge(existing)
+                return existing
+            asset = KnowledgeAsset(
+                scope=scope,
+                owner_id=uuid.UUID(owner_id) if owner_id else None,
+                source=source,
+                title=title,
+                source_url=source_url,
+                tags=json.dumps(tags, ensure_ascii=False) if tags else None,
+                chunk_count=chunk_count,
+                stale_at=stale_at,
+                extra=json.dumps(extra, ensure_ascii=False) if extra else None,
+            )
+            session.add(asset)
+            session.commit()
+            session.refresh(asset)
+            session.expunge(asset)
+            return asset
+
+    def list_knowledge_assets(
+        self,
+        scope: str | None = None,
+        source: str | None = None,
+        limit: int = 200,
+    ) -> list[KnowledgeAsset]:
+        """列出知识资产（按更新时间倒序）。"""
+        with Session(self._engine) as session:
+            stmt = select(KnowledgeAsset).order_by(KnowledgeAsset.updated_at.desc()).limit(limit)
+            if scope:
+                stmt = stmt.where(KnowledgeAsset.scope == scope)
+            if source:
+                stmt = stmt.where(KnowledgeAsset.source == source)
+            rows = session.execute(stmt).scalars().all()
+            for a in rows:
+                session.expunge(a)
+            return list(rows)
+
+    def delete_knowledge_asset_by_url(self, source_url: str, scope: str | None = None) -> int:
+        """按 source_url 删除知识资产（Obsidian 删除同步用），返回删除条数。"""
+        with Session(self._engine) as session:
+            stmt = select(KnowledgeAsset).where(KnowledgeAsset.source_url == source_url)
+            if scope:
+                stmt = stmt.where(KnowledgeAsset.scope == scope)
+            rows = session.execute(stmt).scalars().all()
+            for a in rows:
+                session.delete(a)
+            session.commit()
+            return len(rows)
+
+    def list_document_blocks(self, project_id: str, limit: int = 200) -> list[DocumentBlock]:
+        """列出项目文档块（经验包抽取用）。"""
+        with Session(self._engine) as session:
+            rows = session.execute(
+                select(DocumentBlock)
+                .where(DocumentBlock.project_id == uuid.UUID(project_id))
+                .order_by(DocumentBlock.order_index)
+                .limit(limit)
+            ).scalars().all()
+            for b in rows:
+                session.expunge(b)
+            return list(rows)
 
     # ══════════════════════════════════════════════════════════
     # 项目时间轴日志 (ProjectLog)

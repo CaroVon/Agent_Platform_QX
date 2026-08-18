@@ -66,6 +66,15 @@ def get_source_weight(url: str) -> float:
     # 本地上传资料享有 T0 级最高权重
     if url.startswith("local://"):
         return 1.5
+    # Obsidian Vault 笔记（人工维护，权威性高）
+    if url.startswith("obsidian://"):
+        return 1.3
+    # 领域经验包（LLM 压缩的可信经验）
+    if url.startswith("experience://"):
+        return 1.2
+    # 图片分析文本（VL 提取，作为补充证据）
+    if url.startswith("image://"):
+        return 1.0
 
     url_lower = url.lower()
 
@@ -145,15 +154,16 @@ def reciprocal_rank_fusion(
 # 公共检索接口
 # ══════════════════════════════════════════════════════════════════
 
-def _resolve_persist_dirs(project_id: str | None = None):
+def _resolve_persist_dirs(project_id: str | None = None, scope: str | None = None):
     """
     解析向量库持久化目录路径。
 
-    优先使用集中配置 (backend/app/core/config.py) 中的路径；
-    回退到默认相对路径以兼容无 backend 包的 CLI 场景。
+    三层知识库统一目录规划（与 vector_store.build_vector_store 一致）：
+      - 任务库: {base}/{project_id}
+      - 全局库: {base}/global
+      - 领域库: {base}/domain_{sanitized_tag}
 
-    当 project_id 提供时，在基础路径下创建 per-project 子目录，
-    彻底根治多项目并发时向量库互相覆盖的问题。
+    scope 优先于 project_id。
     """
     try:
         from app.core.config import get_settings
@@ -165,12 +175,15 @@ def _resolve_persist_dirs(project_id: str | None = None):
         chroma_base = os.environ.get("CHROMA_PERSIST_DIR", "./chroma_db")
         bm25_base = os.environ.get("BM25_PERSIST_DIR", "./bm25_db")
 
-    if project_id:
-        chroma_dir = os.path.join(chroma_base, project_id)
-        bm25_dir = os.path.join(bm25_base, project_id)
+    key: str | None = None
+    if scope:
+        import re
+        key = re.sub(r"[^0-9a-zA-Z_\-.:\u4e00-\u9fff]", "_", scope)
+    elif project_id:
+        key = project_id
     else:
         warnings.warn(
-            "retrieve() 未提供 project_id——使用共享向量库目录。"
+            "retrieve() 未提供 project_id/scope——使用共享向量库目录。"
             "多项目并发时可能导致数据互相覆盖。"
             "请尽快在调用方传入 project_id。",
             FutureWarning,
@@ -178,7 +191,10 @@ def _resolve_persist_dirs(project_id: str | None = None):
         )
         chroma_dir = chroma_base
         bm25_dir = bm25_base
+        return chroma_dir, bm25_dir
 
+    chroma_dir = os.path.join(chroma_base, key)
+    bm25_dir = os.path.join(bm25_base, key)
     return chroma_dir, bm25_dir
 
 
@@ -186,6 +202,7 @@ def retrieve(
     query: str,
     k: int = 5,
     project_id: str | None = None,
+    scope: str | None = None,
 ) -> list:
     """
     对外暴露的统一混合检索接口。
@@ -193,12 +210,13 @@ def retrieve(
     Args:
         query:      检索查询字符串
         k:          返回文档数量
-        project_id: 项目 UUID 字符串（用于 per-project 向量库隔离）。
+        project_id: 项目 UUID 字符串（任务层 L2 库）。
+        scope:      知识范围键（全局库 "global" / 领域库 "domain:{tag}"）。
 
     Returns:
         按 RRF 融合分数排序的 LangChain Document 列表（最多 k 个）。
     """
-    chroma_dir, bm25_dir = _resolve_persist_dirs(project_id)
+    chroma_dir, bm25_dir = _resolve_persist_dirs(project_id, scope)
 
     # ── 1. 向量检索 (Chroma) ────────────────────────────────
     vector_results: list = []
@@ -235,6 +253,97 @@ def retrieve(
     # ── 3. RRF 融合排序并截断 ──────────────────────────────
     final_results = reciprocal_rank_fusion(vector_results, bm25_results)
     return final_results[:k]
+
+
+def _retrieve_from_scope(
+    query: str,
+    k: int,
+    chroma_dir: str,
+    bm25_dir: str,
+) -> list:
+    """在给定持久化目录上执行单库混合检索（向量 + BM25 + RRF）。"""
+    # ── 1. 向量检索 (Chroma) ────────────────────────────────
+    vector_results: list = []
+    if os.path.isdir(chroma_dir):
+        try:
+            db = Chroma(
+                persist_directory=chroma_dir,
+                embedding_function=embedding_model,
+            )
+            vector_retriever = db.as_retriever(search_kwargs={"k": k * 2})
+            vector_results = vector_retriever.invoke(query)
+        except Exception as e:
+            logger.warning("Chroma 向量检索失败 (%s)，降级为空结果", e)
+    else:
+        logger.debug("Chroma 持久化目录不存在: %s，向量检索结果为空", chroma_dir)
+
+    # ── 2. BM25 关键词检索 ──────────────────────────────────
+    bm25_results: list = []
+    bm25_path = os.path.join(bm25_dir, "docs.pkl")
+    if os.path.isfile(bm25_path):
+        try:
+            with open(bm25_path, "rb") as f:
+                docs = pickle.load(f)
+            bm25_retriever = BM25Retriever.from_documents(
+                docs, preprocess_func=jieba_tokenizer,
+            )
+            bm25_retriever.k = k * 2
+            bm25_results = bm25_retriever.invoke(query)
+        except Exception as e:
+            logger.warning("BM25 语料加载失败 (%s)，降级为纯向量检索", e)
+    else:
+        logger.debug("BM25 语料文件不存在: %s", bm25_path)
+
+    return reciprocal_rank_fusion(vector_results, bm25_results)
+
+
+def retrieve_scoped(
+    query: str,
+    scopes: list[tuple[str, str | None, float]],
+    k: int = 8,
+) -> list:
+    """
+    三层融合检索（任务 L2 / 领域 L1 / 全局 L0）。
+
+    Args:
+        query:  检索查询
+        scopes: [(scope_key, project_id, weight), ...]，例如
+                [("", pid, 1.0), ("domain:消费电子", None, 0.8), ("global", None, 0.6)]
+                其中 scope_key 为空字符串表示任务库（用 project_id）。
+        k:      最终返回条数
+
+    Returns:
+        跨层 RRF 融合（带层权重）排序后的文档列表。
+    """
+    fused_scores: dict[str, float] = {}
+    doc_map: dict[str, object] = {}
+
+    for scope_key, project_id, weight in scopes:
+        chroma_dir, bm25_dir = _resolve_persist_dirs(project_id, scope_key or None)
+        if not os.path.isdir(chroma_dir) and not os.path.isdir(bm25_dir):
+            continue  # 该层无数据
+        per_scope_k = max(2, k)
+        results = _retrieve_from_scope(query, per_scope_k, chroma_dir, bm25_dir)
+        layer = scope_key or ("task" if project_id else "shared")
+        for doc in results:
+            # 记录层级标记（供上层格式化时展示）
+            doc.metadata = {**doc.metadata, "layer": layer}
+        for rank, doc in enumerate(results, start=1):
+            url = doc.metadata.get("url", "unknown")
+            doc_key = doc.page_content + "|" + url
+            doc_map[doc_key] = doc
+            base_score = 1.0 / (rank + 60)
+            fused_scores[doc_key] = fused_scores.get(doc_key, 0.0) + (
+                base_score * weight * get_source_weight(url)
+            )
+
+    reranked = [
+        doc_map[doc_key]
+        for doc_key, _score in sorted(
+            fused_scores.items(), key=lambda x: x[1], reverse=True
+        )
+    ]
+    return reranked[:k]
 
 
 # ══════════════════════════════════════════════════════════════════

@@ -65,13 +65,14 @@ const TEAM: TeamRole[] = [
 
 // 节点执行顺序（对齐 NODE_ORDER + critic/ppt_design/assemble）
 const NODE_ORDER = [
-  'requirement_parser', 'research', 'competitor_analysis', 'strategy',
-  'design', 'presentation', 'critic', 'ppt_design', 'assemble',
+  'requirement_parser', 'source_gathering', 'research', 'competitor_analysis',
+  'strategy', 'design', 'presentation', 'critic', 'ppt_design', 'assemble',
 ]
 
 // 节点 → 人话说明（当前正在做什么）
 const NODE_MESSAGES: Record<string, string> = {
   requirement_parser: '解析产品需求，明确目标与边界',
+  source_gathering: '全网检索资料并标注权重（等待审核）',
   research: '市场研究：搜索行业规模、竞品与用户痛点',
   competitor_analysis: '竞品分析：构建矩阵与差异化机会',
   strategy: '产品策略：定位、画像、功能与路线图',
@@ -82,12 +83,21 @@ const NODE_MESSAGES: Record<string, string> = {
   assemble: '资产打包：收敛全部节点产物',
 }
 
-function phaseOf(nodes: string[], nodeStatus: Record<string, string>): AgentPhase {
+function phaseOf(
+  nodes: string[],
+  nodeStatus: Record<string, string>,
+  opts?: { productStatus?: string },
+): AgentPhase {
   const statuses = nodes.map((n) => nodeStatus[n] ?? 'pending')
-  if (statuses.some((s) => s === 'failed')) return 'failed'
+  // 产品整体已成功时，节点级 failed 不应再标红（可能是可降级/已恢复的节点）
+  const productSucceeded = opts?.productStatus === 'completed'
+  const failed = statuses.filter((s) => s === 'failed')
+  const recovered = statuses.some((s) => s === 'recovered')
+  if (failed.length && !productSucceeded) return 'failed'
   if (statuses.some((s) => s === 'running')) return 'running'
-  if (statuses.every((s) => s === 'completed')) return 'completed'
-  if (statuses.some((s) => s === 'completed')) return 'running' // 部分完成视为进行中
+  if (statuses.every((s) => s === 'completed' || s === 'recovered')) return recovered ? 'recovered' : 'completed'
+  if (statuses.some((s) => s === 'completed' || s === 'recovered')) return 'running' // 部分完成视为进行中
+  if (failed.length) return 'recovered' // 已成功但个别节点降级 → 用"已恢复"表达，不再标红
   return 'pending'
 }
 
@@ -104,9 +114,14 @@ function TypingDotsInline() {
 export function AgentTimeline({
   nodeStatus,
   nodeModels,
+  productStatus,
+  logs,
 }: {
   nodeStatus: Record<string, string>
   nodeModels?: Record<string, string>
+  productStatus?: string
+  /** 真实执行事件（后端 progress_log），有数据时展示真实过程 */
+  logs?: Array<{ ts: string; node: string; status: string; detail?: string }>
 }) {
   const assembleDone = nodeStatus['assemble'] === 'completed'
 
@@ -186,7 +201,7 @@ export function AgentTimeline({
 
       <div className="divide-y divide-border/60">
         {TEAM.map((member) => {
-          const phase = phaseOf(member.nodes, nodeStatus)
+          const phase = phaseOf(member.nodes, nodeStatus, { productStatus })
           const model = modelOf(member.nodes)
           return (
             <AgentStatus
@@ -211,6 +226,35 @@ export function AgentTimeline({
           detail="Final Asset Package"
         />
       </div>
+
+      {/* ── 真实执行事件（后端 progress_log） ── */}
+      {logs && logs.length > 0 && (
+        <div className="mt-5 rounded-xl border border-border/60 bg-card/60 p-4">
+          <div className="mb-2.5 text-[11px] font-medium uppercase tracking-wider text-muted-foreground/60">
+            执行事件（实时）
+          </div>
+          <div className="max-h-52 space-y-1.5 overflow-y-auto pr-1">
+            {logs.slice(-30).map((ev, i) => (
+              <div key={`${ev.ts}-${i}`} className="flex items-start gap-2 text-[11px] leading-snug">
+                <span className="mt-1 h-1.5 w-1.5 shrink-0 rounded-full bg-[#24415E]/50" />
+                <span className="shrink-0 text-muted-foreground/70">
+                  {new Date(ev.ts).toLocaleTimeString('zh-CN', { hour12: false })}
+                </span>
+                <span className="shrink-0 font-medium text-foreground/90">{ev.node}</span>
+                <span className={cn(
+                  'shrink-0 rounded px-1 py-px text-[10px]',
+                  ev.status === 'completed' && 'bg-emerald-500/10 text-emerald-600',
+                  ev.status === 'running' && 'bg-sky-500/10 text-sky-600',
+                  ev.status === 'failed' && 'bg-red-500/10 text-red-600',
+                )}>
+                  {ev.status}
+                </span>
+                {ev.detail && <span className="min-w-0 flex-1 truncate text-muted-foreground" title={ev.detail}>{ev.detail}</span>}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   )
 }

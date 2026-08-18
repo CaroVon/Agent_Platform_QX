@@ -377,3 +377,94 @@ export interface ProjectImagesResponse {
   images: ImageResult[]
   total_count: number
 }
+
+// ─── 🆕 知识系统 (P1-P3)：图片知识库 / 三层检索 / 相似任务 / 领域经验 ──
+
+/** 图片分析状态：pending 待分析 / analyzing 分析中 / ready 已入库 / failed 失败 */
+export type KbImageStatus = 'pending' | 'analyzing' | 'ready' | 'failed'
+
+/** 知识库图片（含 MiniMax VL 分析结果） */
+export interface KbImage extends ImageResult {
+  source: 'search' | 'upload'
+  status: KbImageStatus | null
+  analysis_text: string | null   // VL 结构化 JSON
+  tags: string[]                 // 分析标签
+}
+
+/** 上传图片入库响应 */
+export interface KbImageUploadResponse {
+  project_id: string
+  saved: { image_id: string; title: string; status: string }[]
+  errors: string[]
+  message: string
+}
+
+/** 三层融合检索命中项 */
+export interface KnowledgeSearchHit {
+  scope: string          // task / domain:xxx / global / document
+  content: string
+  source_url: string
+  score: number
+  title?: string
+  project_topic?: string
+}
+
+export interface KnowledgeSearchResponse {
+  query: string
+  scope: string
+  total: number
+  hits: KnowledgeSearchHit[]
+}
+
+/** 相似任务条目（L1 领域知识） */
+export interface SimilarProject {
+  project_id: string
+  topic: string
+  template_type: string
+  similarity: number
+  status: string
+  domain_tags: string[]
+}
+
+export interface SimilarProjectsResponse {
+  project_id: string
+  topic: string
+  threshold: number
+  similar_projects: SimilarProject[]
+  borrowable_experience: string
+}
+
+/** 知识资产登记条目 */
+export interface KnowledgeAsset {
+  id: string
+  scope: string
+  source: 'upload' | 'obsidian' | 'experience' | string
+  title: string
+  source_url: string | null
+  tags: string[]
+  chunk_count: number
+  version: number
+  stale_at: string | null
+  created_at: string
+}
+
+export interface KnowledgeAssetListResponse {
+  total: number
+  assets: KnowledgeAsset[]
+}
+
+/** 领域经验包 */
+export interface DomainExperience {
+  id: string
+  project_id: string
+  topic: string
+  domain_tags: string[]
+  summary: string
+  source_url: string | null
+  created_at: string
+}
+
+export interface DomainExperienceListResponse {
+  total: number
+  experiences: DomainExperience[]
+}

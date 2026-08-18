@@ -258,6 +258,7 @@ def _backfill_spec_lock(spec_lock_path: Path, svg_dir: Path, images_meta: dict |
         ))
 
     if not spec_lock_path.is_file():
+        info["font_sizes"] = sorted(info["font_sizes"])
         return info
 
     # 读取现有 spec_lock，在尾部追加 backfill 段

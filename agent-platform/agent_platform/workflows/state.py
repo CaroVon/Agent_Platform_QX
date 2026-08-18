@@ -42,3 +42,18 @@ class ProductStudioState(TypedDict, total=False):
     # ─── 进度与失败记录 ───────────────────────────────────
     node_status: dict[str, str]
     errors: dict[str, str]
+
+    # ─── 节点级 Plan/Act 门（GATE_NODES） ─────────────────
+    # 必须显式声明，否则会被 MemorySaver checkpoint 剥离
+    _gate_nodes: list[str]
+    _gate_passed: list[str]
+    _completed_nodes: list[str]
+    _paused_node: str | None
+
+    # ─── 资料搜集与审核（source_gathering 节点） ──────────
+    _sources_review: list[dict]
+    _approved_sources: list[dict]
+    source_gathering_meta: dict
+
+    # ─── Critic 修订信号（避免低分无文案时修订循环无法终止） ──
+    _revise_requested: bool

@@ -66,7 +66,11 @@ def _candidate_directory(value: str) -> Path | None:
         raw_path = Path(value)
     except (OSError, ValueError):
         return None
-    if not raw_path.exists() and raw_path.parent == Path("."):
+    try:
+        if not raw_path.exists() and raw_path.parent == Path("."):
+            return None
+    except OSError:
+        # 超长非路径参数（如长中文 prompt）stat 抛 ENAMETOOLONG，视为非路径
         return None
     path = raw_path
     if not path.is_absolute():
