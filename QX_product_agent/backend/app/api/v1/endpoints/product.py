@@ -44,6 +44,7 @@ from app.schemas import (
 from app.services.ppt_asset_recovery import (
     build_ppt_asset_index,
     build_svg_preview_urls,
+    latest_pptx,
     match_asset_for_product,
 )
 from app.tasks.product_studio_tasks import run_product_studio_pipeline
@@ -97,10 +98,17 @@ def _to_asset_response(product: StudioProduct) -> ProductAssetResponse:
     if ppt_design and ppt_design.get("pptx_relative"):
         pptx_relative = Path(ppt_design["pptx_relative"])
         if not pptx_relative.is_absolute():
-            project_dir = Path(get_settings().OUTPUT_DIR).resolve() / pptx_relative.parent.parent
+            output_dir = Path(get_settings().OUTPUT_DIR).resolve()
+            project_dir = output_dir / pptx_relative.parent.parent
+            latest = latest_pptx(project_dir)
             previews = build_svg_preview_urls(project_dir)
+            corrected = dict(ppt_design)
+            if latest:
+                corrected["pptx_path"] = str(latest)
+                corrected["pptx_relative"] = str(latest.relative_to(output_dir))
             if previews:
-                base["ppt_design"] = {**ppt_design, "svg_previews": previews}
+                corrected["svg_previews"] = previews
+            base["ppt_design"] = corrected
     # P7: disk 资产对账 —— 当资产包没有 ppt_design（早期 bug / 超时重投递丢失）但磁盘仍有
     # 有效 PPTX 时，恢复合并进响应（只读，不改 asset_package / node_status）。
     # 匹配服务内部按「强信号（UUID/title）+ 弱信号（idea 前缀 + 时间窗）」
@@ -682,6 +690,56 @@ async def cancel_product(
     product.error_message = "用户取消"
     await db.commit()
     return {"product_id": str(product.id), "status": "cancelled", "message": "产品流水线已取消"}
+
+
+@router.post("/{product_id}/pause")
+async def pause_product(
+    product_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """暂停产品流水线，保留已有资产；当前外部调用结束后不再落库为 completed。"""
+    from app.core.celery_ops import revoke_active_tasks_for, revoke_task
+
+    product = await db.get(StudioProduct, product_id)
+    if product is None:
+        raise HTTPException(status_code=404, detail="产品不存在")
+    if product.owner_id is not None and product.owner_id != user.id:
+        raise HTTPException(status_code=403, detail="无权访问该产品")
+    if product.status not in (StudioProductStatus.QUEUED, StudioProductStatus.RUNNING):
+        raise HTTPException(status_code=409, detail=f"产品当前状态为 {product.status.value}，无法暂停")
+
+    revoke_task(product.celery_task_id)
+    revoke_active_tasks_for(str(product.id))
+    product.status = StudioProductStatus.PAUSED
+    product.error_message = "用户暂停"
+    await db.commit()
+    return {"product_id": str(product.id), "status": "paused", "message": "产品流水线已暂停"}
+
+
+@router.post("/{product_id}/resume")
+async def resume_product(
+    product_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """恢复已暂停的产品流水线，从已保存的断点/资产状态继续。"""
+    product = await db.get(StudioProduct, product_id)
+    if product is None:
+        raise HTTPException(status_code=404, detail="产品不存在")
+    if product.owner_id is not None and product.owner_id != user.id:
+        raise HTTPException(status_code=403, detail="无权访问该产品")
+    if product.status != StudioProductStatus.PAUSED:
+        raise HTTPException(status_code=409, detail=f"产品当前状态为 {product.status.value}，无法恢复")
+
+    product.status = StudioProductStatus.QUEUED
+    product.error_message = None
+    await db.commit()
+    from app.tasks.product_studio_tasks import run_product_studio_pipeline
+    task = run_product_studio_pipeline.delay(str(product.id))
+    product.celery_task_id = task.id
+    await db.commit()
+    return {"product_id": str(product.id), "status": "queued", "message": "产品流水线已恢复"}
 
 
 # ================================================================

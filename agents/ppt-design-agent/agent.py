@@ -24,6 +24,7 @@ v2 升级重点：
 from __future__ import annotations
 
 import json
+import hashlib
 import logging
 import os
 import re
@@ -49,7 +50,9 @@ _TITLE_FONT = "Noto Serif SC, Source Han Serif SC, Georgia, serif"
 def _get_reusable_project_dir(base: Path, product_id: str) -> Path:
     """为同一产品复用 PPT 项目目录，避免节点重试制造新目录。"""
     project_key = re.sub(r"[^A-Za-z0-9._-]+", "_", product_id).strip("._")[:80]
-    project_key = project_key or "product"
+    if not project_key:
+        # 中文 idea 清洗后可能只剩下下划线，不能再退回共享的 product 目录。
+        project_key = f"idea-{hashlib.sha256(product_id.encode('utf-8')).hexdigest()[:16]}"
     base.mkdir(parents=True, exist_ok=True)
     stable = base / project_key
     if stable.is_dir():
@@ -409,8 +412,13 @@ class PptDesignAgent(BaseAgent):
                 detail = (proc.stderr or proc.stdout)[-500:]
                 raise RuntimeError(f"{script} 失败: {detail}")
 
-        pptx_candidates = sorted((project_dir / "exports").glob("*.pptx")) if (project_dir / "exports").is_dir() else []
-        pptx_path = pptx_candidates[0] if pptx_candidates else next(project_dir.glob("*.pptx"), None)
+        pptx_candidates = list((project_dir / "exports").glob("*.pptx")) if (project_dir / "exports").is_dir() else []
+        if pptx_candidates:
+            # 节点重试复用同一目录时可能保留多个 PPTX，必须返回本轮最新产物。
+            pptx_path = max(pptx_candidates, key=lambda path: path.stat().st_mtime)
+        else:
+            root_candidates = list(project_dir.glob("*.pptx"))
+            pptx_path = max(root_candidates, key=lambda path: path.stat().st_mtime) if root_candidates else None
         if pptx_path is None:
             raise RuntimeError("svg_to_pptx 未产出 PPTX 文件")
 
@@ -509,8 +517,11 @@ class PptDesignAgent(BaseAgent):
                 "page_image": self._pick_page_image(page, i, images),
             }
             if llm is not None and llm.api_key:
+                contract_feedback = ""
                 for attempt in range(3):
                     prompt = svg_author.build_page_prompt(page, theme, design_spec, i, img_assets)
+                    if contract_feedback:
+                        prompt += f"\n\n上一次 SVG 转换契约失败，请修正：{contract_feedback}"
                     try:
                         raw = llm.complete(
                             [{"role": "system", "content": "你是资深咨询风演示 SVG 设计师。只输出 SVG。"},
@@ -523,8 +534,15 @@ class PptDesignAgent(BaseAgent):
                     svg = svg_author.extract_svg(raw)
                     ok, issue = svg_author.validate_svg(svg, page)
                     if ok:
-                        break
+                        svg = svg_author.sanitize_svg(svg)
+                        native_ok, native_issue = svg_author.validate_native_contract(svg)
+                        if not native_ok:
+                            ok = False
+                            issue = native_issue
+                        else:
+                            break
                     stats["retries"] += 1
+                    contract_feedback = issue
                     logger.warning("P%d SVG 校验失败（第 %d 次）: %s", page_no, attempt + 1, issue)
                     svg = ""
             if not svg:
@@ -612,6 +630,22 @@ class PptDesignAgent(BaseAgent):
 
         # ── b) 写 manifest ──
         manifest_path = image_dir / "image_prompts.json"
+        fingerprint = hashlib.sha256(
+            json.dumps(manifest, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        ).hexdigest()
+        cache_path = image_dir / ".image_cache.json"
+        cache_hit = False
+        try:
+            cache = json.loads(cache_path.read_text(encoding="utf-8"))
+            expected = [str(item.get("filename")) for item in items if item.get("filename")]
+            cache_hit = (
+                cache.get("fingerprint") == fingerprint
+                and cache.get("files") == expected
+                and all((image_dir / name).is_file() for name in expected)
+            )
+        except (OSError, json.JSONDecodeError):
+            pass
+
         manifest_path.write_text(
             json.dumps(manifest, ensure_ascii=False, indent=1),
             encoding="utf-8",
@@ -629,20 +663,28 @@ class PptDesignAgent(BaseAgent):
             pass
 
         # ── c) 调 image_gen.py 批量生成 ──
-        try:
-            proc = subprocess.run(
-                [sys.executable, str(_SCRIPTS_DIR / "image_gen.py"),
-                 "--manifest", str(manifest_path), "-o", str(image_dir)],
-                capture_output=True, text=True, timeout=900,
-                # cwd 继承工作目录（backend）：image_gen 需读取 backend/.env 的
-                # IMAGE_BACKEND/MINIMAX_API_KEY（vendor scripts 目录无 .env）
-            )
-            if proc.returncode != 0:
-                logger.warning("生图失败（降级跳过，部分 SVG 无图）: %s",
-                                (proc.stderr or proc.stdout)[-300:])
-                # 不 return empty —— 让部分图缺失走流程，asset studio 会显示已生成的
-        except Exception as exc:  # noqa: BLE001
-            logger.warning("生图调用异常: %s", exc)
+        if cache_hit:
+            logger.info("生图缓存命中，跳过 image_gen.py | product=%s", product_id)
+        else:
+            try:
+                proc = subprocess.run(
+                    [sys.executable, str(_SCRIPTS_DIR / "image_gen.py"),
+                     "--manifest", str(manifest_path), "-o", str(image_dir)],
+                    capture_output=True, text=True, timeout=900,
+                    # cwd 继承工作目录（backend）：image_gen 需读取 backend/.env 的
+                    # IMAGE_BACKEND/MINIMAX_API_KEY（vendor scripts 目录无 .env）
+                )
+                if proc.returncode != 0:
+                    logger.warning("生图失败（降级跳过，部分 SVG 无图）: %s",
+                                    (proc.stderr or proc.stdout)[-300:])
+                elif all((image_dir / str(item.get("filename"))).is_file() for item in items):
+                    cache_path.write_text(
+                        json.dumps({"fingerprint": fingerprint, "files": [item.get("filename") for item in items]},
+                                   ensure_ascii=False),
+                        encoding="utf-8",
+                    )
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("生图调用异常: %s", exc)
 
         # ── d) 同步到 Design Studio（outputs/assets/{product_id}/） ──
         try:

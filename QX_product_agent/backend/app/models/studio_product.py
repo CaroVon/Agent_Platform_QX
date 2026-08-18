@@ -24,6 +24,7 @@ class StudioProductStatus(str, enum.Enum):
     COMPLETED = "completed"
     FAILED = "failed"
     WAITING_APPROVAL = "waiting_approval"
+    PAUSED = "paused"
 
 
 class StudioProduct(Base):

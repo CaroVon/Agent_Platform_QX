@@ -87,6 +87,15 @@ def build_svg_preview_urls(project_dir: Path) -> list[str]:
     ]
 
 
+def latest_pptx(project_dir: Path) -> Path | None:
+    """返回项目目录中最新生成的 PPTX，避免重试残留文件被误选。"""
+    exports = project_dir / "exports"
+    candidates = list(exports.glob("*.pptx")) if exports.is_dir() else []
+    if not candidates:
+        candidates = list(project_dir.glob("*.pptx"))
+    return max(candidates, key=lambda path: path.stat().st_mtime) if candidates else None
+
+
 def scan_ppt_projects(ttl: int = 30) -> list[dict[str, Any]]:
     """扫描 ppt_projects 目录并返回资产索引（带 TTL 缓存）。
 
@@ -113,12 +122,11 @@ def scan_ppt_projects(ttl: int = 30) -> list[dict[str, Any]]:
         if not d.is_dir() or d.name.startswith("."):
             continue
         spec = _read_core_message(d)
-        exports = sorted((d / "exports").glob("*.pptx")) if (d / "exports").is_dir() else []
-        if not exports:
+        pptx = latest_pptx(d)
+        if pptx is None:
             continue
         svg_files, _ = _svg_files(d)
         svg_count = len(svg_files)
-        pptx = exports[0]
         try:
             stat = pptx.stat()
         except OSError:
@@ -240,10 +248,15 @@ def match_asset_for_product(
     scored.sort(key=lambda t: (t[0], t[1]), reverse=True)
     _, _, asset = scored[0]
     project_dir = Path(asset["pptx_absolute"]).parent.parent  # .../ppt_projects/{folder}
+    latest = latest_pptx(project_dir)
     return {
         "project_dir": str(project_dir),
-        "pptx_path": asset["pptx_absolute"],
-        "pptx_relative": asset["pptx_relative"],
+        "pptx_path": str(latest or Path(asset["pptx_absolute"])),
+        "pptx_relative": (
+            f"studio_assets/ppt_projects/{project_dir.name}/exports/{latest.name}"
+            if latest and latest.parent.name == "exports"
+            else asset["pptx_relative"]
+        ),
         "pages": asset["svg_count"],
         "svg_files": _list_svg_files(project_dir),
         "svg_previews": build_svg_preview_urls(project_dir),

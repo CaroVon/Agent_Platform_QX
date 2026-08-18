@@ -6,7 +6,7 @@
  * ============================================================
  */
 
-export type StudioStatus = 'queued' | 'running' | 'completed' | 'failed' | 'waiting_approval'
+export type StudioStatus = 'queued' | 'running' | 'completed' | 'failed' | 'waiting_approval' | 'paused'
 
 export interface StudioProductCreateResponse {
   product_id: string

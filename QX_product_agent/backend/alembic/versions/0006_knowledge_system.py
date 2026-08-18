@@ -29,6 +29,11 @@ def _has_column(bind, table: str, column: str) -> bool:
 def upgrade() -> None:
     bind = op.get_bind()
 
+    # Product Studio pause state. SQLite stores the ORM enum as text; PostgreSQL
+    # requires adding the enum value explicitly.
+    if bind.dialect.name == "postgresql":
+        op.execute("ALTER TYPE studioproductstatus ADD VALUE IF NOT EXISTS 'paused'")
+
     # ─── 1. projects: topic_embedding / domain_tags ─────────────
     if _has_table(bind, "projects"):
         if not _has_column(bind, "projects", "topic_embedding"):

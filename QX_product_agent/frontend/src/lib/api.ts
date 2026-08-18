@@ -118,12 +118,12 @@ async function request<T>(
 ): Promise<T> {
   const token = await ensureAuthToken()
   const res = await fetch(`${API_BASE}${url}`, {
+    ...options,
     headers: {
       'Content-Type': 'application/json',
       Authorization: `Bearer ${token}`,
       ...options?.headers,
     },
-    ...options,
   })
 
   // token 失效（重启换密钥等）：清缓存重试一次
@@ -467,6 +467,21 @@ export const productApi = {
   /** 获取产品资产包（前端轮询直至 status=completed/failed） */
   get(productId: string): Promise<StudioProduct> {
     return request(`/product/${productId}`)
+  },
+
+  /** 暂停正在执行的流水线，保留已生成资产 */
+  pause(productId: string): Promise<{ product_id: string; status: string; message: string }> {
+    return request(`/product/${productId}/pause`, { method: 'POST' })
+  },
+
+  /** 恢复已暂停的流水线 */
+  resume(productId: string): Promise<{ product_id: string; status: string; message: string }> {
+    return request(`/product/${productId}/resume`, { method: 'POST' })
+  },
+
+  /** 结束流水线，不再继续执行 */
+  cancel(productId: string): Promise<{ product_id: string; status: string; message: string }> {
+    return request(`/product/${productId}/cancel`, { method: 'POST' })
   },
 
   /** 产品列表 */

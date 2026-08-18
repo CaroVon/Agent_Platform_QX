@@ -28,7 +28,8 @@ _SKILL_RULES = """## 硬性规则（必须遵守）
 - 颜色只能使用给出的 palette 六色（可加 10-15% 透明度的同色变体）
 - 图表组件：可以输出 <g data-pptx-replace-with="chart" data-pptx-id="c1" data-pptx-bounds="x,y,w,h" data-pptx-json='{...}'> + 内部 SVG 兜底图形；data-pptx-json 用 chart payload：{"type":"column|line|pie|radar","categories":[...],"series":[{"name":"...","values":[...]}],"data_labels":true}（bounds 单位=EMU，1px=9525）
 - 矩阵/象限图：**纯 SVG 散点**（竞争者为浅灰色 #94A3B8 圆点，本产品为主色圆点）+ 虚线中轴 + 轴名；**禁止为象限/散点使用 data-pptx-replace-with 原生标记**（转换器不支持 scatter 数据标签）
-- 柱/折线/饼图的原生标记中 data_labels 必须为 true 之外不要加 label 相关配置"""
+- 柱/折线/饼图的原生标记中 data_labels 必须为 true 之外不要加 label 相关配置
+- filter 只能直接用于 rect/circle/image/path/text；禁止在 <g> 或 style 中使用 filter"""
 
 
 def _trim_data(data: dict, max_text: int = 180, max_items: int = 8) -> dict:
@@ -198,6 +199,26 @@ def sanitize_svg(svg: str) -> str:
                          "data-pptx-bounds", "data-pptx-json", "data-pptx-data"):
                 el.attrib.pop(attr, None)
     return ET.tostring(root, encoding="unicode")
+
+
+def validate_native_contract(svg: str) -> tuple[bool, str]:
+    """检查已知的 DrawingML 转换契约，避免整套 PPT 生成后才失败。"""
+    if "currentColor" in svg:
+        return False, "不支持 currentColor，请使用主题色板中的具体颜色"
+    try:
+        root = ET.fromstring(svg)
+    except ET.ParseError as exc:
+        return False, f"XML 解析失败: {exc}"
+
+    for element in root.iter():
+        tag = str(element.tag).rsplit("}", 1)[-1].lower()
+        if element.get("style") and re.search(r"(?:^|;)\s*filter\s*:", element.get("style", "")):
+            return False, "不支持在 style 中声明 filter"
+        if element.get("filter") and tag == "g":
+            return False, "不支持在 <g> 上使用 filter"
+        if element.get("filter") and not re.fullmatch(r"url\(#[^)]+\)", element.get("filter", "").strip()):
+            return False, "filter 必须是本地 url(#id) 引用"
+    return True, ""
 
 
 def extract_svg(text: str) -> str:

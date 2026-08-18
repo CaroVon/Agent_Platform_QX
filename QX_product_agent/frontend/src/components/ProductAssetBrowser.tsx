@@ -16,6 +16,7 @@ import { cn } from '@/lib/utils'
 const STATUS_META: Record<string, { label: string; cls: string }> = {
   running: { label: '进行中', cls: 'bg-[#24415E]/10 text-[#24415E] animate-soft-pulse' },
   queued: { label: '排队中', cls: 'bg-slate-500/10 text-slate-500' },
+  paused: { label: '已暂停', cls: 'bg-amber-500/10 text-amber-700' },
   completed: { label: '已完成', cls: 'bg-emerald-500/10 text-emerald-600' },
   failed: { label: '失败', cls: 'bg-destructive/10 text-destructive' },
 }

@@ -7,7 +7,7 @@
 
 import { useEffect, useRef, useState } from 'react'
 import { useLocation } from 'react-router-dom'
-import { AlertCircle, Globe, Loader2, Upload } from 'lucide-react'
+import { AlertCircle, Globe, Loader2, Pause, Play, Square, Upload } from 'lucide-react'
 import { ProjectHeader } from '@/components/workspace/ProjectHeader'
 import { IdeaInput } from '@/components/workspace/IdeaInput'
 import { AssetPanel } from '@/components/workspace/AssetPanel'
@@ -63,6 +63,7 @@ export function ProductWorkspacePage() {
   }>>([])
   const [sourcesLoading, setSourcesLoading] = useState(false)
   const [uploadingSource, setUploadingSource] = useState(false)
+  const [taskAction, setTaskAction] = useState<'pause' | 'resume' | 'cancel' | null>(null)
   const pollTimer = useRef<number | null>(null)
 
   const isActive = product !== null && (product.status === 'queued' || product.status === 'running')
@@ -172,6 +173,23 @@ export function ProductWorkspacePage() {
       setLoadError(err instanceof Error ? err.message : '创建失败')
     } finally {
       setCreating(false)
+    }
+  }
+
+  const handleTaskAction = async (action: 'pause' | 'resume' | 'cancel') => {
+    if (!product || taskAction) return
+    if (action === 'cancel' && !window.confirm('确定结束该任务吗？结束后不会继续生成。')) return
+    setTaskAction(action)
+    setLoadError('')
+    try {
+      if (action === 'pause') await productApi.pause(product.product_id)
+      if (action === 'resume') await productApi.resume(product.product_id)
+      if (action === 'cancel') await productApi.cancel(product.product_id)
+      await loadProduct(product.product_id)
+    } catch (err) {
+      setLoadError(err instanceof Error ? err.message : '任务操作失败')
+    } finally {
+      setTaskAction(null)
     }
   }
 
@@ -424,6 +442,46 @@ export function ProductWorkspacePage() {
                 logs={eventLogs}
               />
               <div className="border-l border-border/60 pl-6">
+                {(product.status === 'queued' || product.status === 'running' || product.status === 'paused') && (
+                  <div className="mb-5 rounded-xl border bg-background/60 p-3">
+                    <div className="mb-2 text-[11px] font-medium text-muted-foreground">任务控制</div>
+                    <div className="flex flex-wrap gap-2">
+                      {product.status === 'paused' ? (
+                        <button
+                          type="button"
+                          disabled={taskAction !== null}
+                          onClick={() => handleTaskAction('resume')}
+                          className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-600 px-3 py-2 text-xs font-medium text-white transition-opacity hover:opacity-90 disabled:opacity-50"
+                        >
+                          <Play className="h-3.5 w-3.5" />
+                          {taskAction === 'resume' ? '恢复中…' : '继续任务'}
+                        </button>
+                      ) : (
+                        <button
+                          type="button"
+                          disabled={taskAction !== null}
+                          onClick={() => handleTaskAction('pause')}
+                          className="inline-flex items-center gap-1.5 rounded-lg border border-amber-500/40 px-3 py-2 text-xs font-medium text-amber-700 transition-colors hover:bg-amber-50 disabled:opacity-50"
+                        >
+                          <Pause className="h-3.5 w-3.5" />
+                          {taskAction === 'pause' ? '暂停中…' : '暂停任务'}
+                        </button>
+                      )}
+                      <button
+                        type="button"
+                        disabled={taskAction !== null}
+                        onClick={() => handleTaskAction('cancel')}
+                        className="inline-flex items-center gap-1.5 rounded-lg border border-red-400/50 px-3 py-2 text-xs font-medium text-red-600 transition-colors hover:bg-red-50 disabled:opacity-50"
+                      >
+                        <Square className="h-3.5 w-3.5" />
+                        {taskAction === 'cancel' ? '结束中…' : '结束任务'}
+                      </button>
+                    </div>
+                    <p className="mt-2 text-[10px] leading-relaxed text-muted-foreground">
+                      暂停会保留当前资产，结束后不会继续生成。
+                    </p>
+                  </div>
+                )}
                 <div className="mb-2 text-[11px] font-medium uppercase tracking-wider text-muted-foreground/60">
                   工具与检查
                 </div>

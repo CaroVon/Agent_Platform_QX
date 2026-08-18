@@ -282,6 +282,7 @@ def build_image_manifest(
                 "filename": fname,
                 "prompt": PAGE_GENERIC_PROMPT.format(
                     idea=_clean(idea, 40), topic=f"竞品对比矩阵 — {topic}",
+                    theme=theme_name,
                 ),
                 "aspect_ratio": "16:9",
                 "image_size": "1K",

@@ -3,6 +3,7 @@ PptDesignAgent 单元测试 —— svg_author 创作辅助 + spec_lock/spec 生�
 """
 
 import sys
+from types import SimpleNamespace
 from pathlib import Path
 
 _ROOT = Path(__file__).resolve().parents[2]  # ~/dev/agents
@@ -10,7 +11,8 @@ sys.path.insert(0, str(_ROOT))
 sys.path.insert(0, str(_ROOT / "agent-platform"))
 
 from agents.ppt_design_agent import svg_author as sa
-from agents.ppt_design_agent.agent import _build_design_spec, _build_spec_lock
+from agents.ppt_design_agent.agent import _build_design_spec, _build_spec_lock, _get_reusable_project_dir
+from agents.ppt_design_agent.agent import PptDesignAgent
 
 
 def _page() -> dict:
@@ -53,6 +55,70 @@ def test_validate_rejects_overflow_and_forbidden():
     bad = '<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="720"><style>.x{}</style><text x="10" y="20">市场存在个性化缺口，TAM达500亿</text></svg>'
     ok2, issue2 = sa.validate_svg(bad, _page())
     assert not ok2 and "style" in issue2
+
+
+def test_validate_native_contract_rejects_group_filter():
+    svg = '<svg><defs><filter id="shadow" /></defs><g filter="url(#shadow)"></g></svg>'
+    ok, issue = sa.validate_native_contract(svg)
+    assert not ok
+    assert "<g>" in issue
+
+
+def test_image_manifest_handles_competitor_matrix_theme():
+    from agents.ppt_design_agent import image_plan
+
+    manifest = image_plan.build_image_manifest(
+        {"pages": [{"type": "competitor_matrix", "title": "竞品矩阵"}]},
+        "测试产品",
+        "product-1",
+    )
+    assert manifest["items"][-1]["filename"] == "page_01_concept.png"
+
+
+def test_image_generation_cache_skips_second_generation(tmp_path, monkeypatch):
+    from agents.ppt_design_agent import agent as agent_module
+
+    class ImagePlan:
+        @staticmethod
+        def build_image_manifest(**_kwargs):
+            return {"project": "demo", "product_id": "p1", "items": [
+                {"filename": "hero.png", "prompt": "hero", "asset_kind": "hero"},
+            ]}
+
+        @staticmethod
+        def sync_to_design_studio(**_kwargs):
+            return {"assets": [{"name": "hero.png", "url": "hero.png", "size": 1}],
+                    "hero": "hero.png", "by_kind": {}, "asset_dir": ""}
+
+    calls = []
+
+    def fake_run(command, **_kwargs):
+        calls.append(command)
+        Path(command[-1]).joinpath("hero.png").write_bytes(b"image")
+        return SimpleNamespace(returncode=0, stderr="", stdout="")
+
+    monkeypatch.setattr(agent_module.subprocess, "run", fake_run)
+    agent = object.__new__(PptDesignAgent)
+    kwargs = dict(
+        project_dir=tmp_path / "project",
+        presentation={"pages": []},
+        idea="demo",
+        product_id="p1",
+        theme_name="咨询风",
+        accent_color="#123456",
+        out_dir=tmp_path,
+        image_plan_module=ImagePlan,
+    )
+    kwargs["project_dir"].mkdir()
+    agent._generate_images_v2(**kwargs)
+    agent._generate_images_v2(**kwargs)
+    assert len(calls) == 1
+
+
+def test_chinese_product_id_does_not_use_shared_product_directory(tmp_path):
+    project_dir = _get_reusable_project_dir(tmp_path, "面向健身房的智能私教镜")
+    assert project_dir.name.startswith("idea-")
+    assert project_dir.name != "product"
 
 
 def test_fallback_svg_keeps_content():

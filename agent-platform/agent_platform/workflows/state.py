@@ -16,6 +16,8 @@ class ProductStudioState(TypedDict, total=False):
 
     # ─── 输入 ─────────────────────────────────────────────
     idea: str
+    # 产品 UUID 必须进入 LangGraph 状态，供 PPT/资产节点做目录与产物隔离。
+    product_id: str
     memory_namespace: str
 
     # ─── 节点产物（dict 形式，最终由 ProductAssetPackage 收敛校验） ──

@@ -152,6 +152,26 @@ def _update_product(product_id: str, **fields) -> None:
         session.commit()
 
 
+def _get_product_status(product_id: str) -> StudioProductStatus | None:
+    """读取最新状态，避免用户暂停/结束后旧 Worker 覆盖终态。"""
+    from sqlalchemy.orm import Session
+
+    with Session(get_sync_engine()) as session:
+        product = session.get(StudioProduct, _parse_product_id(product_id))
+        return product.status if product is not None else None
+
+
+def _json_safe(value):
+    """递归转换资产包中的非 JSON 类型，保持集合内容而非转成不可读字符串。"""
+    if isinstance(value, (set, frozenset)):
+        return sorted((_json_safe(item) for item in value), key=lambda item: repr(item))
+    if isinstance(value, dict):
+        return {str(key): _json_safe(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_json_safe(item) for item in value]
+    return value
+
+
 def _claim_product_run(product_id: str, *, allow_retry: bool) -> tuple[str, str | None]:
     """原子领取一次流水线执行，阻止 Celery 重投递并发跑同一产品。
 
@@ -169,6 +189,8 @@ def _claim_product_run(product_id: str, *, allow_retry: bool) -> tuple[str, str 
             return "completed", None
         if product.status == StudioProductStatus.RUNNING:
             return "running", None
+        if product.status == StudioProductStatus.PAUSED:
+            return "paused", None
 
         allowed = [StudioProductStatus.QUEUED, StudioProductStatus.WAITING_APPROVAL]
         if allow_retry:
@@ -217,6 +239,9 @@ def run_product_studio_pipeline(self: ProductStudioTask, product_id: str):
     if action == "running":
         logger.info("[Product Studio] product=%s 已在执行，忽略重复投递", product_id)
         return {"product_id": product_id, "status": "running", "duplicate": True}
+    if action == "paused":
+        logger.info("[Product Studio] product=%s 已暂停，忽略重复投递", product_id)
+        return {"product_id": product_id, "status": "paused", "duplicate": True}
 
     settings = self.settings
     _bridge_env(settings)
@@ -394,6 +419,10 @@ def run_product_studio_pipeline(self: ProductStudioTask, product_id: str):
         logger.warning("[Product Studio] product=%s 软超时（仍执行中，等待硬超时兜底）", product_id)
         return {"product_id": product_id, "status": "running", "note": "soft_timeout"}
     except Exception as exc:  # noqa: BLE001 —— 记录失败，允许 Celery 重试
+        current_status = _get_product_status(product_id)
+        if current_status in (StudioProductStatus.PAUSED, StudioProductStatus.FAILED):
+            logger.info("[Product Studio] product=%s 已被用户终止，忽略旧任务异常", product_id)
+            return {"product_id": product_id, "status": current_status.value}
         logger.exception("[Product Studio] product=%s 流水线失败", product_id)
         _update_product(
             product_id,
@@ -415,8 +444,13 @@ def run_product_studio_pipeline(self: ProductStudioTask, product_id: str):
         except Exception:  # noqa: BLE001
             continue
 
-    package_dict = package.model_dump()
+    package_dict = _json_safe(package.model_dump())
     package_dict["usage"] = usage
+    current_status = _get_product_status(product_id)
+    if current_status in (StudioProductStatus.PAUSED, StudioProductStatus.FAILED):
+        logger.info("[Product Studio] product=%s 已被用户终止，不覆盖产品状态", product_id)
+        return {"product_id": product_id, "status": current_status.value}
+
     _update_product(
         product_id,
         status=StudioProductStatus.COMPLETED,
