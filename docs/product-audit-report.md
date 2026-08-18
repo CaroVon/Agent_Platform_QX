@@ -743,6 +743,20 @@ GraphRecursionError；改为"critic 发 `_revise_requested` 信号 + presentatio
 
 **回归**：平台 55 + agents 7 + 后端 57 测试全过；前端 tsc/构建通过；主包 806KB。
 
+## 第三轮验证记录（2026-08-18：E2E 与崩溃修复）
+
+1. **`Object of type set` 序列化崩溃（实测发现并修复）**：`ppt-design-agent` 的
+   `_backfill_spec_lock` 返回 `font_sizes: set`，混入资产包后 `json.dumps` 抛 TypeError，
+   任务崩溃、产品永久 running。修复：① font_sizes 转 sorted list；② 任务持久化
+   `json.dumps(..., default=str)` 双保险。**直接验证通过**：完整 ProductAssetPackage →
+   model_dump → 序列化（含 set 残留模拟）成功。
+2. **E2E 实测（3 轮完整流水线）**：source_gathering 暂停（40 条资料/权重分布
+   高3·中高7·中22·低2）→ 审核保留 6 条 → 续跑 → research/competitor/strategy/
+   design/presentation（含修订循环）/critic 全部 completed → **ppt_design 产出 3.1MB
+   PPTX**（`exports/....pptx`）。最终 COMPLETED 落库步骤受并发工作流干扰（worker 重启 +
+   其 pause 功能反复暂停测试产品）未能观测，但该步骤的崩溃点已直接验证修复。
+3. **已上传 GitHub**：`CaroVon/Agent_Platform_QX` HEAD `2ac86f2`（3 提交，13,194 文件）。
+
 ## 遗留说明
 
 1. **并发工作流**：实施期间检测到另一工作流同时修改同一工作树（08-17 19:28-20:03 期间多次覆盖 `agents/ppt-design-agent`、`agents/design-agent` 等文件）。我方补丁已重新应用并通过全部测试；若后续发现文件被覆盖，以当前工作树 + 本附录为准重新应用。
