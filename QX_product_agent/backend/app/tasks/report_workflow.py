@@ -344,6 +344,14 @@ def run_draft_sections_workflow(self, project_id: str):
         except Exception as e:
             logger.warning("[PHASE 3] 经验包任务投递失败（忽略）: %s", e)
 
+        # ── 🆕 P4: 异步沉淀记忆图（实体/关系/洞察 + 全局提升） ──
+        try:
+            from app.tasks.knowledge_tasks import build_memory_graph
+            build_memory_graph.delay(project_id)
+            logger.info("[PHASE 3] 已投递记忆图沉淀任务 | project=%s", project_id)
+        except Exception as e:
+            logger.warning("[PHASE 3] 记忆图任务投递失败（忽略）: %s", e)
+
         log_state(project_id, "completed",
                   f"✅ AI 草稿分页生成完毕！共撰写 {len(section_titles)} 个章节")
 

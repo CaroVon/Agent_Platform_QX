@@ -112,6 +112,8 @@ def _to_asset_response(product: StudioProduct) -> ProductAssetResponse:
         "errors": meta.get("errors") or {},
         "critic_score": package.get("critic_score"),
         "gate_report": package.get("gate_report"),
+        # C5: 各节点模型 token 用量（成本可观测）
+        "usage": package.get("usage"),
         # Key Words：独立列优先（用户编辑后的最新值），缺失时回退资产包内记录
         "keywords": _parse_keywords(product.keywords) or package.get("keywords"),
     }
@@ -545,7 +547,7 @@ async def update_product_keywords(
     if product.owner_id is not None and product.owner_id != user.id:
         raise HTTPException(status_code=403, detail="无权访问该产品")
 
-    from app.services.product_keywords import KEYWORD_GROUPS, _normalize_keywords
+    from app.services.product_keywords import _normalize_keywords
 
     groups = _normalize_keywords(body.keywords)
     # 未知分组键不丢弃：保留原样（防御前端扩展），但统一为字符串列表

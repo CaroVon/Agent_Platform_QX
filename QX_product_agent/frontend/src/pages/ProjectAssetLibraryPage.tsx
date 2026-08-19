@@ -45,6 +45,26 @@ function formatSize(bytes: number): string {
   return `${bytes} B`
 }
 
+function AssetThumbnail({ file }: { file: ProjectAssetFile }) {
+  const preview = file.preview_url || file.preview_urls?.[0]
+  if (preview && (file.kind === 'image' || file.kind === 'ppt')) {
+    return (
+      <div className="h-14 w-24 shrink-0 overflow-hidden rounded-md border bg-white">
+        <img src={preview} alt="" className="h-full w-full object-cover" loading="lazy" />
+      </div>
+    )
+  }
+  const Icon = FILE_ICONS[file.kind] ?? FileText
+  return (
+    <div className="flex h-14 w-24 shrink-0 flex-col items-center justify-center gap-1 rounded-md border bg-secondary/40 text-muted-foreground">
+      <Icon className="h-5 w-5" />
+      <span className="max-w-[5rem] truncate text-[9px]">
+        {file.kind === 'doc' ? (file.name.endsWith('.pdf') ? 'PDF 文档' : 'Markdown 文档') : file.category}
+      </span>
+    </div>
+  )
+}
+
 /** 触发 Blob 下载（带鉴权） */
 function triggerBlobDownload(blob: Blob, filename: string) {
   const url = URL.createObjectURL(blob)
@@ -273,11 +293,11 @@ export function ProjectAssetLibraryPage() {
                               {items.map((file, idx) => {
                                 const Icon = FILE_ICONS[file.kind] ?? FileText
                                 return (
-                                  <div
-                                    key={`${file.path}-${idx}`}
-                                    className="flex items-center gap-3 border-b bg-card px-4 py-2.5 text-xs last:border-b-0"
-                                  >
-                                    <Icon className="h-4 w-4 shrink-0 text-muted-foreground/60" />
+                              <div
+                                key={`${file.path}-${idx}`}
+                                className="flex items-center gap-3 border-b bg-card px-4 py-2.5 text-xs last:border-b-0"
+                              >
+                                <AssetThumbnail file={file} />
                                     <div className="min-w-0 flex-1">
                                       <div className="truncate font-medium" title={file.name}>
                                         {file.name}

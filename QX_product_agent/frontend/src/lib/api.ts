@@ -31,6 +31,9 @@ import type {
   SimilarProjectsResponse,
   KnowledgeAssetListResponse,
   DomainExperienceListResponse,
+  MemoryGraphResponse,
+  MemoryEntityDetail,
+  MemoryInsightsResponse,
 } from '@/types/api'
 import type {
   ExportPdfResponse,
@@ -431,6 +434,51 @@ export const knowledgeApi = {
   /** 🧠 领域经验包列表 */
   domains(): Promise<DomainExperienceListResponse> {
     return request('/knowledge/domains')
+  },
+}
+
+// ─── 🆕 记忆系统 API（P4：关系图 / 实体 / 洞察 / 重建 / 删除） ───
+
+export const memoryApi = {
+  /** 🕸️ 知识关系图数据（scope=global|project，支持搜索/类型过滤） */
+  graph(opts?: {
+    scope?: 'global' | 'project'
+    projectId?: string
+    q?: string
+    entityTypes?: string[]
+    limit?: number
+  }): Promise<MemoryGraphResponse> {
+    const params = new URLSearchParams()
+    params.set('scope', opts?.scope ?? 'global')
+    if (opts?.projectId) params.set('project_id', opts.projectId)
+    if (opts?.q) params.set('q', opts.q)
+    if (opts?.entityTypes?.length) params.set('entity_types', opts.entityTypes.join(','))
+    if (opts?.limit) params.set('limit', String(opts.limit))
+    return request(`/memory/graph?${params.toString()}`)
+  },
+
+  /** 🔍 实体详情（邻域关系 + 关联洞察 + 证据） */
+  entity(entityId: string): Promise<MemoryEntityDetail> {
+    return request(`/memory/entities/${entityId}`)
+  },
+
+  /** 💡 记忆洞察列表 */
+  insights(opts?: { scope?: 'global' | 'project'; projectId?: string; q?: string }): Promise<MemoryInsightsResponse> {
+    const params = new URLSearchParams()
+    params.set('scope', opts?.scope ?? 'project')
+    if (opts?.projectId) params.set('project_id', opts.projectId)
+    if (opts?.q) params.set('q', opts.q)
+    return request(`/memory/insights?${params.toString()}`)
+  },
+
+  /** ♻️ 手动触发某项目的记忆图重建（异步） */
+  rebuild(projectId: string): Promise<{ project_id: string; message: string; celery_task_id: string }> {
+    return request(`/memory/rebuild/${projectId}`, { method: 'POST' })
+  },
+
+  /** 🗑️ 删除实体（纠错，级联关系） */
+  deleteEntity(entityId: string): Promise<{ detail: string }> {
+    return request(`/memory/entities/${entityId}`, { method: 'DELETE' })
   },
 }
 

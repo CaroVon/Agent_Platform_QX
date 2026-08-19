@@ -818,3 +818,30 @@ HTML/PDF/PPTX 管线，三端一致不变。
   ENAMETOOLONG 保护（单图模式长中文 prompt 触发）
 - app/rag/rag_pipeline.py：retrieve_task_context 参数默认值语法修复
   （project_id 移后并给默认值，阻塞后端启动，属他人 WIP 遗留）
+
+---
+
+## 24. 项目资产库：PPT 资产库 → 任务级全资产归档（2026-08）
+
+### 背景
+侧边栏「PPT 资产库」仅覆盖 PPTX 单一资产。调整为**项目资产库**：
+每个任务（product）的全部资产归档到对应资产库，支持单文件下载与 ZIP 打包下载；
+文本资产自动转化为 **PDF / MD** 产出，PPT 仍按现有模式产出（ppt-master 原生 PPTX）。
+
+### 核心能力
+- **任务资产库**：`{OUTPUT_DIR}/studio_assets/{product_id}/` 目录 + index.json
+  审计索引；路径统一使用带连字符 UUID（与 design_studio 命名一致）
+- **文本资产 → MD/PDF**：需求 / 市场研究 / 竞品分析 / 策略与PRD / UX设计 /
+  演示文案 / 项目完整文档 结构化序列化为 Markdown（必产），weasyprint 渲染 PDF（尽力）；
+  流水线完成态自动产出，历史任务读取资产库时惰性补产（幂等）
+- **PPT 现有模式**：复用 ppt-master 原生 PPTX（ppt_projects 对账恢复 +
+  磁盘 svg_final 预览），与 P7 恢复逻辑一致
+- **聚合归档**：演示导出（PDF/HTML）、design_studio 设计图、编辑器上传素材一并入档
+- **下载**：单文件直接走 /api/v1/files 静态地址；打包下载 ZIP 按
+  `{任务名}/{类别}/` 分子目录（文档 / 演示文稿 / 设计图片 / 素材）
+
+### 存储与 API
+- 新路由 `/api/v1/project-assets`（见 backend/app/api/v1/endpoints/project_assets.py）：
+  GET 列表（资产统计）｜GET {product_id}（明细，惰性补产）｜GET {product_id}/download（ZIP）
+- 前端：侧边栏「PPT 资产库」→「项目资产库」（/ppt-assets 重定向到 /project-assets），
+  ProjectAssetLibraryPage 任务卡片 + 分类资产清单 + 打包/单文件下载

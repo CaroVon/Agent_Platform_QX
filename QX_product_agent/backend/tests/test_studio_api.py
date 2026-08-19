@@ -334,6 +334,33 @@ async def test_generate_and_save_keywords_skips_existing(
     mock_save.assert_not_called()
 
 
+async def test_generate_and_save_keywords_writes(client: AsyncClient, test_session):
+    """生成路径：LLM 输出 → 规范化去重 → 写入 keywords 列与资产包。"""
+    from app.services.product_keywords import generate_and_save_keywords
+
+    async with test_session as session:
+        product = await _insert_completed_product(session)
+        product_id = str(product.id)
+
+    class FakeLLM:
+        def complete_json(self, messages, **kwargs):
+            return {
+                "design": ["极简", "圆角"],
+                "function": ["AI 提醒"],
+                "appearance": [],
+                "audience": ["上班族"],
+                "scenario": ["睡前", "睡前"],
+            }
+
+    groups = generate_and_save_keywords(product_id, _package_payload(), llm=FakeLLM())
+    assert groups["design"] == ["极简", "圆角"]
+    assert groups["scenario"] == ["睡前"]  # 去重
+
+    detail = await client.get(f"/api/v1/product/{product_id}")
+    assert detail.status_code == 200
+    assert detail.json()["keywords"] == groups
+
+
 async def test_update_product_keywords(client: AsyncClient, test_session):
     """用户编辑关键词：PUT 保存后 GET 返回最新值，且同步写入资产包。"""
     async with test_session as session:

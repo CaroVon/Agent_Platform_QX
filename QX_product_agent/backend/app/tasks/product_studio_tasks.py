@@ -333,7 +333,7 @@ def run_product_studio_pipeline(self: ProductStudioTask, product_id: str):
             "design": loops["design"].llm.model,
             "presentation": loops["presentation"].llm.model,
             "critic": loops["critic"].llm.model,
-            "ppt_design": getattr(loop.llm, "model", "deterministic"),
+            "ppt_design": getattr(loops["presentation"].llm, "model", "deterministic"),
         }
 
         graph = ProductResearchGraph(

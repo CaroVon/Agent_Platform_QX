@@ -50,6 +50,8 @@ class ProductAssetResponse(BaseModel):
     # ── P5: 质量层 ──
     critic_score: int | None = None
     gate_report: dict[str, Any] | None = None
+    # ── C5: 各节点模型 token 用量（成本可观测） ──
+    usage: dict[str, Any] | None = None
     # ── 进度与失败记录 ──
     node_status: dict[str, str] = Field(default_factory=dict)
     errors: dict[str, str] = Field(default_factory=dict)

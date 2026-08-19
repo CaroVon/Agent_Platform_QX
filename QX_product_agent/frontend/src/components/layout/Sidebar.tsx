@@ -18,6 +18,7 @@ import {
   LayoutDashboard,
   LayoutTemplate,
   MonitorPlay,
+  Network,
   PenTool,
   Settings,
   Sparkles,
@@ -51,6 +52,7 @@ const NAV_GROUPS: { label: string; items: NavItem[] }[] = [
     items: [
       { to: '/project-assets', label: '项目资产库', icon: Archive },
       { to: '/knowledge', label: 'Knowledge Base', icon: Database },
+      { to: '/memory', label: 'Memory Graph', icon: Network },
       { to: '/templates', label: 'Templates', icon: LayoutTemplate },
       { to: '/settings', label: 'Settings', icon: Settings },
     ],

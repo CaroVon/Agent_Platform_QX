@@ -38,6 +38,22 @@
     /* 深墨蓝侧边栏（Linear 风格，暖调） */
     --sidebar: 208 28% 16%;
     --sidebar-foreground: 40 26% 93%;
+    /* 记忆关系图（知识图）专用令牌：色相从 primary(212°) 调和派生 */
+    --graph-bg: 42 30% 98.5%;
+    --graph-type-company: 212 55% 45%;
+    --graph-type-product: 160 45% 40%;
+    --graph-type-technology: 265 45% 52%;
+    --graph-type-person: 25 70% 48%;
+    --graph-type-market: 340 55% 48%;
+    --graph-type-metric: 190 55% 42%;
+    --graph-type-other: 220 8% 48%;
+    --graph-focus: 212 46% 30%;
+    --graph-focus-ring: 212 70% 55%;
+    --graph-muted: 220 10% 60%;
+    --graph-edge: 220 12% 55%;
+    --graph-edge-focus: 212 50% 45%;
+    --graph-label: 220 22% 13%;
+    --graph-label-bg: 42 30% 97%;
   }
 
   /* 深色模式（vintage 深色） */
@@ -63,6 +79,22 @@
     --ring: 205 40% 55%;
     --sidebar: 220 20% 9%;
     --sidebar-foreground: 40 24% 92%;
+    /* 记忆关系图（暗色：提饱和 + 提亮保证对比度） */
+    --graph-bg: 220 18% 8.5%;
+    --graph-type-company: 205 60% 62%;
+    --graph-type-product: 158 55% 58%;
+    --graph-type-technology: 262 60% 66%;
+    --graph-type-person: 28 75% 62%;
+    --graph-type-market: 338 60% 62%;
+    --graph-type-metric: 190 60% 58%;
+    --graph-type-other: 220 12% 60%;
+    --graph-focus: 205 55% 55%;
+    --graph-focus-ring: 205 80% 65%;
+    --graph-muted: 220 8% 40%;
+    --graph-edge: 220 12% 40%;
+    --graph-edge-focus: 205 55% 55%;
+    --graph-label: 40 24% 92%;
+    --graph-label-bg: 220 15% 12%;
   }
 }
 

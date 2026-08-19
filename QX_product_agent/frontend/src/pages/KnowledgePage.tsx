@@ -7,6 +7,7 @@
  */
 
 import { useEffect, useMemo, useState } from 'react'
+import { Link } from 'react-router-dom'
 import {
   Brain,
   Database,
@@ -430,6 +431,12 @@ export function KnowledgePage() {
                   <span className="text-xs text-muted-foreground">
                     主题向量 + 领域标签 + 模板 加权相似度
                   </span>
+                  <Link
+                    to="/memory"
+                    className="ml-auto flex shrink-0 items-center gap-1.5 rounded-md bg-secondary px-3 py-1.5 text-xs font-medium text-muted-foreground transition-colors hover:text-foreground"
+                  >
+                    🕸️ 查看知识关系图
+                  </Link>
                 </div>
                 {domainLoading ? (
                   <div className="flex items-center justify-center py-8 text-muted-foreground">

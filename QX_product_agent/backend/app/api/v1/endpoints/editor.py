@@ -350,6 +350,19 @@ async def chat_with_editor(body: EditorChatRequest):
             except Exception as e:
                 logger.warning("editor/chat 相似任务经验注入失败: %s", str(e))
 
+        # 🆕 P4: 记忆图注入（跨任务实体/关系/洞察）
+        try:
+            from app.rag.memory_extraction import retrieve_memory_context
+            memory_ctx = retrieve_memory_context(
+                query=body.message,
+                project_id=str(body.project_id) if body.project_id else None,
+                k=10,
+            )
+            if memory_ctx:
+                current_content += f"\n\n{memory_ctx}"
+        except Exception as e:
+            logger.warning("editor/chat 记忆图注入失败: %s", str(e))
+
     messages.append({"role": "user", "content": current_content})
 
     # 3. 实例化 LLM 客户端（开启 streaming）

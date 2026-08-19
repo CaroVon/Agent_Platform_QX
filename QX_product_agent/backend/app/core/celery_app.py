@@ -63,11 +63,20 @@ celery_app.conf.update(
 )
 
 # ─── 周期任务（Celery Beat）──────────────────────────────────────
+_schedule = {}
+
 # Obsidian Vault 同步：仅在配置了 OBSIDIAN_VAULT_PATH 时启用
 if get_settings().OBSIDIAN_VAULT_PATH.strip():
-    celery_app.conf.beat_schedule = {
-        "sync-obsidian-vault": {
-            "task": "knowledge.sync_obsidian_vault",
-            "schedule": get_settings().OBSIDIAN_SYNC_INTERVAL_MIN * 60.0,
-        },
+    _schedule["sync-obsidian-vault"] = {
+        "task": "knowledge.sync_obsidian_vault",
+        "schedule": get_settings().OBSIDIAN_SYNC_INTERVAL_MIN * 60.0,
     }
+
+# P4c: 记忆置信度衰减（每日一次，记忆遗忘机制）
+_schedule["decay-memories"] = {
+    "task": "knowledge.decay_memories",
+    "schedule": 24 * 3600.0,
+}
+
+if _schedule:
+    celery_app.conf.beat_schedule = _schedule

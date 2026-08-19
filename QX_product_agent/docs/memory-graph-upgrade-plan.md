@@ -250,3 +250,40 @@ DELETE /memory/entities/{id}       → 用户删除错误实体（含级联关�
 **检索/架构：**
 - [LightRAG Retrieval 详解（Neo4j 博客）](https://neo4j.com/blog/developer/under-the-covers-with-lightrag-retrieval/)
 - [5 Best Open Source Graph RAG Tools](https://typegraph.ai/blog/best-open-source-graph-rag-tools)
+
+---
+
+## 8. 实施记录（P4 全量落地，2026-08）
+
+> 以下变更已按本文档与 `memory-graph-visual-design.md` 全部实现并通过验证：
+> 后端 75 项 pytest 全绿（含 6 项新增记忆图测试）+ 记忆图端到端冒烟（实体合并/全局提升/邻域检索/生命周期）+ 前端 `tsc -b` 与 `vite build` 通过 + 开发库迁移至 0008。
+
+### 8.1 已交付功能清单
+
+| 阶段 | 功能 | 落地位置 |
+|------|------|----------|
+| P4a | 记忆图三表（实体/关系/洞察，含时间窗与置信度）+ Alembic 0007 | `models/memory_{entity,relation,insight}.py`、`alembic/versions/0007_memory_graph.py` |
+| P4a | LLM 抽取（实体/关系/洞察结构化 JSON）→ 归一化 → 同名/向量合并（>0.92）→ 入库 | `app/rag/memory_extraction.py::extract_memory_from_project` |
+| P4a | 记忆向量化（scope=memory 独立向量库）+ 邻域检索（向量命中→1 跳展开→关联洞察） | `_vectorize_entities`、`retrieve_memory_context` |
+| P4a | /memory API 五端点（graph/entities/{id}/insights/rebuild/delete） | `backend/app/api/v1/endpoints/memory.py` |
+| P4a | 检索融合：editor/chat 注入记忆图上下文；任务完成自动触发沉淀 | `editor.py`、`report_workflow.py` 钩子 |
+| P4c | 全局提升（同名跨 ≥2 项目 → global 实体 + 关系复制 + 洞察提升） | `promote_global_memories` |
+| P4c | 置信度衰减（30 天未引用 -0.05，下限 0.3，每日 Celery Beat）；项目删除级联；实体删除纠错 | `decay_memories`、`delete_project_memories`、`delete_entity_cascade` |
+| P4b | --graph-* 设计令牌（亮/暗）+ 主题桥接 + 实体图标注册表 | `globals.css`、`graph/graphTheme.ts`、`graph/graphIcons.tsx` |
+| P4b | ECharts 关系图（力导/类型色/度数尺寸/置信度描边/新鲜度透明度/平行边曲率/过期虚线/LOD 标签/PNG 导出） | `graph/graphOptions.ts`、`graph/GraphCanvas.tsx` |
+| P4b | MemoryPage（scope 切换/搜索聚焦/类型筛选/统计条/洞察面板/重建）+ Sidebar 入口 + 路由 | `pages/MemoryPage.tsx`、`Sidebar.tsx`、`App.tsx` |
+| P4b | 实体详情侧栏（邻域/洞察/证据/纠错删除） | `graph/GraphSidebar.tsx` |
+
+### 8.2 迁移链（含既有迁移重排）
+
+```
+0001 → 24f2c9f525d7 → 0003 → 0004 → 0005 → 0006(knowledge) → 0007(memory graph) → 0008(studio keywords)
+```
+> 注：先前会话的 `0007_studio_product_keywords` 与记忆图迁移撞号，已重排为 0008（down_revision=0007）。
+
+### 8.3 验证标准达成情况
+
+1. ✅ 完成任务 → /memory/graph 出现实体/关系/洞察（pytest + 冒烟验证）
+2. ✅ 相似任务 → 全局视图出现跨项目合并实体（`test_memory_graph_global_promotion`）
+3. ✅ editor/chat 回答可引用记忆图证据（`retrieve_memory_context` 注入链路）
+4. ✅ 前端关系图交互（点击高亮/搜索/scope 切换/导出 PNG）

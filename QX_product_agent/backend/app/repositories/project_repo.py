@@ -17,7 +17,7 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import select, delete
 from sqlalchemy.orm import Session
 
 from app.core.config import get_settings
@@ -30,6 +30,9 @@ from app.models.project_log import ProjectLog, LogLevel
 from app.models.project_image import ProjectImage
 from app.models.knowledge_asset import KnowledgeAsset
 from app.models.domain_experience import DomainExperience
+from app.models.memory_entity import MemoryEntity
+from app.models.memory_relation import MemoryRelation
+from app.models.memory_insight import MemoryInsight
 
 logger = logging.getLogger(__name__)
 
@@ -663,3 +666,432 @@ class ProjectRepo:
             )
             session.add(log_entry)
             session.commit()
+
+    # ══════════════════════════════════════════════════════════
+    # 🆕 记忆图（P4）：实体 / 关系 / 洞察
+    # ══════════════════════════════════════════════════════════
+
+    # ── 实体 ─────────────────────────────────────────────────
+
+    def save_memory_entity(
+        self,
+        scope: str,
+        name: str,
+        type: str = "other",
+        summary: str | None = None,
+        project_id: str | None = None,
+        confidence: float = 0.6,
+        first_seen=None,
+        last_seen=None,
+    ) -> MemoryEntity:
+        """新建记忆实体。"""
+        with Session(self._engine) as session:
+            entity = MemoryEntity(
+                scope=scope,
+                project_id=uuid.UUID(project_id) if project_id else None,
+                type=type,
+                name=name,
+                summary=summary,
+                confidence=confidence,
+                first_seen_at=first_seen,
+                last_seen_at=last_seen,
+            )
+            session.add(entity)
+            session.commit()
+            session.refresh(entity)
+            session.expunge(entity)
+            return entity
+
+    def get_entity(self, entity_id: str) -> MemoryEntity | None:
+        with Session(self._engine) as session:
+            entity = session.execute(
+                select(MemoryEntity).where(MemoryEntity.id == uuid.UUID(entity_id))
+            ).scalar_one_or_none()
+            if entity is None:
+                return None
+            session.expunge(entity)
+            return entity
+
+    def find_project_entity(self, project_id: str, name: str) -> MemoryEntity | None:
+        with Session(self._engine) as session:
+            entity = session.execute(
+                select(MemoryEntity).where(
+                    MemoryEntity.scope == "project",
+                    MemoryEntity.project_id == uuid.UUID(project_id),
+                    MemoryEntity.name == name,
+                )
+            ).scalar_one_or_none()
+            if entity is None:
+                return None
+            session.expunge(entity)
+            return entity
+
+    def find_global_entity(self, name: str) -> MemoryEntity | None:
+        with Session(self._engine) as session:
+            entity = session.execute(
+                select(MemoryEntity).where(
+                    MemoryEntity.scope == "global",
+                    MemoryEntity.name == name,
+                )
+            ).scalar_one_or_none()
+            if entity is None:
+                return None
+            session.expunge(entity)
+            return entity
+
+    def list_project_entities(self, project_id: str) -> list[MemoryEntity]:
+        with Session(self._engine) as session:
+            rows = session.execute(
+                select(MemoryEntity).where(
+                    MemoryEntity.scope == "project",
+                    MemoryEntity.project_id == uuid.UUID(project_id),
+                )
+            ).scalars().all()
+            for e in rows:
+                session.expunge(e)
+            return list(rows)
+
+    def list_global_entities(self) -> list[MemoryEntity]:
+        with Session(self._engine) as session:
+            rows = session.execute(
+                select(MemoryEntity).where(MemoryEntity.scope == "global")
+            ).scalars().all()
+            for e in rows:
+                session.expunge(e)
+            return list(rows)
+
+    def count_entity_by_name_across_projects(self, name: str, exclude_project: str) -> int:
+        """统计同名词实体出现在多少个不同项目（全局提升用）。"""
+        with Session(self._engine) as session:
+            rows = session.execute(
+                select(MemoryEntity.project_id).where(
+                    MemoryEntity.scope == "project",
+                    MemoryEntity.name == name,
+                    MemoryEntity.project_id.is_not(None),
+                    MemoryEntity.project_id != uuid.UUID(exclude_project),
+                )
+            ).all()
+            return len({r[0] for r in rows})
+
+    def search_entities_by_keyword(
+        self, query: str, scope: str = "project",
+        project_id: str | None = None, limit: int = 5,
+    ) -> list[MemoryEntity]:
+        """实体名/别名关键词检索（向量检索兜底）。"""
+        kw = f"%{query}%"
+        with Session(self._engine) as session:
+            stmt = select(MemoryEntity).where(
+                MemoryEntity.scope == scope,
+                MemoryEntity.name.ilike(kw),
+            )
+            if project_id:
+                stmt = stmt.where(MemoryEntity.project_id == uuid.UUID(project_id))
+            rows = session.execute(stmt.order_by(MemoryEntity.confidence.desc()).limit(limit)).scalars().all()
+            for e in rows:
+                session.expunge(e)
+            return list(rows)
+
+    def list_memory_entities(
+        self,
+        scope: str = "global",
+        project_id: str | None = None,
+        q: str | None = None,
+        entity_types: list[str] | None = None,
+        min_confidence: float = 0.0,
+    ) -> list[MemoryEntity]:
+        """关系图节点查询（支持关键词/类型/置信度过滤）。"""
+        with Session(self._engine) as session:
+            stmt = select(MemoryEntity).where(MemoryEntity.scope == scope)
+            if project_id:
+                stmt = stmt.where(MemoryEntity.project_id == uuid.UUID(project_id))
+            if q:
+                stmt = stmt.where(MemoryEntity.name.ilike(f"%{q}%"))
+            if entity_types:
+                stmt = stmt.where(MemoryEntity.type.in_(entity_types))
+            if min_confidence > 0:
+                stmt = stmt.where(MemoryEntity.confidence >= min_confidence)
+            rows = session.execute(stmt.order_by(MemoryEntity.confidence.desc())).scalars().all()
+            for e in rows:
+                session.expunge(e)
+            return list(rows)
+
+    def update_entity_merge(
+        self,
+        entity_id: str,
+        new_alias: str | None = None,
+        new_summary: str | None = None,
+        confidence_delta: float = 0.0,
+        last_seen=None,
+    ) -> None:
+        """实体合并更新：追加别名/摘要、置信度上调、刷新 seen 时间。"""
+        with Session(self._engine) as session:
+            entity = session.execute(
+                select(MemoryEntity).where(MemoryEntity.id == uuid.UUID(entity_id))
+            ).scalar_one_or_none()
+            if entity is None:
+                return
+            if new_alias and new_alias != entity.name:
+                aliases = json.loads(entity.aliases) if entity.aliases else []
+                if new_alias not in aliases:
+                    aliases.append(new_alias)
+                entity.aliases = json.dumps(aliases, ensure_ascii=False)[:2000]
+            if new_summary:
+                # 摘要合并：取更长的（信息更全）
+                if not entity.summary or len(new_summary) > len(entity.summary):
+                    entity.summary = new_summary[:500]
+            if confidence_delta:
+                entity.confidence = min(0.95, (entity.confidence or 0.6) + confidence_delta)
+            if last_seen is not None:
+                entity.last_seen_at = last_seen
+            session.commit()
+
+    def decay_stale_entities(self, cutoff, step: float, floor: float) -> int:
+        """对 last_seen 早于 cutoff 的实体做置信度衰减。"""
+        with Session(self._engine) as session:
+            rows = session.execute(
+                select(MemoryEntity).where(
+                    MemoryEntity.last_seen_at.is_not(None),
+                    MemoryEntity.last_seen_at < cutoff,
+                    MemoryEntity.confidence > floor,
+                )
+            ).scalars().all()
+            for e in rows:
+                e.confidence = max(floor, (e.confidence or 0.6) - step)
+            session.commit()
+            return len(rows)
+
+    def delete_entities_with_relations(self, entity_ids: list[str]) -> None:
+        """级联删除实体及其全部关系。"""
+        if not entity_ids:
+            return
+        ids = [uuid.UUID(e) for e in entity_ids]
+        with Session(self._engine) as session:
+            session.execute(
+                delete(MemoryRelation).where(
+                    MemoryRelation.source_entity_id.in_(ids)
+                )
+            )
+            session.execute(
+                delete(MemoryRelation).where(
+                    MemoryRelation.target_entity_id.in_(ids)
+                )
+            )
+            session.execute(delete(MemoryEntity).where(MemoryEntity.id.in_(ids)))
+            session.commit()
+
+    # ── 关系 ─────────────────────────────────────────────────
+
+    def save_memory_relation(
+        self,
+        source_id: str,
+        target_id: str,
+        relation_type: str,
+        evidence: str | None = None,
+        weight: float = 1.0,
+        valid_from=None,
+    ) -> MemoryRelation:
+        with Session(self._engine) as session:
+            rel = MemoryRelation(
+                source_entity_id=uuid.UUID(source_id),
+                target_entity_id=uuid.UUID(target_id),
+                relation_type=relation_type,
+                evidence=evidence,
+                weight=weight,
+                valid_from=valid_from,
+            )
+            session.add(rel)
+            session.commit()
+            session.refresh(rel)
+            session.expunge(rel)
+            return rel
+
+    def find_relation(
+        self, source_id: str, target_id: str, relation_type: str,
+        active_only: bool = True,
+    ) -> MemoryRelation | None:
+        with Session(self._engine) as session:
+            stmt = select(MemoryRelation).where(
+                MemoryRelation.source_entity_id == uuid.UUID(source_id),
+                MemoryRelation.target_entity_id == uuid.UUID(target_id),
+                MemoryRelation.relation_type == relation_type,
+            )
+            if active_only:
+                stmt = stmt.where(MemoryRelation.valid_to.is_(None))
+            rel = session.execute(stmt.order_by(MemoryRelation.created_at.desc())).scalars().first()
+            if rel is None:
+                return None
+            session.expunge(rel)
+            return rel
+
+    def update_relation_weight(
+        self, relation_id: str, weight: float, evidence: str | None = None,
+    ) -> None:
+        with Session(self._engine) as session:
+            rel = session.execute(
+                select(MemoryRelation).where(MemoryRelation.id == uuid.UUID(relation_id))
+            ).scalar_one_or_none()
+            if rel is None:
+                return
+            rel.weight = weight
+            if evidence:
+                rel.evidence = evidence
+            session.commit()
+
+    def expire_relation(self, relation_id: str, valid_to) -> None:
+        with Session(self._engine) as session:
+            rel = session.execute(
+                select(MemoryRelation).where(MemoryRelation.id == uuid.UUID(relation_id))
+            ).scalar_one_or_none()
+            if rel is None:
+                return
+            rel.valid_to = valid_to
+            session.commit()
+
+    def list_relations_for_entity(
+        self, entity_id: str, active_only: bool = True, limit: int = 50,
+    ) -> list[MemoryRelation]:
+        with Session(self._engine) as session:
+            stmt = select(MemoryRelation).where(
+                (MemoryRelation.source_entity_id == uuid.UUID(entity_id))
+                | (MemoryRelation.target_entity_id == uuid.UUID(entity_id))
+            )
+            if active_only:
+                stmt = stmt.where(MemoryRelation.valid_to.is_(None))
+            rows = session.execute(stmt.order_by(MemoryRelation.weight.desc()).limit(limit)).scalars().all()
+            for r in rows:
+                session.expunge(r)
+            return list(rows)
+
+    def list_relations_between(
+        self, entity_ids: set[str], active_only: bool = True, limit: int = 3000,
+    ) -> list[MemoryRelation]:
+        if not entity_ids:
+            return []
+        ids = [uuid.UUID(e) for e in entity_ids]
+        with Session(self._engine) as session:
+            stmt = select(MemoryRelation).where(
+                MemoryRelation.source_entity_id.in_(ids),
+                MemoryRelation.target_entity_id.in_(ids),
+            )
+            if active_only:
+                stmt = stmt.where(MemoryRelation.valid_to.is_(None))
+            rows = session.execute(stmt.order_by(MemoryRelation.weight.desc()).limit(limit)).scalars().all()
+            for r in rows:
+                session.expunge(r)
+            return list(rows)
+
+    # ── 洞察 ─────────────────────────────────────────────────
+
+    def save_memory_insight(
+        self,
+        scope: str,
+        content: str,
+        project_id: str | None = None,
+        entity_ids: list[str] | None = None,
+        source: str = "task_summary",
+        source_url: str | None = None,
+        confidence: float = 0.7,
+    ) -> MemoryInsight:
+        with Session(self._engine) as session:
+            insight = MemoryInsight(
+                scope=scope,
+                project_id=uuid.UUID(project_id) if project_id else None,
+                content=content,
+                entity_ids=json.dumps(entity_ids or [], ensure_ascii=False),
+                source=source,
+                source_url=source_url,
+                confidence=confidence,
+            )
+            session.add(insight)
+            session.commit()
+            session.refresh(insight)
+            session.expunge(insight)
+            return insight
+
+    def list_insights(
+        self, scope: str = "project", project_id: str | None = None, limit: int = 50,
+    ) -> list[MemoryInsight]:
+        with Session(self._engine) as session:
+            stmt = select(MemoryInsight).where(MemoryInsight.scope == scope)
+            if project_id:
+                stmt = stmt.where(MemoryInsight.project_id == uuid.UUID(project_id))
+            rows = session.execute(stmt.order_by(MemoryInsight.created_at.desc()).limit(limit)).scalars().all()
+            for i in rows:
+                session.expunge(i)
+            return list(rows)
+
+    def list_insights_by_entity_ids(self, entity_ids: list[str], limit: int = 10) -> list[MemoryInsight]:
+        """召回链接了指定实体的洞察（entity_ids JSON 包含匹配）。"""
+        if not entity_ids:
+            return []
+        with Session(self._engine) as session:
+            rows = session.execute(
+                select(MemoryInsight).order_by(MemoryInsight.created_at.desc()).limit(200)
+            ).scalars().all()
+            matched = []
+            for i in rows:
+                try:
+                    linked = json.loads(i.entity_ids) if i.entity_ids else []
+                except (json.JSONDecodeError, TypeError):
+                    continue
+                if any(eid in linked for eid in entity_ids):
+                    matched.append(i)
+                    if len(matched) >= limit:
+                        break
+            for i in matched:
+                session.expunge(i)
+            return matched
+
+    def find_global_insight_by_content(self, content: str) -> MemoryInsight | None:
+        with Session(self._engine) as session:
+            insight = session.execute(
+                select(MemoryInsight).where(
+                    MemoryInsight.scope == "global",
+                    MemoryInsight.content == content,
+                )
+            ).scalar_one_or_none()
+            if insight is None:
+                return None
+            session.expunge(insight)
+            return insight
+
+    def delete_insights_by_project(self, project_id: str, scope: str | None = None) -> None:
+        with Session(self._engine) as session:
+            stmt = delete(MemoryInsight).where(
+                MemoryInsight.project_id == uuid.UUID(project_id)
+            )
+            if scope:
+                stmt = stmt.where(MemoryInsight.scope == scope)
+            session.execute(stmt)
+            session.commit()
+
+    # ── 知识库图片（记忆抽取语料） ───────────────────────────
+
+    def list_kb_images(self, project_id: str, limit: int = 20) -> list[ProjectImage]:
+        """列出项目知识库图片（含 VL 分析文本，供记忆抽取）。"""
+        with Session(self._engine) as session:
+            rows = session.execute(
+                select(ProjectImage)
+                .where(
+                    ProjectImage.project_id == uuid.UUID(project_id),
+                    ProjectImage.source == "upload",
+                )
+                .order_by(ProjectImage.created_at.desc())
+                .limit(limit)
+            ).scalars().all()
+            for i in rows:
+                session.expunge(i)
+            return list(rows)
+
+    def get_entities_by_ids(self, entity_ids: list[str]) -> list[MemoryEntity]:
+        """按 ID 批量取实体（全局图邻接节点加载）。"""
+        if not entity_ids:
+            return []
+        ids = [uuid.UUID(e) for e in entity_ids]
+        with Session(self._engine) as session:
+            rows = session.execute(
+                select(MemoryEntity).where(MemoryEntity.id.in_(ids))
+            ).scalars().all()
+            for e in rows:
+                session.expunge(e)
+            return list(rows)

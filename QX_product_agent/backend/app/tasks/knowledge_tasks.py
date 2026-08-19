@@ -6,6 +6,9 @@
      knowledge.analyze_image          图片 VL 分析入库
      knowledge.summarize_experience   任务完成经验包抽取
      knowledge.sync_obsidian_vault    Obsidian 笔记同步入库
+   新增（P4）：
+     knowledge.build_memory_graph     任务完成记忆图沉淀（实体/关系/洞察）
+     knowledge.decay_memories         记忆置信度衰减（周期任务）
 ============================================================
 """
 
@@ -390,3 +393,51 @@ def _parse_vault_note(full_path: str, rel_path: str) -> tuple[str, list[str], st
             raw = body
 
     return raw, tags[:20], title
+
+
+# ══════════════════════════════════════════════════════════════
+# P4: 任务完成 → 记忆图沉淀（实体/关系/洞察 + 全局提升）
+# ══════════════════════════════════════════════════════════════
+
+@celery_app.task(
+    bind=True,
+    base=KnowledgeTask,
+    name="knowledge.build_memory_graph",
+    max_retries=1,
+    default_retry_delay=30,
+    acks_late=True,
+)
+def build_memory_graph(self: KnowledgeTask, project_id: str) -> dict[str, Any]:
+    """
+    任务完成后的记忆图沉淀（P4a）：
+      LLM 抽取实体/关系/洞察 → 归一化合并 → 项目记忆入库
+      → 记忆向量化 → 跨项目全局提升
+    失败不阻断主流程（增强型任务）。
+    """
+    logger.info("[TASK] 记忆图沉淀开始 | project_id=%s", project_id)
+    from app.rag.memory_extraction import extract_memory_from_project
+    result = extract_memory_from_project(project_id)
+    if result is None:
+        logger.info("[TASK] 记忆图沉淀跳过（项目未完成或无语料） | project_id=%s", project_id)
+        return {"project_id": project_id, "status": "skipped"}
+    logger.info("[TASK] 记忆图沉淀完成 | project_id=%s | %s", project_id, result)
+    return {"project_id": project_id, "status": "completed", **result}
+
+
+# ══════════════════════════════════════════════════════════════
+# P4c: 记忆置信度衰减（周期任务）
+# ══════════════════════════════════════════════════════════════
+
+@celery_app.task(
+    bind=True,
+    base=KnowledgeTask,
+    name="knowledge.decay_memories",
+    max_retries=1,
+    default_retry_delay=60,
+    acks_late=True,
+)
+def decay_memories(self: KnowledgeTask) -> dict[str, Any]:
+    """长期未引用的记忆实体置信度衰减（记忆遗忘机制）。"""
+    from app.rag.memory_extraction import decay_memories as _decay
+    count = _decay()
+    return {"status": "completed", "decayed": count}

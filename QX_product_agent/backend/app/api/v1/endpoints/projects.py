@@ -1092,6 +1092,12 @@ async def delete_project(
     await db.execute(delete(DocumentBlock).where(DocumentBlock.project_id == project_id))
     await db.execute(delete(Document).where(Document.project_id == project_id))
     await db.execute(delete(ProjectLog).where(ProjectLog.project_id == project_id))
+    # 记忆图级联清理（P4c：项目实体/洞察；全局实体保留）
+    try:
+        from app.rag.memory_extraction import delete_project_memories
+        delete_project_memories(str(project_id))
+    except Exception as e:
+        logger.warning("项目记忆清理失败（忽略）: %s", e)
 
     # ── 2. 清理磁盘文件 ──────────────────────────────────────────
     settings = get_settings()

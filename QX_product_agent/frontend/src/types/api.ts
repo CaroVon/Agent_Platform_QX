@@ -468,3 +468,90 @@ export interface DomainExperienceListResponse {
   total: number
   experiences: DomainExperience[]
 }
+
+// ─── 🆕 记忆系统 (P4)：记忆图 / 实体 / 洞察 ─────────────────────
+
+export type MemoryEntityType =
+  | 'company'
+  | 'product'
+  | 'technology'
+  | 'person'
+  | 'market'
+  | 'metric'
+  | 'other'
+
+export interface MemoryGraphNode {
+  id: string
+  name: string
+  type: MemoryEntityType
+  summary: string
+  scope: 'global' | 'project'
+  confidence: number
+  degree: number
+  /** 搜索命中焦点（前端高亮邻域） */
+  focused: boolean
+  last_seen_at: string | null
+  aliases: string[]
+}
+
+export interface MemoryGraphEdge {
+  source: string
+  target: string
+  relation: string
+  weight: number
+  /** 过期关系（前端虚线渲染） */
+  expired: boolean
+}
+
+export interface MemoryGraphResponse {
+  scope: 'global' | 'project'
+  project_id: string | null
+  query: string
+  nodes: MemoryGraphNode[]
+  edges: MemoryGraphEdge[]
+  meta: {
+    entity_count: number
+    relation_count: number
+    truncated: boolean
+    limit: number
+    projects_covered: number
+  }
+}
+
+export interface MemoryRelationItem {
+  relation_id: string
+  relation: string
+  weight: number
+  expired: boolean
+  direction: 'out' | 'in'
+  other: { id: string; name: string; type: MemoryEntityType }
+  evidence: { project_id?: string; at?: string }[]
+}
+
+export interface MemoryInsightItem {
+  id: string
+  content: string
+  source: string
+  confidence: number
+  created_at: string | null
+}
+
+export interface MemoryEntityDetail {
+  id: string
+  name: string
+  type: MemoryEntityType
+  scope: 'global' | 'project'
+  summary: string
+  aliases: string[]
+  confidence: number
+  first_seen_at: string | null
+  last_seen_at: string | null
+  project_id: string | null
+  relations: MemoryRelationItem[]
+  insights: MemoryInsightItem[]
+}
+
+export interface MemoryInsightsResponse {
+  total: number
+  insights: MemoryInsightItem[]
+}

@@ -1,5 +1,5 @@
 """
-数据模型层 —— 项目 | 任务 | 文档 | 文档块 | 用户 | 知识资产
+数据模型层 —— 项目 | 任务 | 文档 | 文档块 | 用户 | 知识资产 | 记忆图
 """
 from app.models.base import Base, orm_to_dict
 from app.models.project import Project, ProjectStatus
@@ -11,6 +11,9 @@ from app.models.project_log import ProjectLog, LogLevel
 from app.models.project_image import ProjectImage
 from app.models.knowledge_asset import KnowledgeAsset
 from app.models.domain_experience import DomainExperience
+from app.models.memory_entity import MemoryEntity
+from app.models.memory_relation import MemoryRelation
+from app.models.memory_insight import MemoryInsight
 from app.models.studio_product import StudioProduct, StudioProductStatus
 
 __all__ = [
@@ -23,6 +26,9 @@ __all__ = [
     "ProjectImage",
     "KnowledgeAsset",
     "DomainExperience",
+    "MemoryEntity",
+    "MemoryRelation",
+    "MemoryInsight",
     "StudioProduct", "StudioProductStatus",
     "User",
 ]

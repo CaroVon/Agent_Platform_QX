@@ -580,13 +580,23 @@ def _uploaded_images(product_id: str) -> list[dict]:
 
 def _ppt_entry(product_id: str, package: dict) -> dict | None:
     """ppt-master 原生 PPTX（现有模式产物），失败时按磁盘对账恢复。"""
-    from app.services.ppt_asset_recovery import build_svg_preview_urls, match_asset_for_product
+    from app.services.ppt_asset_recovery import (
+        build_svg_preview_urls,
+        latest_pptx,
+        match_asset_for_product,
+    )
 
     product_id = _canonical_id(product_id)
     output_dir = Path(get_settings().OUTPUT_DIR).resolve()
     ppt = package.get("ppt_design") or {}
     rel = ppt.get("pptx_relative")
     path = output_dir / rel if rel else None
+    if path and path.is_file():
+        # 重试会在同一工程目录留下多个 PPTX；资产包必须引用最新导出。
+        current = latest_pptx(path.parent.parent)
+        if current:
+            path = current
+            rel = str(current.relative_to(output_dir))
     if not (rel and path and path.is_file()):
         recovered = match_asset_for_product(
             product_id,
@@ -628,8 +638,14 @@ def _text_deliverables(product_id: str) -> list[dict]:
     for f in sorted(dir_path.iterdir()):
         if not f.is_file() or f.suffix.lower() not in (".md", ".pdf"):
             continue
-        entries.append(_entry(f"studio_assets/{product_id}/{f.name}", "doc", CATEGORY_DOC,
-                              generated=True))
+        relative = f"studio_assets/{product_id}/{f.name}"
+        entries.append(_entry(
+            relative,
+            "doc",
+            CATEGORY_DOC,
+            generated=True,
+            preview_url=_files_url(relative) if f.suffix.lower() == ".pdf" else None,
+        ))
     return entries
 
 

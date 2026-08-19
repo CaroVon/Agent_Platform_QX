@@ -288,3 +288,16 @@ frontend/src/pages/MemoryPage.tsx  // 页面组装：搜索/筛选/scope/画布/
 - [obsidian-3d-graph（Obsidian 3D 图插件）](https://github.com/Apoo711/obsidian-3d-graph)
 - [ColorBrewer 2.0（定性色板设计）](https://colorbrewer2.org/)
 - [Color Oracle（色盲模拟校验）](https://colororacle.org/)
+
+---
+
+## 15. 实施记录（2026-08）
+
+本文档 M1-M4 已随 P4 一并落地（`pages/MemoryPage.tsx` + `components/graph/` 六件套）：
+
+- M1 ✅ `--graph-*` 令牌（亮/暗双主题，色相派生自 primary）＋ `graphTheme.ts` 主题桥接（MutationObserver 热切换）
+- M2 ✅ `GraphCanvas.tsx`（实例/resize/主题重建/LOD/点击回调）+ `graphOptions.ts`（力导 220/0.08/0.6、类型色+图标、度数√离散尺寸、置信度描边、新鲜度透明度、平行边曲率 ±0.15 交替、有向箭头、过期虚线、三级高亮 adjacency）
+- M3 ✅ `useGraphData.ts`（scope/项目/搜索/类型筛选/重建）+ `graphIcons.tsx`（lucide SVG data-URL 缓存）
+- M4 ✅ `MemoryPage.tsx` 组装（工具栏/统计条/画布/图例/洞察面板/PNG 导出）+ `GraphSidebar.tsx`（详情/邻域/洞察/证据/纠错删除）+ Sidebar 入口 + 懒加载路由
+- M5 ⏳ 社区着色与后端聚合（>3000 节点场景）留待 P4d（当前 limit=400 截断提示已实现）
+- M6 ⏳ 时间轴重放与 3D 演示模式留待 P4d（可选）
