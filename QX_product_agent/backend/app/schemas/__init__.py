@@ -538,5 +538,7 @@ from app.schemas.studio import (
     ProductImageResult,
     ProductImageSearchRequest,
     ProductImageSearchResponse,
+    ProductKeywordsUpdateRequest,
+    ProductKeywordsUpdateResponse,
     ProductListResponse,
 )

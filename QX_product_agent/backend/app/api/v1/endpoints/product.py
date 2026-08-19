@@ -19,8 +19,11 @@ import logging
 import os
 import uuid
 from pathlib import Path
+from typing import Literal
 
+from pydantic import BaseModel, Field
 from fastapi import APIRouter, Depends, File, Header, HTTPException, Query, Response, UploadFile
+from fastapi.responses import StreamingResponse
 from sqlalchemy import or_, select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.exc import IntegrityError
@@ -39,8 +42,11 @@ from app.schemas import (
     ProductImageSearchRequest,
     ProductImageSearchResponse,
     ProductImageResult,
+    ProductKeywordsUpdateRequest,
+    ProductKeywordsUpdateResponse,
     ProductListResponse,
 )
+from app.llm.prompts import PRODUCT_CLARIFY_SYSTEM as _CLARIFY_SYSTEM
 from app.services.ppt_asset_recovery import (
     build_ppt_asset_index,
     build_svg_preview_urls,
@@ -62,6 +68,23 @@ _ASSET_KEYS = (
     "presentation",
     "ppt_design",
 )
+
+
+def _parse_keywords(raw: str | None) -> dict[str, list[str]] | None:
+    """解析 keywords 列 JSON（方面 → 关键词列表）；非法/空返回 None。"""
+    if not raw:
+        return None
+    try:
+        data = json.loads(raw)
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(data, dict):
+        return None
+    return {
+        str(k): [str(w) for w in v if isinstance(w, str)]
+        for k, v in data.items()
+        if isinstance(v, list)
+    }
 
 
 def _to_asset_response(product: StudioProduct) -> ProductAssetResponse:
@@ -89,6 +112,8 @@ def _to_asset_response(product: StudioProduct) -> ProductAssetResponse:
         "errors": meta.get("errors") or {},
         "critic_score": package.get("critic_score"),
         "gate_report": package.get("gate_report"),
+        # Key Words：独立列优先（用户编辑后的最新值），缺失时回退资产包内记录
+        "keywords": _parse_keywords(product.keywords) or package.get("keywords"),
     }
     for key in _ASSET_KEYS:
         base[key] = package.get(key)
@@ -308,6 +333,7 @@ async def list_products(
             idea=p.idea,
             status=p.status.value,
             created_at=p.created_at.isoformat() if p.created_at else None,
+            keywords=_parse_keywords(p.keywords),
         )
         for p in products
     ]
@@ -495,6 +521,53 @@ async def update_presentation(
     product.asset_package = json.dumps(package, ensure_ascii=False)
     await db.commit()
     return {"detail": "演示已更新"}
+
+
+# ================================================================
+# Key Words —— 产品关键词组（任务完成后 AI 总结，用户可编辑）
+# ================================================================
+
+@router.put("/{product_id}/keywords", response_model=ProductKeywordsUpdateResponse)
+async def update_product_keywords(
+    product_id: uuid.UUID,
+    body: ProductKeywordsUpdateRequest,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """整体替换产品的关键词组（用户编辑入口）。
+
+    keywords 同时写入独立列（studio_products.keywords）与资产包
+    （asset_package.keywords），作为产品资产的一部分随详情接口返回。
+    """
+    product = await db.get(StudioProduct, product_id)
+    if product is None:
+        raise HTTPException(status_code=404, detail="产品不存在")
+    if product.owner_id is not None and product.owner_id != user.id:
+        raise HTTPException(status_code=403, detail="无权访问该产品")
+
+    from app.services.product_keywords import KEYWORD_GROUPS, _normalize_keywords
+
+    groups = _normalize_keywords(body.keywords)
+    # 未知分组键不丢弃：保留原样（防御前端扩展），但统一为字符串列表
+    for key, values in body.keywords.items():
+        if key not in groups and isinstance(values, list):
+            groups[key] = [str(v).strip() for v in values if str(v).strip()]
+
+    product.keywords = json.dumps(groups, ensure_ascii=False)
+    if product.asset_package:
+        try:
+            package = json.loads(product.asset_package)
+        except json.JSONDecodeError:
+            package = {}
+        package["keywords"] = groups
+        product.asset_package = json.dumps(package, ensure_ascii=False, default=str)
+    await db.commit()
+    logger.info("[Product Keywords] 用户编辑保存 | product=%s | 组数=%d",
+                product_id, len(groups))
+    return ProductKeywordsUpdateResponse(
+        product_id=str(product.id),
+        keywords=groups,
+    )
 
 
 @router.get("/{product_id}/assets")
@@ -1073,3 +1146,160 @@ async def upload_product_source(
         product.asset_package = json.dumps(package, ensure_ascii=False)
         await db.commit()
     return {"product_id": str(product.id), "source": source_entry, "total": len(sources)}
+
+
+# ================================================================
+# 需求澄清对话（Workspace 对话式输入）—— SSE 流式
+# ================================================================
+
+class ClarifyMessage(BaseModel):
+    role: Literal["user", "assistant"] = "user"
+    content: str
+
+
+class ClarifyRequest(BaseModel):
+    idea: str = Field(default="", max_length=500, description="初始产品想法（可空，从对话开始）")
+    messages: list[ClarifyMessage] = Field(default_factory=list, description="历史对话")
+    max_rounds: int = Field(default=4, ge=1, le=8, description="澄清轮数上限")
+
+
+# 维度覆盖关键词（规则判断，供 event: meta 信号）
+_DIM_KEYWORDS = {
+    "target_users": ["用户", "人群", "老人", "老年", "青年", "z世代", "白领", "家长", "学生",
+                     "企业", "团队", "个人", "宝妈", "宠物主", "健身", "患者", "医生", "上班族",
+                     "kids", "adult", "user", "customer"],
+    "scenario": ["场景", "日常", "家里", "家中", "户外", "医院", "健身房", "通勤", "办公室",
+                 "睡前", "早上", "晚上", "旅行", "露营", "厨房", "客厅", "卧室", "车里", "出行"],
+    "features": ["功能", "可以", "能够", "需要", "支持", "提醒", "监测", "管理", "检测", "记录",
+                 "联动", "控制", "分析", "报告", "支付", "预警", "远程", "自动", "识别", "追踪",
+                 "feature", "support", "track"],
+    "constraints": ["预算", "成本", "价格", "合规", "认证", "技术", "电池", "续航", "尺寸",
+                    "平台", "隐私", "安全", "法规", "医疗", "审批", "网络", "离线", "免费",
+                    "budget", "cost", "price", "privacy", "regulation"],
+}
+
+
+def _dimensions_covered(messages: list[ClarifyMessage], idea: str = "") -> dict:
+    """规则判断 4 维度覆盖情况（用户消息 + 初始 idea 中命中关键词即覆盖）。"""
+    covered = {k: False for k in _DIM_KEYWORDS}
+    user_texts = [idea] + [m.content for m in messages if m.role == "user"]
+    for text in user_texts:
+        text = (text or "").lower()
+        for dim, kws in _DIM_KEYWORDS.items():
+            if covered[dim]:
+                continue
+            if any(k in text for k in kws):
+                covered[dim] = True
+    return covered
+
+
+@router.post("/clarify")
+async def clarify_product_idea(body: ClarifyRequest):
+    """需求澄清对话（SSE）。
+
+    事件：
+      event: content  →  {text}            流式回复
+      event: meta     →  {dimensions, enough, rounds_used}  维度覆盖信号
+      event: done     →  {finish_reason}
+    """
+    from langchain_openai import ChatOpenAI
+
+    settings = get_settings()
+    if not settings.DEEPSEEK_API_KEY:
+        raise HTTPException(status_code=503, detail="LLM API Key 未配置")
+
+    messages: list[dict] = [{"role": "system", "content": _CLARIFY_SYSTEM}]
+    if body.idea.strip():
+        messages.append({"role": "user", "content": f"我的产品想法是：{body.idea.strip()}"})
+    for m in body.messages:
+        messages.append({"role": m.role, "content": m.content})
+
+    llm = ChatOpenAI(
+        api_key=settings.DEEPSEEK_API_KEY,
+        base_url=settings.DEEPSEEK_BASE_URL,
+        model=settings.DEEPSEEK_MODEL,
+        temperature=0.5,
+        streaming=True,
+    )
+
+    def _dim_signals() -> dict:
+        covered = _dimensions_covered(body.messages, body.idea)
+        user_rounds = sum(1 for m in body.messages if m.role == "user")
+        enough = all(covered.values()) or user_rounds >= body.max_rounds
+        return {
+            "dimensions": covered,
+            "enough": enough,
+            "rounds_used": user_rounds,
+            "max_rounds": body.max_rounds,
+        }
+
+    async def event_generator():
+        try:
+            async for chunk in llm.astream(messages):
+                if chunk.content:
+                    yield f"event: content\ndata: {json.dumps({'text': chunk.content}, ensure_ascii=False)}\n\n"
+            # 维度覆盖信号（前端据此决定是否亮起「生成产品」）
+            yield f"event: meta\ndata: {json.dumps(_dim_signals(), ensure_ascii=False)}\n\n"
+            yield f"event: done\ndata: {json.dumps({'finish_reason': 'stop'})}\n\n"
+        except Exception as exc:  # noqa: BLE001
+            logger.error("clarify 流式输出失败: %s", exc)
+            yield f"event: error\ndata: {json.dumps({'error': str(exc)[:300]}, ensure_ascii=False)}\n\n"
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
+# ================================================================
+# 动态补全建议（P1）—— 输入停顿后生成 3 条产品方向建议
+# ================================================================
+
+_SUGGEST_SYSTEM = """你是产品创意顾问。根据用户已输入的部分产品想法，补全 3 条具体、可执行的产品方向建议。
+
+要求：
+- 每条建议 = 完整的一句话产品想法（含目标用户 + 核心功能），不超过 40 字
+- 建议必须与用户输入的方向一致（在其基础上补充场景/功能/人群）
+- 只输出 JSON：{"suggestions": ["...", "...", "..."]}，不要输出任何其他内容"""
+
+
+class SuggestRequest(BaseModel):
+    input: str = Field(..., min_length=2, max_length=200)
+
+
+class SuggestResponse(BaseModel):
+    suggestions: list[str] = Field(default_factory=list)
+
+
+@router.post("/suggest", response_model=SuggestResponse)
+async def suggest_product_directions(body: SuggestRequest):
+    """基于已输入内容生成 3 条产品方向补全建议（供 SuggestionChips 动态展示）。"""
+    from langchain_openai import ChatOpenAI
+
+    settings = get_settings()
+    if not settings.DEEPSEEK_API_KEY:
+        return SuggestResponse(suggestions=[])
+    try:
+        llm = ChatOpenAI(
+            api_key=settings.DEEPSEEK_API_KEY,
+            base_url=settings.DEEPSEEK_BASE_URL,
+            model=settings.DEEPSEEK_MODEL,
+            temperature=0.8,
+            streaming=False,
+        )
+        resp = llm.invoke([
+            {"role": "system", "content": _SUGGEST_SYSTEM},
+            {"role": "user", "content": f"我目前的想法：{body.input.strip()}"},
+        ])
+        text = resp.content or ""
+        # 提取 JSON
+        start, end = text.find("{"), text.rfind("}")
+        if start == -1 or end == -1:
+            return SuggestResponse(suggestions=[])
+        data = json.loads(text[start : end + 1])
+        items = [str(x).strip() for x in data.get("suggestions", []) if str(x).strip()][:3]
+        return SuggestResponse(suggestions=items)
+    except Exception as exc:  # noqa: BLE001 —— 建议失败不阻断主流程
+        logger.warning("suggest 生成失败: %s", exc)
+        return SuggestResponse(suggestions=[])

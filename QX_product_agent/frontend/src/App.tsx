@@ -8,7 +8,7 @@ import { DesignStudioPage } from '@/pages/DesignStudioPage'
 // PresentationPage 引入 echarts+recharts（约 1.5MB），懒加载使其不进主包
 const PresentationPage = lazy(() =>
   import('@/pages/PresentationPage').then((m) => ({ default: m.PresentationPage })))
-import { PptAssetLibraryPage } from '@/pages/PptAssetLibraryPage'
+import { ProjectAssetLibraryPage } from '@/pages/ProjectAssetLibraryPage'
 import { KnowledgePage } from '@/pages/KnowledgePage'
 import { TemplatesPage } from '@/pages/TemplatesPage'
 import { SettingsPage } from '@/pages/SettingsPage'
@@ -68,7 +68,9 @@ export function App() {
           <Suspense fallback={<PageFallback />}><PresentationPage /></Suspense>
         } />
         <Route path="/knowledge" element={<KnowledgePage />} />
-        <Route path="/ppt-assets" element={<PptAssetLibraryPage />} />
+        <Route path="/project-assets" element={<ProjectAssetLibraryPage />} />
+        {/* 旧「PPT 资产库」入口 → 项目资产库 */}
+        <Route path="/ppt-assets" element={<Navigate to="/project-assets" replace />} />
         <Route path="/templates" element={<TemplatesPage />} />
         <Route path="/settings" element={<SettingsPage />} />
         <Route path="/projects/:projectId/workspace" element={<WorkspacePage />} />

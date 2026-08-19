@@ -44,6 +44,8 @@ class ProductAssetResponse(BaseModel):
     presentation: dict[str, Any] | None = None
     ppt_design: dict[str, Any] | None = None
     document: dict[str, Any] | None = None
+    # ── Key Words：任务完成时按「设计/功能/外观/人群/场景」总结，用户可编辑 ──
+    keywords: dict[str, list[str]] | None = None
     node_models: dict[str, str] | None = None
     # ── P5: 质量层 ──
     critic_score: int | None = None
@@ -60,6 +62,21 @@ class ProductListResponse(BaseModel):
     idea: str
     status: str
     created_at: str | None = None
+    keywords: dict[str, list[str]] | None = None
+
+
+class ProductKeywordsUpdateRequest(BaseModel):
+    """关键词组编辑请求（整体替换；组键固定为 design/function/appearance/audience/scenario）。"""
+
+    keywords: dict[str, list[str]] = Field(..., description="方面 → 关键词列表")
+
+
+class ProductKeywordsUpdateResponse(BaseModel):
+    """关键词组保存结果。"""
+
+    product_id: str
+    keywords: dict[str, list[str]]
+    updated: bool = True
 
 
 class ExportPdfResponse(BaseModel):

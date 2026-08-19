@@ -757,6 +757,25 @@ GraphRecursionError；改为"critic 发 `_revise_requested` 信号 + presentatio
    其 pause 功能反复暂停测试产品）未能观测，但该步骤的崩溃点已直接验证修复。
 3. **已上传 GitHub**：`CaroVon/Agent_Platform_QX` HEAD `2ac86f2`（3 提交，13,194 文件）。
 
+## 第四轮实施记录（2026-08-19：Workspace 对话式输入 + 提示词建议）
+
+按用户要求实施（P0+P1），并直接拉取 [prompt-kit](https://github.com/ibelick/prompt-kit) 仓库
+研读源码后移植适配（非浅层借鉴）：
+
+1. **对话式输入（P0）**：
+   - 后端：`POST /product/clarify`（SSE 需求澄清，专用 `PRODUCT_CLARIFY_SYSTEM` prompt，
+     一次最多 2-3 问；`event: meta` 输出 4 维度覆盖信号：目标用户/场景/功能/约束）
+   - 前端：`ClarifyPanel`（消息气泡+流式）+ `ChatInput`（prompt-kit PromptInput 移植：
+     Context 模式/自增高 Textarea/Enter 发送 Shift+Enter 换行/React 18 适配/纸感 token）
+     + `useClarifyChat`（SSE 解析/维度信号/brief 拼装）
+   - 双模式：对话式输入 / 快速输入（保留原 IdeaInput）
+2. **提示词建议 chips（P0）**：`SuggestionChips`（prompt-kit PromptSuggestion 移植：
+   Normal 胶囊 + Highlight 输入高亮匹配；8 个静态模板 + 输入关键词联想 + 🎲 随机方向）
+3. **P1**：对话 localStorage 持久化续聊；`POST /product/suggest` LLM 动态补全
+   （输入停顿 800ms 防抖拉取）；brief 直达 requirement_parser（约束/指标首次真正进入下游）
+4. **实测**：clarify 两轮对话维度覆盖 0/4→4/4（enough:true）；suggest 返回 3 条贴合建议；
+   UI 交互 10 项全过（双 Tab/chips/输入/发送/生成按钮禁用态）；后端测试全过；主包 868KB。
+
 ## 遗留说明
 
 1. **并发工作流**：实施期间检测到另一工作流同时修改同一工作树（08-17 19:28-20:03 期间多次覆盖 `agents/ppt-design-agent`、`agents/design-agent` 等文件）。我方补丁已重新应用并通过全部测试；若后续发现文件被覆盖，以当前工作树 + 本附录为准重新应用。

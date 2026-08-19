@@ -10,6 +10,7 @@ import { useLocation } from 'react-router-dom'
 import { AlertCircle, Globe, Loader2, Pause, Play, Square, Upload } from 'lucide-react'
 import { ProjectHeader } from '@/components/workspace/ProjectHeader'
 import { IdeaInput } from '@/components/workspace/IdeaInput'
+import { ClarifyPanel } from '@/components/workspace/ClarifyPanel'
 import { AssetPanel } from '@/components/workspace/AssetPanel'
 import { KnowledgePanel } from '@/components/workspace/KnowledgePanel'
 import { AgentTimeline } from '@/components/ai/AgentTimeline'
@@ -45,6 +46,10 @@ export function ProductWorkspacePage() {
   const location = useLocation()
   const templateIdea = (location.state as { templateIdea?: string } | null)?.templateIdea
   const [idea, setIdea] = useState(templateIdea ?? '')
+  // ── 双模式：对话式输入 / 快速输入 ──
+  const [inputMode, setInputMode] = useState<'chat' | 'quick'>('chat')
+  const [dynamicSuggestions, setDynamicSuggestions] = useState<string[]>([])
+  const suggestTimer = useRef<number | null>(null)
   const [creating, setCreating] = useState(false)
   const [product, setProduct] = useState<StudioProduct | null>(null)
   const [recent, setRecent] = useState<Array<{ product_id: string; idea: string; status: string }>>([])
@@ -176,6 +181,39 @@ export function ProductWorkspacePage() {
     }
   }
 
+  /** 对话模式生成：brief 直接进入流水线（requirement_parser 获得完整需求） */
+  const handleClarifyGenerate = async (brief: string) => {
+    if (!brief.trim() || creating) return
+    setCreating(true)
+    setLoadError('')
+    try {
+      const created = await productApi.create(brief)
+      await loadProduct(created.product_id)
+      loadRecent()
+    } catch (err) {
+      setLoadError(err instanceof Error ? err.message : '创建失败')
+    } finally {
+      setCreating(false)
+    }
+  }
+
+  /** P1：输入停顿 800ms 后请求 LLM 动态补全建议 */
+  const handleSuggestionInput = (input: string) => {
+    if (suggestTimer.current) window.clearTimeout(suggestTimer.current)
+    if (!input.trim() || input.trim().length < 2) {
+      setDynamicSuggestions([])
+      return
+    }
+    suggestTimer.current = window.setTimeout(async () => {
+      try {
+        const r = await productApi.suggest(input.trim())
+        setDynamicSuggestions(r.suggestions ?? [])
+      } catch {
+        setDynamicSuggestions([])
+      }
+    }, 800)
+  }
+
   const handleTaskAction = async (action: 'pause' | 'resume' | 'cancel') => {
     if (!product || taskAction) return
     if (action === 'cancel' && !window.confirm('确定结束该任务吗？结束后不会继续生成。')) return
@@ -199,12 +237,49 @@ export function ProductWorkspacePage() {
       {product ? (
         <ProjectHeader product={product} />
       ) : (
-        <IdeaInput
-          value={idea}
-          onChange={setIdea}
-          onSubmit={handleGenerate}
-          creating={creating}
-        />
+        <div className="mx-auto max-w-3xl">
+          {/* 双模式切换（对话式输入 / 快速输入） */}
+          <div className="mb-6 flex items-center justify-center gap-1 rounded-full border border-border/70 bg-card p-1 shadow-sm">
+            {(
+              [
+                { key: 'chat', label: '💬 对话式输入' },
+                { key: 'quick', label: '⚡ 快速输入' },
+              ] as const
+            ).map((m) => (
+              <button
+                key={m.key}
+                type="button"
+                onClick={() => setInputMode(m.key)}
+                className={cn(
+                  'rounded-full px-4 py-1.5 text-xs font-medium transition-colors',
+                  inputMode === m.key
+                    ? 'bg-[#24415E] text-white'
+                    : 'text-muted-foreground hover:text-foreground',
+                )}
+              >
+                {m.label}
+              </button>
+            ))}
+          </div>
+
+          {inputMode === 'chat' ? (
+            <div className="rounded-2xl border border-border/70 bg-card/50 p-5 shadow-sm">
+              <ClarifyPanel
+                creating={creating}
+                onGenerate={handleClarifyGenerate}
+                dynamicSuggestions={dynamicSuggestions}
+                onSuggestionDynamic={handleSuggestionInput}
+              />
+            </div>
+          ) : (
+            <IdeaInput
+              value={idea}
+              onChange={setIdea}
+              onSubmit={handleGenerate}
+              creating={creating}
+            />
+          )}
+        </div>
       )}
 
       {loadError && (

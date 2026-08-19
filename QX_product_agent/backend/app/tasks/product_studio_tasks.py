@@ -458,6 +458,14 @@ def run_product_studio_pipeline(self: ProductStudioTask, product_id: str):
         asset_package=json.dumps(package_dict, ensure_ascii=False, default=str),
         error_message=None,
     )
+    # ── Key Words：任务完成后基于资产包文本总结「设计/功能/外观/人群/场景」关键词 ──
+    # 失败不阻断完成；已有关键词（含用户编辑）时自动跳过，不会覆盖。
+    try:
+        from app.services.product_keywords import generate_and_save_keywords
+
+        generate_and_save_keywords(product_id, package_dict, llm=loop.llm)
+    except Exception as exc:  # noqa: BLE001 —— 关键词生成失败不影响流水线完成
+        logger.warning("[Product Keywords] 生成失败 | product=%s | %s", product_id, exc)
     # ── Design Studio v2：任务完成后把生图（设计思路 + 图片）导入资产库 ──
     try:
         from app.services.design_studio import import_from_product_package
@@ -465,6 +473,13 @@ def run_product_studio_pipeline(self: ProductStudioTask, product_id: str):
         import_from_product_package(product_id, package_dict)
     except Exception as exc:  # noqa: BLE001 —— 资产库导入失败不阻断流水线完成
         logger.warning("[Design Studio] 完成态导入失败 | product=%s | %s", product_id, exc)
+    # ── 项目资产库：任务完成后把文本资产转化为 md/pdf 产出到任务资产库 ──
+    try:
+        from app.services.project_assets import ensure_text_assets
+
+        ensure_text_assets(str(product_id), package_dict)
+    except Exception as exc:  # noqa: BLE001 —— 文本资产产出失败不阻断流水线完成
+        logger.warning("[Project Assets] 完成态文本资产产出失败 | product=%s | %s", product_id, exc)
     failed_nodes = package.meta.errors
     logger.info(
         "[Product Studio] product=%s 完成 | 失败节点=%s",

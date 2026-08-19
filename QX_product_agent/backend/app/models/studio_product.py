@@ -77,6 +77,9 @@ class StudioProduct(Base):
     asset_versions: Mapped[str | None] = mapped_column(
         Text, nullable=True, doc="资产版本历史（JSON：资产名 → [{ts, data}]）"
     )
+    keywords: Mapped[str | None] = mapped_column(
+        Text, nullable=True, doc="产品关键词组（JSON：方面 → 关键词列表，如 design/function/appearance/audience/scenario）"
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )

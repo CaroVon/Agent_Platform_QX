@@ -8,12 +8,12 @@
 
 import { NavLink } from 'react-router-dom'
 import {
+  Archive,
   BookOpen,
   ChevronsLeft,
   ChevronsRight,
   ChevronsUpDown,
   Database,
-  FileDown,
   FileText,
   LayoutDashboard,
   LayoutTemplate,
@@ -49,7 +49,7 @@ const NAV_GROUPS: { label: string; items: NavItem[] }[] = [
   {
     label: '管理',
     items: [
-      { to: '/ppt-assets', label: 'PPT 资产库', icon: FileDown },
+      { to: '/project-assets', label: '项目资产库', icon: Archive },
       { to: '/knowledge', label: 'Knowledge Base', icon: Database },
       { to: '/templates', label: 'Templates', icon: LayoutTemplate },
       { to: '/settings', label: 'Settings', icon: Settings },

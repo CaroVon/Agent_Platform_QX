@@ -34,11 +34,12 @@ import type {
 } from '@/types/api'
 import type {
   ExportPdfResponse,
-  PptAssetIndexEntry,
   StudioProduct,
   StudioProductCreateResponse,
   DesignStudioLibrary,
   DesignStudioItem,
+  ProjectAssetLibrary,
+  ProjectAssetSummary,
 } from '@/types/studio'
 import type { PresentationDSL } from '@/types/presentation'
 
@@ -485,8 +486,19 @@ export const productApi = {
   },
 
   /** 产品列表 */
-  list(skip = 0, limit = 50): Promise<Array<{ product_id: string; idea: string; status: string; created_at?: string | null }>> {
+  list(skip = 0, limit = 50): Promise<Array<{ product_id: string; idea: string; status: string; created_at?: string | null; keywords?: import('@/types/studio').StudioKeywords | null }>> {
     return request(`/product?skip=${skip}&limit=${limit}`)
+  },
+
+  /** 整体替换产品关键词组（用户编辑入口；同步写入资产包） */
+  updateKeywords(
+    productId: string,
+    keywords: import('@/types/studio').StudioKeywords,
+  ): Promise<{ product_id: string; keywords: import('@/types/studio').StudioKeywords; updated: boolean }> {
+    return request(`/product/${productId}/keywords`, {
+      method: 'PUT',
+      body: JSON.stringify({ keywords }),
+    })
   },
 
   /** 局部重生成资产（instruction 为空则无指导重跑） */
@@ -569,6 +581,26 @@ export const productApi = {
     })
   },
 
+  /** 需求澄清对话（SSE）：返回原始 Response，调用方读取 event: content/meta/done */
+  async clarify(body: { idea?: string; messages: Array<{ role: string; content: string }>; max_rounds?: number }): Promise<Response> {
+    return fetch(`${API_BASE}/product/clarify`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${await ensureAuthToken()}`,
+      },
+      body: JSON.stringify(body),
+    })
+  },
+
+  /** 动态补全建议（输入停顿后调用） */
+  suggest(input: string): Promise<{ suggestions: string[] }> {
+    return request(`/product/suggest`, {
+      method: 'POST',
+      body: JSON.stringify({ input }),
+    })
+  },
+
   /** 真实执行事件日志（节点/状态/明细/时间） */
   logs(productId: string): Promise<{ product_id: string; logs: Array<{ ts: string; node: string; status: string; detail?: string }> }> {
     return request(`/product/${productId}/logs`)
@@ -622,11 +654,6 @@ export const productApi = {
     return request(`/product/${productId}/assets`)
   },
 
-  /** P7: PPT 资产库 —— 扫描磁盘 ppt_projects 的全部 PPT 资产（只读） */
-  pptAssets(): Promise<PptAssetIndexEntry[]> {
-    return request('/product/ppt-assets')
-  },
-
   /** P7: 该产品在磁盘上的 PPT 资产（即使 asset_package 未记录） */
   pptRecovery(productId: string): Promise<{
     product_id: string
@@ -657,6 +684,38 @@ export const productApi = {
       throw new ApiError(res.status, detail)
     }
     return res.json()
+  },
+}
+
+// ─── 项目资产库 API（每个任务的全部资产归档 / 下载） ────────────
+
+export const projectAssetsApi = {
+  /** 任务资产库列表（含各任务资产统计摘要） */
+  list(): Promise<ProjectAssetSummary[]> {
+    return request('/project-assets')
+  },
+
+  /** 任务资产库明细（后端惰性补产文本 md/pdf 后返回全部资产清单） */
+  get(productId: string): Promise<ProjectAssetLibrary> {
+    return request(`/project-assets/${productId}`)
+  },
+
+  /** 打包下载任务全部资产（ZIP，带鉴权 → Blob 触发下载） */
+  async downloadZip(productId: string): Promise<Blob> {
+    const res = await fetch(`${API_BASE}/project-assets/${productId}/download`, {
+      headers: { Authorization: `Bearer ${await ensureAuthToken()}` },
+    })
+    if (!res.ok) {
+      let detail = `HTTP ${res.status}`
+      try {
+        const body = await res.json()
+        detail = body.detail ?? detail
+      } catch {
+        /* ignore */
+      }
+      throw new ApiError(res.status, detail)
+    }
+    return res.blob()
   },
 }
 

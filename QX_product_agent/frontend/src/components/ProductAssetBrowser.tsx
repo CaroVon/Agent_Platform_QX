@@ -8,9 +8,10 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useLocation } from 'react-router-dom'
-import { Boxes, ChevronRight, Loader2 } from 'lucide-react'
+import { Boxes, ChevronRight, Loader2, PenLine } from 'lucide-react'
+import { KeywordsEditor } from '@/components/KeywordsEditor'
 import { productApi } from '@/lib/api'
-import type { StudioProduct } from '@/types/studio'
+import { KEYWORD_GROUP_LABELS, type StudioKeywords, type StudioProduct } from '@/types/studio'
 import { cn } from '@/lib/utils'
 
 const STATUS_META: Record<string, { label: string; cls: string }> = {
@@ -20,6 +21,18 @@ const STATUS_META: Record<string, { label: string; cls: string }> = {
   completed: { label: '已完成', cls: 'bg-emerald-500/10 text-emerald-600' },
   failed: { label: '失败', cls: 'bg-destructive/10 text-destructive' },
 }
+
+/** 关键词组 chip 配色（与 KeywordsEditor 保持一致） */
+const KEYWORD_CHIP_COLORS: Record<string, string> = {
+  design: 'bg-sky-500/10 text-sky-700',
+  function: 'bg-emerald-500/10 text-emerald-700',
+  appearance: 'bg-violet-500/10 text-violet-700',
+  audience: 'bg-amber-500/10 text-amber-700',
+  scenario: 'bg-rose-500/10 text-rose-700',
+}
+
+/** 侧边栏每行最多展示的关键词 chip 数（超出折叠为 +n） */
+const MAX_KEYWORD_CHIPS = 4
 
 export function ProductAssetBrowser({
   renderDetail,
@@ -34,6 +47,7 @@ export function ProductAssetBrowser({
   const [products, setProducts] = useState<StudioProduct[]>([])
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
+  const [editingKeywords, setEditingKeywords] = useState(false)
   const timerRef = useRef<number | null>(null)
 
   const load = useCallback(async () => {
@@ -113,6 +127,18 @@ export function ProductAssetBrowser({
   const hasPpt = (p: StudioProduct) => Boolean(p.ppt_design?.pptx_relative)
   const isRecoveredPpt = (p: StudioProduct) => Boolean(p.ppt_design?.pptx_relative && p.ppt_design?.recovered)
 
+  /** 按固定分组顺序展平关键词（供侧边栏 chip 展示） */
+  const flattenKeywords = (keywords?: StudioKeywords | null): Array<{ word: string; group: string }> => {
+    if (!keywords) return []
+    const out: Array<{ word: string; group: string }> = []
+    for (const group of Object.keys(KEYWORD_GROUP_LABELS)) {
+      for (const word of keywords[group] ?? []) {
+        if (word) out.push({ word, group })
+      }
+    }
+    return out
+  }
+
   if (loading) {
     return (
       <div className="flex items-center justify-center py-24 text-muted-foreground">
@@ -139,53 +165,93 @@ export function ProductAssetBrowser({
     <div className="grid gap-6 lg:grid-cols-[280px_1fr]">
       {/* ─── 产品列表（全部状态） ─────────────────────────────── */}
       <aside className="space-y-1.5">
-        <div className="px-2 pb-2 text-[10px] font-medium uppercase tracking-widest text-muted-foreground">
-          产品资产
-          {runningCount > 0 && (
-            <span className="ml-1.5 rounded-full bg-[#24415E]/10 px-1.5 py-0.5 text-[#24415E]">
-              {runningCount} 个任务进行中
-            </span>
+        <div className="flex items-center justify-between gap-2 px-2 pb-2">
+          <div className="text-[10px] font-medium uppercase tracking-widest text-muted-foreground">
+            产品资产
+            {runningCount > 0 && (
+              <span className="ml-1.5 rounded-full bg-[#24415E]/10 px-1.5 py-0.5 text-[#24415E]">
+                {runningCount} 个任务进行中
+              </span>
+            )}
+          </div>
+          {selected && (
+            <button
+              type="button"
+              onClick={() => setEditingKeywords(true)}
+              title="编辑关键词组（Key Words）"
+              className="inline-flex shrink-0 items-center gap-1 rounded-md border border-[#24415E]/20 px-1.5 py-0.5 text-[10px] font-medium text-[#24415E] transition-colors hover:bg-[#24415E]/5"
+            >
+              <PenLine className="h-3 w-3" />
+              Key Words
+            </button>
           )}
         </div>
         {products.map((p) => {
           const active = p.product_id === selectedId
           const meta = STATUS_META[p.status] ?? STATUS_META.failed
+          const keywordChips = flattenKeywords(p.keywords)
           return (
             <button
               key={p.product_id}
               type="button"
               onClick={() => setSelectedId(p.product_id)}
               className={cn(
-                'flex w-full items-center gap-2 rounded-lg px-3 py-2.5 text-left text-sm transition-colors',
+                'flex w-full flex-col items-stretch gap-1 rounded-lg px-3 py-2.5 text-left text-sm transition-colors',
                 active
                   ? 'bg-secondary font-medium text-foreground'
                   : 'text-muted-foreground hover:bg-secondary/50 hover:text-foreground',
               )}
             >
-              <span className="min-w-0 flex-1 truncate">{displayName(p)}</span>
-              {hasPpt(p) && (
-                <span
-                  title={isRecoveredPpt(p) ? '已从磁盘资产对账恢复（可下载）' : '已生成可编辑 PPT（ppt-master）'}
-                  className="flex shrink-0 items-center gap-1 rounded-full bg-emerald-600/10 px-1.5 py-0.5 text-[10px] font-medium text-emerald-600"
-                >
-                  PPT
-                  {isRecoveredPpt(p) && <span className="text-[9px] opacity-70">·恢复</span>}
+              <span className="flex w-full items-center gap-2">
+                <span className="min-w-0 flex-1 truncate">{displayName(p)}</span>
+                {hasPpt(p) && (
+                  <span
+                    title={isRecoveredPpt(p) ? '已从磁盘资产对账恢复（可下载）' : '已生成可编辑 PPT（ppt-master）'}
+                    className="flex shrink-0 items-center gap-1 rounded-full bg-emerald-600/10 px-1.5 py-0.5 text-[10px] font-medium text-emerald-600"
+                  >
+                    PPT
+                    {isRecoveredPpt(p) && <span className="text-[9px] opacity-70">·恢复</span>}
+                  </span>
+                )}
+                <span className={cn('shrink-0 rounded-full px-1.5 py-0.5 text-[10px]', meta.cls)}>
+                  {meta.label}
                 </span>
-              )}
-              <span className={cn('shrink-0 rounded-full px-1.5 py-0.5 text-[10px]', meta.cls)}>
-                {meta.label}
+                {p.critic_score != null && p.status === 'completed' && (
+                  <span
+                    className={cn(
+                      'shrink-0 rounded-full px-1.5 py-0.5 text-[10px]',
+                      p.critic_score >= 80 ? 'bg-emerald-500/10 text-emerald-600' : 'bg-amber-500/10 text-amber-600',
+                    )}
+                  >
+                    {p.critic_score}
+                  </span>
+                )}
+                <ChevronRight className="h-3.5 w-3.5 shrink-0 opacity-40" />
               </span>
-              {p.critic_score != null && p.status === 'completed' && (
+              {/* ─── Key Words 列：该任务的关键词 chips ─────── */}
+              {keywordChips.length > 0 && (
                 <span
-                  className={cn(
-                    'shrink-0 rounded-full px-1.5 py-0.5 text-[10px]',
-                    p.critic_score >= 80 ? 'bg-emerald-500/10 text-emerald-600' : 'bg-amber-500/10 text-amber-600',
-                  )}
+                  className="flex flex-wrap gap-1"
+                  title={keywordChips.map((c) => `${KEYWORD_GROUP_LABELS[c.group] ?? c.group}:${c.word}`).join('  ')}
                 >
-                  {p.critic_score}
+                  {keywordChips.slice(0, MAX_KEYWORD_CHIPS).map(({ word, group }) => (
+                    <span
+                      key={`${group}-${word}`}
+                      className={cn(
+                        'max-w-[140px] truncate rounded-full px-1.5 py-0.5 text-[10px] leading-tight',
+                        KEYWORD_CHIP_COLORS[group] ?? 'bg-secondary text-muted-foreground',
+                      )}
+                    >
+                      {word}
+                    </span>
+                  ))}
+                  {keywordChips.length > MAX_KEYWORD_CHIPS && (
+                    <span className="rounded-full bg-secondary px-1.5 py-0.5 text-[10px] text-muted-foreground">
+                      +{keywordChips.length - MAX_KEYWORD_CHIPS}
+                    </span>
+                  )}
                 </span>
               )}
-              <ChevronRight className="h-3.5 w-3.5 shrink-0 opacity-40" />
             </button>
           )
         })}
@@ -210,6 +276,18 @@ export function ProductAssetBrowser({
           </div>
         )}
       </div>
+
+      {/* ─── Key Words 编辑弹窗 ─────────────────────────────── */}
+      {editingKeywords && selected && (
+        <KeywordsEditor
+          product={selected}
+          onClose={() => setEditingKeywords(false)}
+          onSaved={() => {
+            setEditingKeywords(false)
+            load()
+          }}
+        />
+      )}
     </div>
   )
 }

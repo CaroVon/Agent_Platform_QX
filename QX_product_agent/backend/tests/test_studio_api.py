@@ -304,3 +304,117 @@ async def test_upload_product_asset_404(client: AsyncClient):
         files={"file": ("local.png", b"data", "image/png")},
     )
     assert resp.status_code == 404
+
+
+# ================================================================
+# Key Words —— 产品关键词组（AI 总结 + 用户编辑）
+# ================================================================
+
+@patch("app.services.product_keywords.generate_keywords")
+@patch("app.services.product_keywords._save_keywords")
+async def test_generate_and_save_keywords_skips_existing(
+    mock_save, mock_generate, client: AsyncClient, test_session
+):
+    """已有关键词（AI 生成或用户编辑）时跳过重新生成，不覆盖用户修改。"""
+    from app.services.product_keywords import generate_and_save_keywords
+
+    async with test_session as session:
+        product = await _insert_completed_product(session)
+        product.keywords = json.dumps(
+            {"design": ["用户自定义"], "function": [], "appearance": [],
+             "audience": [], "scenario": []},
+            ensure_ascii=False,
+        )
+        await session.commit()
+        product_id = str(product.id)
+
+    result = generate_and_save_keywords(product_id, _package_payload(), llm=object())
+    assert result["design"] == ["用户自定义"]
+    mock_generate.assert_not_called()
+    mock_save.assert_not_called()
+
+
+async def test_update_product_keywords(client: AsyncClient, test_session):
+    """用户编辑关键词：PUT 保存后 GET 返回最新值，且同步写入资产包。"""
+    async with test_session as session:
+        product = await _insert_completed_product(session)
+        product_id = str(product.id)
+
+    groups = {
+        "design": ["极简", "圆角"],
+        "function": ["AI 提醒", "睡眠监测"],
+        "appearance": ["雾面质感"],
+        "audience": ["上班族"],
+        "scenario": ["睡前"],
+    }
+    resp = await client.put(f"/api/v1/product/{product_id}/keywords", json={"keywords": groups})
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["keywords"] == groups
+
+    detail = await client.get(f"/api/v1/product/{product_id}")
+    assert detail.status_code == 200
+    assert detail.json()["keywords"] == groups
+
+    # 资产包同步包含 keywords（作为产品资产的一部分）
+    async with test_session as session:
+        product = await session.get(StudioProduct, uuid.UUID(product_id))
+        package = json.loads(product.asset_package)
+    assert package["keywords"] == groups
+
+
+async def test_update_product_keywords_normalizes_and_404(client: AsyncClient, test_session):
+    """编辑保存时清洗空白/重复；非法结构由 schema 拒绝；产品不存在返回 404。"""
+    async with test_session as session:
+        product = await _insert_completed_product(session)
+        product_id = str(product.id)
+
+    resp = await client.put(
+        f"/api/v1/product/{product_id}/keywords",
+        json={"keywords": {"design": [" 极简 ", "", "极简"], "bogus": ["保留"], "function": []}},
+    )
+    assert resp.status_code == 200, resp.text
+    saved = resp.json()["keywords"]
+    assert saved["design"] == ["极简"]  # 去空白 + 去重
+    assert saved["function"] == []
+    assert saved["bogus"] == ["保留"]  # 未知分组键不丢弃
+
+    # 非字符串 / 非列表结构：schema 层直接 422（防御非法输入）
+    resp = await client.put(
+        f"/api/v1/product/{product_id}/keywords",
+        json={"keywords": {"design": [3], "function": "非列表"}},
+    )
+    assert resp.status_code == 422
+
+    resp = await client.put(
+        f"/api/v1/product/{uuid.uuid4()}/keywords",
+        json={"keywords": {"design": ["x"]}},
+    )
+    assert resp.status_code == 404
+
+
+def test_normalize_keywords_service():
+    """服务层规范化：固定五组、去空白/去重/限长、丢弃非法项。"""
+    from app.services.product_keywords import _normalize_keywords
+
+    out = _normalize_keywords({
+        "design": [" 极简 ", "", "极简", 3, None],
+        "function": "非列表",
+        "bogus": ["x"],
+    })
+    assert out["design"] == ["极简"]
+    assert out["function"] == []
+    assert set(out.keys()) == {"design", "function", "appearance", "audience", "scenario"}
+    assert "bogus" not in out
+
+
+async def test_list_products_includes_keywords(client: AsyncClient, test_session):
+    """列表接口轻量返回关键词（侧边栏每行展示）。"""
+    async with test_session as session:
+        product = await _insert_completed_product(session)
+        product.keywords = json.dumps({"design": ["极简"], "function": ["AI 提醒"]}, ensure_ascii=False)
+        await session.commit()
+
+    resp = await client.get("/api/v1/product")
+    assert resp.status_code == 200
+    item = next(i for i in resp.json() if i["product_id"] == str(product.id))
+    assert item["keywords"] == {"design": ["极简"], "function": ["AI 提醒"]}

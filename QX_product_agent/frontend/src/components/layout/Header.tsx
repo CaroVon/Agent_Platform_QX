@@ -11,7 +11,7 @@ const ROUTE_LABELS: Record<string, string> = {
   '/prd': 'PRD Studio',
   '/design': 'Design Studio',
   '/presentation': 'Presentation',
-  '/ppt-assets': 'PPT 资产库',
+  '/project-assets': '项目资产库',
   '/knowledge': 'Knowledge Base',
   '/templates': 'Templates',
   '/settings': 'Settings',

@@ -11,6 +11,7 @@ from app.api.v1.endpoints import projects
 from app.api.v1.endpoints import editor
 from app.api.v1.endpoints import product
 from app.api.v1.endpoints import design_studio
+from app.api.v1.endpoints import project_assets
 from app.api.v1.endpoints import knowledge
 from app.api.v1.endpoints import auth
 from app.core.security import get_current_user
@@ -27,4 +28,5 @@ router.include_router(projects.router, dependencies=_guard)
 router.include_router(editor.router, dependencies=_guard)
 router.include_router(product.router, dependencies=_guard)
 router.include_router(design_studio.router, dependencies=_guard)
+router.include_router(project_assets.router, dependencies=_guard)
 router.include_router(knowledge.router, dependencies=_guard)
