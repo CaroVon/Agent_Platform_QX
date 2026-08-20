@@ -17,6 +17,7 @@ logger = logging.getLogger(__name__)
 # 可重生成的资产 → (agent 构造参数名, 任务名, 状态字段名, schema 校验器名)
 REGENERABLE = {
     "research": ("research_agent", "market_research", "research"),
+    "competitor_matrix": ("research_agent", "competitor_matrix", "competitor_matrix"),
     "competitor_analysis": ("research_agent", "competitor_analysis", "competitor_analysis"),
     "strategy": ("product_agent", "strategy", "strategy"),
     "design": ("design_agent", "ux_design", "design"),
@@ -25,6 +26,7 @@ REGENERABLE = {
 
 SCHEMA_VALIDATORS = {
     "research": "MarketResearch",
+    "competitor_matrix": "PriceCompetitorMatrix",
     "competitor_analysis": "CompetitorAnalysis",
     "strategy": "ProductStrategy",
     "design": "UXDesign",

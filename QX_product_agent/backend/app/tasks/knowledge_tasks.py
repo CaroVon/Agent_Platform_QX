@@ -424,6 +424,29 @@ def build_memory_graph(self: KnowledgeTask, project_id: str) -> dict[str, Any]:
     return {"project_id": project_id, "status": "completed", **result}
 
 
+@celery_app.task(bind=True, base=KnowledgeTask, name="knowledge.build_studio_memory_graph",
+                 max_retries=1, default_retry_delay=30, acks_late=True)
+def build_studio_memory_graph(self: KnowledgeTask, product_id: str) -> dict[str, Any]:
+    """手动重建 Product Studio 任务的记忆图。"""
+    from sqlalchemy.orm import Session
+    from app.core.celery_db import get_sync_engine
+    from app.models.studio_product import StudioProduct
+    from app.tasks.product_studio_tasks import _ensure_paths
+    settings = self.settings
+    _ensure_paths(settings)
+    with Session(get_sync_engine()) as session:
+        product = session.get(StudioProduct, product_id)
+        if product is None:
+            return {"product_id": product_id, "status": "missing"}
+        package = json.loads(product.asset_package or "{}")
+    from agent_platform.llm.client import LLMClient
+    from app.rag.studio_memory import extract_memory_from_studio_product
+    llm = LLMClient(api_key=settings.DEEPSEEK_API_KEY, base_url=settings.DEEPSEEK_BASE_URL,
+                    model=settings.DEEPSEEK_MODEL)
+    result = extract_memory_from_studio_product(product_id, package, llm)
+    return {"product_id": product_id, "status": "completed", **(result or {})}
+
+
 # ══════════════════════════════════════════════════════════════
 # P4c: 记忆置信度衰减（周期任务）
 # ══════════════════════════════════════════════════════════════

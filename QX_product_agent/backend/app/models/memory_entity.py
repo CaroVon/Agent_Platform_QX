@@ -32,6 +32,10 @@ class MemoryEntity(Base):
         UUIDType, ForeignKey("projects.id", ondelete="CASCADE"),
         nullable=True, index=True, doc="归属项目（scope=project 时非空）"
     )
+    studio_product_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUIDType, ForeignKey("studio_products.id", ondelete="CASCADE"),
+        nullable=True, index=True, doc="AI Product Studio 任务 ID"
+    )
     type: Mapped[str] = mapped_column(
         String(50), nullable=False, default="other", server_default="other",
         doc="实体类型: company/product/technology/person/market/metric/other"

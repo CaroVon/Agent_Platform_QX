@@ -247,7 +247,7 @@ export interface ProjectAssetFile {
   /** 预览/下载 URL（/api/v1/files/... 静态地址） */
   url: string
   size: number
-  /** doc | ppt | presentation | image */
+  /** doc | ppt | presentation | keywords | image */
   kind: string
   /** 文档 | 演示文稿 | 设计图片 | 素材 */
   category: string
@@ -256,6 +256,7 @@ export interface ProjectAssetFile {
   pages?: number
   preview_urls?: string[]
   preview_url?: string | null
+  viewer_url?: string | null
 }
 
 /** 任务资产库明细（GET /api/v1/project-assets/{product_id} 响应） */
@@ -280,8 +281,11 @@ export interface ProjectAssetSummary {
   doc_count: number
   ppt_count: number
   presentation_count: number
+  keywords_count?: number
   image_count: number
   has_pptx: boolean
+  has_presentation?: boolean
+  has_keywords?: boolean
   svg_previews: string[]
 }
 

@@ -550,6 +550,7 @@ class ProjectRepo:
         tags: list[str] | None = None,
         chunk_count: int = 0,
         owner_id: str | None = None,
+        studio_product_id: str | None = None,
         extra: dict | None = None,
         stale_at=None,
     ) -> KnowledgeAsset:
@@ -567,6 +568,8 @@ class ProjectRepo:
                 existing.title = title
                 existing.tags = json.dumps(tags, ensure_ascii=False) if tags else existing.tags
                 existing.chunk_count = chunk_count
+                if studio_product_id:
+                    existing.studio_product_id = uuid.UUID(studio_product_id)
                 if stale_at is not None:
                     existing.stale_at = stale_at
                 session.commit()
@@ -579,6 +582,7 @@ class ProjectRepo:
                 source=source,
                 title=title,
                 source_url=source_url,
+                studio_product_id=uuid.UUID(studio_product_id) if studio_product_id else None,
                 tags=json.dumps(tags, ensure_ascii=False) if tags else None,
                 chunk_count=chunk_count,
                 stale_at=stale_at,
@@ -594,6 +598,7 @@ class ProjectRepo:
         self,
         scope: str | None = None,
         source: str | None = None,
+        studio_product_id: str | None = None,
         limit: int = 200,
     ) -> list[KnowledgeAsset]:
         """列出知识资产（按更新时间倒序）。"""
@@ -603,6 +608,8 @@ class ProjectRepo:
                 stmt = stmt.where(KnowledgeAsset.scope == scope)
             if source:
                 stmt = stmt.where(KnowledgeAsset.source == source)
+            if studio_product_id:
+                stmt = stmt.where(KnowledgeAsset.studio_product_id == uuid.UUID(studio_product_id))
             rows = session.execute(stmt).scalars().all()
             for a in rows:
                 session.expunge(a)
@@ -680,6 +687,7 @@ class ProjectRepo:
         type: str = "other",
         summary: str | None = None,
         project_id: str | None = None,
+        studio_product_id: str | None = None,
         confidence: float = 0.6,
         first_seen=None,
         last_seen=None,
@@ -689,6 +697,7 @@ class ProjectRepo:
             entity = MemoryEntity(
                 scope=scope,
                 project_id=uuid.UUID(project_id) if project_id else None,
+                studio_product_id=uuid.UUID(studio_product_id) if studio_product_id else None,
                 type=type,
                 name=name,
                 summary=summary,
@@ -725,6 +734,28 @@ class ProjectRepo:
                 return None
             session.expunge(entity)
             return entity
+
+    def find_studio_entity(self, studio_product_id: str, name: str) -> MemoryEntity | None:
+        with Session(self._engine) as session:
+            entity = session.execute(select(MemoryEntity).where(
+                MemoryEntity.scope == "project",
+                MemoryEntity.studio_product_id == uuid.UUID(studio_product_id),
+                MemoryEntity.name == name,
+            )).scalar_one_or_none()
+            if entity is None:
+                return None
+            session.expunge(entity)
+            return entity
+
+    def list_studio_entities(self, studio_product_id: str) -> list[MemoryEntity]:
+        with Session(self._engine) as session:
+            rows = session.execute(select(MemoryEntity).where(
+                MemoryEntity.scope == "project",
+                MemoryEntity.studio_product_id == uuid.UUID(studio_product_id),
+            )).scalars().all()
+            for entity in rows:
+                session.expunge(entity)
+            return list(rows)
 
     def find_global_entity(self, name: str) -> MemoryEntity | None:
         with Session(self._engine) as session:
@@ -773,6 +804,15 @@ class ProjectRepo:
             ).all()
             return len({r[0] for r in rows})
 
+    def count_studio_entity_by_name_across_products(self, name: str, exclude_product: str) -> int:
+        with Session(self._engine) as session:
+            rows = session.execute(select(MemoryEntity.studio_product_id).where(
+                MemoryEntity.scope == "project", MemoryEntity.name == name,
+                MemoryEntity.studio_product_id.is_not(None),
+                MemoryEntity.studio_product_id != uuid.UUID(exclude_product),
+            )).all()
+            return len({row[0] for row in rows})
+
     def search_entities_by_keyword(
         self, query: str, scope: str = "project",
         project_id: str | None = None, limit: int = 5,
@@ -795,6 +835,7 @@ class ProjectRepo:
         self,
         scope: str = "global",
         project_id: str | None = None,
+        studio_product_id: str | None = None,
         q: str | None = None,
         entity_types: list[str] | None = None,
         min_confidence: float = 0.0,
@@ -804,6 +845,8 @@ class ProjectRepo:
             stmt = select(MemoryEntity).where(MemoryEntity.scope == scope)
             if project_id:
                 stmt = stmt.where(MemoryEntity.project_id == uuid.UUID(project_id))
+            if studio_product_id:
+                stmt = stmt.where(MemoryEntity.studio_product_id == uuid.UUID(studio_product_id))
             if q:
                 stmt = stmt.where(MemoryEntity.name.ilike(f"%{q}%"))
             if entity_types:
@@ -987,6 +1030,7 @@ class ProjectRepo:
         scope: str,
         content: str,
         project_id: str | None = None,
+        studio_product_id: str | None = None,
         entity_ids: list[str] | None = None,
         source: str = "task_summary",
         source_url: str | None = None,
@@ -996,6 +1040,7 @@ class ProjectRepo:
             insight = MemoryInsight(
                 scope=scope,
                 project_id=uuid.UUID(project_id) if project_id else None,
+                studio_product_id=uuid.UUID(studio_product_id) if studio_product_id else None,
                 content=content,
                 entity_ids=json.dumps(entity_ids or [], ensure_ascii=False),
                 source=source,
@@ -1009,12 +1054,15 @@ class ProjectRepo:
             return insight
 
     def list_insights(
-        self, scope: str = "project", project_id: str | None = None, limit: int = 50,
+        self, scope: str = "project", project_id: str | None = None,
+        studio_product_id: str | None = None, limit: int = 50,
     ) -> list[MemoryInsight]:
         with Session(self._engine) as session:
             stmt = select(MemoryInsight).where(MemoryInsight.scope == scope)
             if project_id:
                 stmt = stmt.where(MemoryInsight.project_id == uuid.UUID(project_id))
+            if studio_product_id:
+                stmt = stmt.where(MemoryInsight.studio_product_id == uuid.UUID(studio_product_id))
             rows = session.execute(stmt.order_by(MemoryInsight.created_at.desc()).limit(limit)).scalars().all()
             for i in rows:
                 session.expunge(i)

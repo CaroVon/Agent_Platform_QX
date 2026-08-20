@@ -30,18 +30,28 @@ import os
 import re
 import subprocess
 import sys
+import threading
+import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from agent_platform.config.settings import get_settings
 from agent_platform.harness.agent_loop import BaseAgent
 from agent_platform.llm.client import get_presentation_llm_client, get_llm_client
+from agent_platform.llm.client import LLMError, classify_llm_error
 from agent_platform.schemas import AgentResult
 
 logger = logging.getLogger(__name__)
 
 _SKILL_DIR = Path(__file__).resolve().parent / "vendor" / "ppt-master"
 _SCRIPTS_DIR = _SKILL_DIR / "scripts"
+
+# ── 逐页 SVG 并发参数（自适应 batch，参照 image_gen._run_manifest） ──
+_PPT_SVG_MAX_PAGE_ATTEMPTS = 3        # 单页校验失败重试上限（与原顺序版一致）
+_PPT_SVG_MAX_RATE_LIMIT_ATTEMPTS = 3  # 单页限流重排队预算（超出 → fallback）
+_PPT_SVG_BATCH_GAP_SEC = 0.3          # batch 间温和节流，避免突发
 
 _FONT = "Noto Sans SC, Source Han Sans SC, PingFang SC, Microsoft YaHei, sans-serif"
 _TITLE_FONT = "Noto Serif SC, Source Han Serif SC, Georgia, serif"
@@ -481,6 +491,13 @@ class PptDesignAgent(BaseAgent):
         return _build_design_spec(presentation, idea, "")
 
     # ── 逐页 SVG（v2：程序化注入图片 + 页脚 + 根属性 + 字号收敛） ──
+    # 并发策略（v2.1）：batch 自适应（参照 image_gen._run_manifest）——
+    #   · LLM 创作 + 校验在 worker 线程并发（唯一耗时部分）；
+    #     程序化后处理 / 写盘 / stats 聚合全部在主线程（确定性、无需加锁）
+    #   · 瞬时限流（HTTP 429）→ 页面重排队 + 减半并发 + 暂停；
+    #     预算耗尽或并发 1 仍限流 → 该页 fallback
+    #   · 配额型限流（MiniMax Token Plan 2056 等）→ 立即 fallback，不浪费请求
+    #   · 结果按 slide_NN 排序返回；与顺序版输出逐字节一致（质量回归由测试保证）
     def _author_pages_v2(
         self,
         project_dir: Path,
@@ -502,24 +519,43 @@ class PptDesignAgent(BaseAgent):
                         "images_injected": 0, "footers_injected": 0,
                         "root_metadata_injected": 0, "font_sizes_snapped": 0}
         total = len(pages)
+        if total == 0:
+            return files, stats
 
-        for i, page in enumerate(pages):
-            page_no = i + 1
-            name = f"slide_{page_no:02d}_{page.get('type', 'page')}.svg"
-            svg = ""
-            status = "llm"
+        # ── 并发参数（env 可配：AGENT_PLATFORM_PPT_DESIGN_*；1 = 纯顺序） ──
+        _settings = get_settings()
+        initial = max(
+            1, min(_settings.PPT_DESIGN_CONCURRENCY,
+                   _settings.PPT_DESIGN_CONCURRENCY_MAX, total)
+        )
+        pause_sec = _settings.PPT_DESIGN_RATE_PAUSE
+        current = initial
+        rate_limit_attempts: dict[int, int] = {}
+        page_retries: dict[int, int] = {}
 
-            # ── a) LLM 创作 SVG（带图片 hint） ──
-            img_assets = {
+        def _page_img_assets(page: dict, page_index: int) -> dict:
+            return {
                 "hero": images.get("hero"),
                 "pages": images.get("pages") or {},
                 "by_kind": images.get("by_kind") or {},
-                "page_image": self._pick_page_image(page, i, images),
+                "page_image": self._pick_page_image(page, page_index, images),
             }
+
+        def _author_one(idx: int) -> tuple[str | None, str, int, dict]:
+            """worker 线程：LLM 创作 + 校验循环（唯一耗时部分）。
+
+            Returns: (svg | None, status, retries, img_assets)
+              status: "llm" | "fallback_needed" | "rate_limited" | "quota_limited"
+            """
+            page = pages[idx]
+            img_assets = _page_img_assets(page, idx)
+            svg = ""
+            retries = 0
+            _tn = threading.current_thread().name
             if llm is not None and llm.api_key:
                 contract_feedback = ""
-                for attempt in range(3):
-                    prompt = svg_author.build_page_prompt(page, theme, design_spec, i, img_assets)
+                for attempt in range(_PPT_SVG_MAX_PAGE_ATTEMPTS):
+                    prompt = svg_author.build_page_prompt(page, theme, design_spec, idx, img_assets)
                     if contract_feedback:
                         prompt += f"\n\n上一次 SVG 转换契约失败，请修正：{contract_feedback}"
                     try:
@@ -528,8 +564,22 @@ class PptDesignAgent(BaseAgent):
                              {"role": "user", "content": prompt}],
                             temperature=0.6, max_tokens=16384,  # 提升到 16K 让 LLM 画更复杂
                         ) or ""
+                    except LLMError as exc:
+                        kind = classify_llm_error(exc)
+                        if kind == "rate_limit_transient":
+                            # 瞬时限流：不消耗页面尝试次数，交给主线程重排队
+                            return None, "rate_limited", retries, img_assets
+                        if kind == "rate_limit_quota":
+                            # 配额耗尽（Token Plan）：重试无意义，立即 fallback
+                            logger.warning("[%s] P%d 配额耗尽（%s），直接 fallback",
+                                           _tn, idx + 1, str(exc)[:120])
+                            return None, "quota_limited", retries, img_assets
+                        logger.warning("[%s] P%d SVG 调用失败: %s",
+                                       _tn, idx + 1, str(exc)[:120])
+                        continue
                     except Exception as exc:  # noqa: BLE001
-                        logger.warning("P%d SVG 调用失败: %s", page_no, str(exc)[:120])
+                        logger.warning("[%s] P%d SVG 调用失败: %s",
+                                       _tn, idx + 1, str(exc)[:120])
                         continue
                     svg = svg_author.extract_svg(raw)
                     ok, issue = svg_author.validate_svg(svg, page)
@@ -541,13 +591,23 @@ class PptDesignAgent(BaseAgent):
                             issue = native_issue
                         else:
                             break
-                    stats["retries"] += 1
+                    retries += 1
                     contract_feedback = issue
-                    logger.warning("P%d SVG 校验失败（第 %d 次）: %s", page_no, attempt + 1, issue)
+                    logger.warning("[%s] P%d SVG 校验失败（第 %d 次）: %s",
+                                   _tn, idx + 1, attempt + 1, issue)
                     svg = ""
             if not svg:
+                return None, "fallback_needed", retries, img_assets
+            return svg, "llm", retries, img_assets
+
+        def _finalize(idx: int, svg: str | None, status: str, img_assets: dict) -> None:
+            """主线程：程序化后处理 + 写盘 + stats 聚合（确定性、无锁）。"""
+            page = pages[idx]
+            page_no = idx + 1
+            name = f"slide_{page_no:02d}_{page.get('type', 'page')}.svg"
+            stats["retries"] += page_retries.get(idx, 0)
+            if status != "llm":
                 stats["fallbacks"] += 1
-                status = "fallback"
                 svg = svg_author.fallback_svg(page, theme)
 
             # ── b) 后处理（程序化注入，不依赖 LLM） ──
@@ -557,10 +617,10 @@ class PptDesignAgent(BaseAgent):
             stats["images_injected"] += 1 if page_image and "<image" in svg else 0
 
             # ── c) 跨页一致性（footer + 根属性） ──
-            svg = cross_page_module.inject_root_metadata(svg, page.get("type", "content"), i, total)
+            svg = cross_page_module.inject_root_metadata(svg, page.get("type", "content"), idx, total)
             stats["root_metadata_injected"] += 1
             if page.get("type") != "cover":  # 封面不放 footer
-                svg = cross_page_module.inject_footer(svg, i, total, identity)
+                svg = cross_page_module.inject_footer(svg, idx, total, identity)
                 stats["footers_injected"] += 1
 
             # ── d) 字号白名单收敛 ──
@@ -575,6 +635,53 @@ class PptDesignAgent(BaseAgent):
                 "font_sizes": snap_info["kept_unique"],
                 "snap_count": len(snap_info["snapped"]),
             }
+
+        # ── batch 自适应并发主循环（参照 image_gen._run_manifest） ──
+        _tn = threading.current_thread().name
+        queue: list[int] = list(range(total))
+        while queue:
+            batch_size = min(current, len(queue))
+            batch = queue[:batch_size]
+            queue = queue[batch_size:]
+            rate_limited = False
+            with ThreadPoolExecutor(max_workers=batch_size) as ex:
+                futures = {ex.submit(_author_one, idx): idx for idx in batch}
+                for fut in as_completed(futures):
+                    idx = futures[fut]
+                    page_no = idx + 1
+                    svg, status, retries, img_assets = fut.result()
+                    page_retries[idx] = page_retries.get(idx, 0) + retries
+                    if status == "rate_limited":
+                        rate_limited = True
+                        attempts = rate_limit_attempts.get(idx, 0) + 1
+                        rate_limit_attempts[idx] = attempts
+                        if current > 1 and attempts < _PPT_SVG_MAX_RATE_LIMIT_ATTEMPTS:
+                            queue.append(idx)
+                            logger.warning("[%s] P%d 瞬时限流，重排队（第 %d 次）",
+                                           _tn, page_no, attempts)
+                        else:
+                            logger.warning("[%s] P%d 限流持久（并发 %d / 重试 %d 次），fallback",
+                                           _tn, page_no, current, attempts)
+                            _finalize(idx, None, "fallback", img_assets)
+                    elif status == "quota_limited":
+                        _finalize(idx, None, "fallback", img_assets)
+                    elif status == "fallback_needed":
+                        _finalize(idx, None, "fallback", img_assets)
+                    else:
+                        _finalize(idx, svg, "llm", img_assets)
+
+            if rate_limited and current > 1 and queue:
+                new_current = max(1, current // 2)
+                logger.warning("[%s] 限流：并发 %d → %d，暂停 %ds",
+                               _tn, current, new_current, pause_sec)
+                current = new_current
+                time.sleep(pause_sec)
+            elif queue and current > 1:
+                # batch 间温和节流（并发 1 = 顺序模式，不加间隔，与原顺序版行为一致）
+                time.sleep(_PPT_SVG_BATCH_GAP_SEC)
+
+        # 结果按页码排序（PPTX 组装本身按文件名排序，此处保证返回列表有序）
+        files.sort(key=lambda f: int(re.search(r"slide_(\d+)", f).group(1)))
         return files, stats
 
     # ── 辅助：按页选图 ─────────────────────────────────────

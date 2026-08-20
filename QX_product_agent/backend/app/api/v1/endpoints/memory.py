@@ -24,6 +24,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
 from app.models.project import Project
+from app.models.studio_product import StudioProduct
 from app.models.user import User
 from app.core.security import get_current_user
 
@@ -40,6 +41,7 @@ router = APIRouter(prefix="/memory", tags=["memory"])
 async def get_memory_graph(
     scope: str = Query("global", pattern="^(global|project)$", description="记忆范围"),
     project_id: str | None = Query(None, description="项目 ID（scope=project 时使用）"),
+    studio_product_id: str | None = Query(None, description="Product Studio 任务 ID（scope=project 时使用）"),
     q: str | None = Query(None, max_length=100, description="实体名搜索（命中聚焦 2 跳邻域）"),
     entity_types: str | None = Query(None, description="实体类型过滤（逗号分隔）"),
     limit: int = Query(300, ge=10, le=2000, description="节点上限（超限按度数截断）"),
@@ -53,6 +55,7 @@ async def get_memory_graph(
         data = _graph(
             scope=scope,
             project_id=project_id,
+            studio_product_id=studio_product_id,
             q=q,
             entity_types=types,
             limit=limit,
@@ -110,6 +113,7 @@ async def get_entity_detail(entity_id: uuid.UUID):
         "first_seen_at": entity.first_seen_at.isoformat() if entity.first_seen_at else None,
         "last_seen_at": entity.last_seen_at.isoformat() if entity.last_seen_at else None,
         "project_id": str(entity.project_id) if entity.project_id else None,
+        "studio_product_id": str(entity.studio_product_id) if entity.studio_product_id else None,
         "relations": neighbors,
         "insights": [
             {"id": str(i.id), "content": i.content, "source": i.source,
@@ -127,13 +131,15 @@ async def get_entity_detail(entity_id: uuid.UUID):
 async def list_memory_insights(
     scope: str = Query("project", pattern="^(global|project)$"),
     project_id: str | None = Query(None),
+    studio_product_id: str | None = Query(None),
     q: str | None = Query(None, max_length=200),
     limit: int = Query(50, ge=1, le=200),
 ):
     """记忆洞察列表（high-level 记忆）。"""
     from app.repositories import ProjectRepo
     repo = ProjectRepo()
-    insights = repo.list_insights(scope=scope, project_id=project_id, limit=200)
+    insights = repo.list_insights(scope=scope, project_id=project_id,
+                                  studio_product_id=studio_product_id, limit=200)
     if q:
         insights = [i for i in insights if q.lower() in (i.content or "").lower()]
     return {
@@ -143,6 +149,7 @@ async def list_memory_insights(
                 "id": str(i.id),
                 "scope": i.scope,
                 "project_id": str(i.project_id) if i.project_id else None,
+                "studio_product_id": str(i.studio_product_id) if i.studio_product_id else None,
                 "content": i.content,
                 "source": i.source,
                 "confidence": round(i.confidence or 0.7, 2),
@@ -184,6 +191,22 @@ async def rebuild_project_memory(
         "message": "记忆图重建任务已提交（异步执行）",
         "celery_task_id": task_id,
     }
+
+
+@router.post("/rebuild-studio/{product_id}")
+async def rebuild_studio_memory(product_id: uuid.UUID, db: AsyncSession = Depends(get_db),
+                                user: User = Depends(get_current_user)):
+    """手动重建 Product Studio 任务记忆图。"""
+    product = await db.get(StudioProduct, product_id)
+    if product is None:
+        raise HTTPException(status_code=404, detail="Product Studio 任务不存在")
+    if product.owner_id is not None and product.owner_id != user.id:
+        raise HTTPException(status_code=403, detail="无权访问该任务")
+    from app.tasks.knowledge_tasks import build_studio_memory_graph
+    task = build_studio_memory_graph.delay(str(product_id))
+    return {"product_id": str(product_id),
+            "message": "Product Studio 任务记忆图重建已提交（异步执行）",
+            "celery_task_id": task.id}
 
 
 # ================================================================

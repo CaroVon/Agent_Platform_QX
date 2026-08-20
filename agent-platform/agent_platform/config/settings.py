@@ -58,6 +58,16 @@ class PlatformSettings(BaseSettings):
     # 请求附加 JSON（如 MiniMax M3 关闭推理: {"thinking":{"type":"disabled"}}）
     PRESENTATION_LLM_EXTRA_JSON: str = Field(default="")
 
+    # ─── PPT Design Agent 并发（SVG 逐页生成加速） ─────────────
+    # AGENT_PLATFORM_PPT_DESIGN_CONCURRENCY     起始并发（1 = 纯顺序，默认 4）
+    # AGENT_PLATFORM_PPT_DESIGN_CONCURRENCY_MAX 并发上限（默认 6）
+    # AGENT_PLATFORM_PPT_DESIGN_RATE_PAUSE      触限流后暂停秒数（默认 10）
+    # 策略：batch 模式自适应（参照 image_gen._run_manifest）——
+    #   触限流 → 减半并发 + 暂停；配额型限流（MiniMax Token Plan）→ 该页立即 fallback
+    PPT_DESIGN_CONCURRENCY: int = Field(default=4, ge=1, le=16)
+    PPT_DESIGN_CONCURRENCY_MAX: int = Field(default=6, ge=1, le=32)
+    PPT_DESIGN_RATE_PAUSE: int = Field(default=10, ge=0, le=120)
+
     # ─── 工具层 ────────────────────────────────────────────────
     TAVILY_API_KEY: str = Field(default="")
 

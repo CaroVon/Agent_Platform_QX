@@ -29,9 +29,9 @@ const TEAM: TeamRole[] = [
   {
     name: 'Research Agent',
     role: '研究员',
-    nodes: ['research', 'competitor_analysis'],
-    task: '搜索市场信息，分析竞品格局…',
-    doneTask: '✓ 市场研究、竞品分析已完成',
+    nodes: ['research', 'competitor_matrix', 'competitor_analysis'],
+    task: '搜索市场信息，抓取亚马逊竞品数据，分析竞品格局…',
+    doneTask: '✓ 市场研究、竞品矩阵、竞品分析已完成',
   },
   {
     name: 'Product Agent',
@@ -65,8 +65,8 @@ const TEAM: TeamRole[] = [
 
 // 节点执行顺序（对齐 NODE_ORDER + critic/ppt_design/assemble）
 const NODE_ORDER = [
-  'requirement_parser', 'source_gathering', 'research', 'competitor_analysis',
-  'strategy', 'design', 'presentation', 'critic', 'ppt_design', 'assemble',
+  'requirement_parser', 'source_gathering', 'research', 'competitor_matrix',
+  'competitor_analysis', 'strategy', 'design', 'presentation', 'critic', 'ppt_design', 'assemble',
 ]
 
 // 节点 → 人话说明（当前正在做什么）
@@ -74,6 +74,7 @@ const NODE_MESSAGES: Record<string, string> = {
   requirement_parser: '解析产品需求，明确目标与边界',
   source_gathering: '全网检索资料并标注权重（等待审核）',
   research: '市场研究：搜索行业规模、竞品与用户痛点',
+  competitor_matrix: '竞品矩阵：抓取亚马逊真实价格/评价数据并生成 MOD 报告',
   competitor_analysis: '竞品分析：构建矩阵与差异化机会',
   strategy: '产品策略：定位、画像、功能与路线图',
   design: 'UX 设计：用户旅程与信息架构',

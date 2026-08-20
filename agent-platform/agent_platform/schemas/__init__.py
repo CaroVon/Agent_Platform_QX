@@ -17,6 +17,8 @@ from agent_platform.schemas.research import (
     CompetitorProfile,
     MarketResearch,
     MarketSize,
+    PriceCompetitorMatrix,
+    PriceCompetitorMatrixEntry,
 )
 from agent_platform.schemas.product import (
     Feature,
@@ -54,6 +56,8 @@ __all__ = [
     "CompetitorProfile",
     "MarketResearch",
     "MarketSize",
+    "PriceCompetitorMatrix",
+    "PriceCompetitorMatrixEntry",
     # product
     "Feature",
     "Persona",

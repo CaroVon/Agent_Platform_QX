@@ -50,7 +50,11 @@ from agent_platform.schemas.presentation import Presentation
 from agent_platform.schemas.product import ProductStrategy
 from agent_platform.schemas.product_document import ProductDocument, ProjectInfo
 from agent_platform.schemas.requirement import RequirementSpec
-from agent_platform.schemas.research import CompetitorAnalysis, MarketResearch
+from agent_platform.schemas.research import (
+    CompetitorAnalysis,
+    MarketResearch,
+    PriceCompetitorMatrix,
+)
 from agent_platform.workflows.state import ProductStudioState
 
 logger = logging.getLogger(__name__)
@@ -60,6 +64,7 @@ NODE_ORDER = [
     "requirement_parser",
     "source_gathering",
     "research",
+    "competitor_matrix",      # 数据驱动竞品矩阵（MOD 报告）
     "competitor_analysis",
     "strategy",
     "design",
@@ -298,6 +303,17 @@ class ProductResearchGraph:
         CompetitorAnalysis.model_validate(updates["competitor_analysis"])
         return updates
 
+    def _competitor_matrix(self, state: dict) -> dict:
+        """数据驱动竞品矩阵：research 之后、competitor_analysis 之前。
+        确定性数据管道（Rainforest 采集 + 4 区规则 + 图表），失败即报错（节点层重试）。"""
+        if not state.get("research"):
+            raise RuntimeError("缺少上游市场研究成果（research 节点）")
+        updates = self._run_agent_node(
+            self.research_agent, "competitor_matrix", state, "competitor_matrix"
+        )
+        PriceCompetitorMatrix.model_validate(updates["competitor_matrix"])
+        return updates
+
     def _strategy(self, state: dict) -> dict:
         updates = self._run_agent_node(self.product_agent, "strategy", state, "strategy")
         ProductStrategy.model_validate(updates["strategy"])
@@ -464,6 +480,7 @@ class ProductResearchGraph:
             requirement=_get(RequirementSpec, "requirement"),
             research=document.research,
             competitor_analysis=document.competitor_analysis,
+            competitor_matrix=_get(PriceCompetitorMatrix, "competitor_matrix"),
             strategy=document.strategy,
             design=document.design,
             presentation=_get(Presentation, "presentation"),
@@ -523,6 +540,7 @@ class ProductResearchGraph:
             "requirement_parser": self._parse_requirement,
             "source_gathering": self._gather_sources,
             "research": self._research,
+            "competitor_matrix": self._competitor_matrix,
             "competitor_analysis": self._competitor_analysis,
             "strategy": self._strategy,
             "design": self._design,

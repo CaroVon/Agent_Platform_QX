@@ -22,6 +22,7 @@ import {
   PenTool,
   Settings,
   Sparkles,
+  Tags,
   Telescope,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
@@ -45,6 +46,7 @@ const NAV_GROUPS: { label: string; items: NavItem[] }[] = [
       { to: '/prd', label: 'PRD Studio', icon: FileText },
       { to: '/design', label: 'Design Studio', icon: PenTool },
       { to: '/presentation', label: 'Presentation', icon: MonitorPlay },
+      { to: '/keywords', label: 'Keywords', icon: Tags },
     ],
   },
   {

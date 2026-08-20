@@ -53,7 +53,7 @@ def _load_package(product: StudioProduct) -> dict:
 
 def _summary(product: StudioProduct, files: list[dict]) -> dict:
     total = sum(f["size"] for f in files)
-    by_kind = {k: 0 for k in ("doc", "ppt", "presentation", "image")}
+    by_kind = {k: 0 for k in ("doc", "ppt", "presentation", "keywords", "image")}
     for f in files:
         by_kind[f["kind"]] = by_kind.get(f["kind"], 0) + 1
     previews: list[str] = []
@@ -71,8 +71,11 @@ def _summary(product: StudioProduct, files: list[dict]) -> dict:
         "doc_count": by_kind.get("doc", 0),
         "ppt_count": by_kind.get("ppt", 0),
         "presentation_count": by_kind.get("presentation", 0),
+        "keywords_count": by_kind.get("keywords", 0),
         "image_count": by_kind.get("image", 0),
         "has_pptx": by_kind.get("ppt", 0) > 0,
+        "has_presentation": by_kind.get("presentation", 0) > 0,
+        "has_keywords": by_kind.get("keywords", 0) > 0,
         "svg_previews": previews,
     }
 

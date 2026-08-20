@@ -19,7 +19,7 @@ import { WorkspaceHeader } from '@/components/WorkspaceHeader'
 import { GraphCanvas } from '@/components/graph/GraphCanvas'
 import { GraphSidebar } from '@/components/graph/GraphSidebar'
 import { useGraphData } from '@/components/graph/useGraphData'
-import { projectsApi, memoryApi } from '@/lib/api'
+import { productApi, projectsApi, memoryApi } from '@/lib/api'
 import type { MemoryEntityType, ProjectResponse } from '@/types/api'
 
 const TYPE_OPTIONS: { key: MemoryEntityType; label: string }[] = [
@@ -35,20 +35,26 @@ const TYPE_OPTIONS: { key: MemoryEntityType; label: string }[] = [
 export function MemoryPage() {
   const { filter, patchFilter, data, loading, error, refresh, rebuild, rebuilding } = useGraphData()
   const [projects, setProjects] = useState<ProjectResponse[]>([])
+  const [studioProducts, setStudioProducts] = useState<Array<{ product_id: string; idea: string; status: string }>>([])
   const [selectedEntityId, setSelectedEntityId] = useState<string | null>(null)
   const [insights, setInsights] = useState<{ id: string; content: string; source: string }[]>([])
   const [insightsLoading, setInsightsLoading] = useState(false)
 
   useEffect(() => {
-    projectsApi.list(0, 100).then(setProjects).catch(() => setProjects([]))
+    Promise.all([projectsApi.list(0, 100).catch(() => []), productApi.list(0, 100).catch(() => [])])
+      .then(([legacyProjects, products]) => {
+        setProjects(legacyProjects)
+        setStudioProducts(products)
+      })
   }, [])
 
   // 项目选择：默认第一个
   useEffect(() => {
-    if (filter.scope === 'project' && !filter.projectId && projects.length > 0) {
-      patchFilter({ projectId: projects[0].id })
+    if (filter.scope === 'project' && !filter.projectId) {
+      if (projects.length > 0) patchFilter({ projectId: projects[0].id })
+      else if (studioProducts.length > 0) patchFilter({ projectId: `studio:${studioProducts[0].product_id}` })
     }
-  }, [filter.scope, filter.projectId, projects, patchFilter])
+  }, [filter.scope, filter.projectId, projects, studioProducts, patchFilter])
 
   // 洞察面板
   useEffect(() => {
@@ -56,9 +62,11 @@ export function MemoryPage() {
     const load = async () => {
       setInsightsLoading(true)
       try {
+        const isStudio = filter.projectId.startsWith('studio:')
         const resp = await memoryApi.insights({
           scope: filter.scope,
-          projectId: filter.scope === 'project' ? filter.projectId || undefined : undefined,
+          projectId: filter.scope === 'project' && !isStudio ? filter.projectId || undefined : undefined,
+          studioProductId: filter.scope === 'project' && isStudio ? filter.projectId.slice('studio:'.length) : undefined,
         })
         if (!cancelled) setInsights(resp.insights)
       } catch {
@@ -98,7 +106,7 @@ export function MemoryPage() {
       entities: data.meta.entity_count,
       relations: data.meta.relation_count,
       globalCount,
-      projects: data.meta.projects_covered,
+      projects: data.meta.projects_covered + (data.meta.studio_products_covered ?? 0),
     }
   }, [data])
 
@@ -137,12 +145,15 @@ export function MemoryPage() {
             onChange={(e) => patchFilter({ projectId: e.target.value })}
             className="h-9 rounded-md border border-input bg-background px-3 text-xs outline-none focus-visible:ring-2 focus-visible:ring-ring"
           >
-            {projects.length === 0 && <option value="">（暂无项目）</option>}
-            {projects.map((p) => (
-              <option key={p.id} value={p.id}>
-                {p.topic}
-              </option>
-            ))}
+             {projects.length === 0 && studioProducts.length === 0 && <option value="">（暂无任务）</option>}
+             {projects.length > 0 && <optgroup label="研究项目">
+               {projects.map((p) => <option key={p.id} value={p.id}>{p.topic}</option>)}
+             </optgroup>}
+             {studioProducts.length > 0 && <optgroup label="Product Studio 任务">
+               {studioProducts.map((p) => (
+                 <option key={p.product_id} value={`studio:${p.product_id}`}>{p.idea}</option>
+               ))}
+             </optgroup>}
           </select>
         )}
 

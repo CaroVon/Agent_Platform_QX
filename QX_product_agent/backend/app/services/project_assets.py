@@ -52,6 +52,7 @@ TEXT_ASSETS: list[tuple[str, str]] = [
     ("document", "项目完整文档"),
     ("requirement", "需求文档"),
     ("research", "市场研究报告"),
+    ("competitor_matrix", "竞品矩阵"),
     ("competitor_analysis", "竞品分析"),
     ("strategy", "产品策略与 PRD"),
     ("design", "UX 设计规格"),
@@ -61,6 +62,7 @@ TEXT_ASSETS: list[tuple[str, str]] = [
 # 文件类别（ZIP 子目录 / 前端分组，顺序即展示顺序）
 CATEGORY_DOC = "文档"
 CATEGORY_PPT = "演示文稿"
+CATEGORY_KEYWORDS = "关键词"
 CATEGORY_DESIGN = "设计图片"
 CATEGORY_MATERIAL = "素材"
 
@@ -167,6 +169,57 @@ def _md_research(data: dict) -> str:
         if items:
             out += [f"## {label}", ""] + _md_list(items) + [""]
     out += _md_sources(data.get("sources")) + [""]
+    return "\n".join(out).strip() + "\n"
+
+
+def _md_competitor_matrix(data: dict) -> str:
+    """竞品矩阵（数据驱动 MOD 报告）→ Markdown 序列化。"""
+    out = ["# 竞品矩阵（数据驱动 MOD 报告）", ""]
+    out += [f"> 主关键词：{data.get('keyword')} ｜ 站点：{data.get('marketplace')} ｜ "
+            f"抓取时间：{data.get('fetched_at')}", ""]
+
+    interp = data.get("llm_interpretation") or {}
+    out += ["## 4 区一句话解读", ""]
+    zone_labels = {
+        "price_gap": "🟢 价格缺口区",
+        "value_opportunity": "🔵 性价比机会区",
+        "demand_heat": "🟡 需求热度区",
+        "red_ocean": "🔴 红海警示区",
+    }
+    for k, label in zone_labels.items():
+        out += [f"- **{label}**：{interp.get(k, '—')}"]
+    out += [f"- **我方定位**：{interp.get('verdict', '—')}", ""]
+
+    paths = data.get("artifacts_paths") or {}
+    out += ["## 产物文件", ""]
+    out += [f"- 静态 PNG：`{paths.get('png', '—')}`"]
+    out += [f"- 交互 HTML：`{paths.get('html', '—')}`"]
+    out += [f"- 数据 CSV：`{paths.get('csv', '—')}`", ""]
+
+    rules = data.get("zoning_rules") or {}
+    out += ["## 分区阈值", ""]
+    for zone, rule in rules.items():
+        out += [f"- **{zone_labels.get(zone, zone)}**：{rule}"]
+    out += [""]
+
+    products = data.get("products") or []
+    if products:
+        out += ["## 竞品明细", ""]
+        out += ["| ASIN | 标题 | 价格$ | 评分 | 评论数 | 月销估算 | BSR | 分区 |",
+                "|---|---|---|---|---|---|---|---|"]
+        for p in products:
+            zone = p.get("zone") or "neutral"
+            out.append(f"| {p.get('asin')} | {str(p.get('title') or '')[:40]} | "
+                       f"{p.get('current_price')} | {p.get('rating')} | {p.get('review_count')} | "
+                       f"{p.get('est_monthly_sales')} | {p.get('bsr')} | {zone_labels.get(zone, zone)} |")
+        out += [""]
+
+    cost = data.get("cost_estimate") or {}
+    out += ["## 数据溯源", ""]
+    out += [f"- 数据源：Rainforest API（search 关键词发现 + product 详情）"]
+    out += ["- 月销估算：Amazon 官方 recent_sales 口径（\"bought in past month\"）解析，缺失回退 BSR 系数"]
+    if cost.get("rainforest_credits"):
+        out += [f"- credits：~{cost['rainforest_credits']}"]
     return "\n".join(out).strip() + "\n"
 
 
@@ -383,6 +436,7 @@ def _serialize_md(asset_key: str, data) -> str:
     serializer = {
         "requirement": _md_requirement,
         "research": _md_research,
+        "competitor_matrix": _md_competitor_matrix,
         "competitor_analysis": _md_competitor_analysis,
         "strategy": _md_strategy,
         "design": _md_design,
@@ -463,11 +517,55 @@ def ensure_text_assets(product_id: str, package: dict | None) -> dict:
     """为任务的文本资产生成 Markdown（必产）+ PDF（尽力），写入任务资产库目录。
 
     - 幂等：md 已存在且内容一致则跳过重写；pdf 缺失时补产（尽力）
-    - 返回本次实际写入的 {资产键: md_path}
+    - Presentation DSL 另存为任务专属 presentation.json，供项目资产库和 Web 演示入口使用
+    - 返回本次实际写入的 {资产键: path}
     """
     product_id = _canonical_id(product_id)
     package = package or {}
     written: dict[str, str] = {}
+    keywords = package.get("keywords")
+    if isinstance(keywords, dict) and keywords:
+        dir_path = library_dir(product_id)
+        dir_path.mkdir(parents=True, exist_ok=True)
+        keywords_path = dir_path / "keywords.json"
+        try:
+            keywords_text = json.dumps(keywords, ensure_ascii=False, indent=2) + "\n"
+            if (
+                not keywords_path.is_file()
+                or keywords_path.read_text(encoding="utf-8") != keywords_text
+            ):
+                keywords_path.write_text(keywords_text, encoding="utf-8")
+            written["keywords"] = str(
+                keywords_path.relative_to(Path(get_settings().OUTPUT_DIR).resolve())
+            )
+        except OSError as exc:
+            logger.warning(
+                "[Project Assets] Keywords 资产写入失败 | product=%s | %s",
+                product_id,
+                exc,
+            )
+    presentation = package.get("presentation")
+    if presentation:
+        dir_path = library_dir(product_id)
+        dir_path.mkdir(parents=True, exist_ok=True)
+        presentation_path = dir_path / "presentation.json"
+        try:
+            presentation_text = json.dumps(
+                presentation, ensure_ascii=False, indent=2, default=str,
+            ) + "\n"
+            if (
+                not presentation_path.is_file()
+                or presentation_path.read_text(encoding="utf-8") != presentation_text
+            ):
+                presentation_path.write_text(presentation_text, encoding="utf-8")
+            written["presentation"] = str(
+                presentation_path.relative_to(Path(get_settings().OUTPUT_DIR).resolve())
+            )
+        except OSError as exc:
+            logger.warning(
+                "[Project Assets] Presentation 资产写入失败 | product=%s | %s",
+                product_id, exc,
+            )
     for key, label in TEXT_ASSETS:
         data = package.get(key)
         if not data:
@@ -625,7 +723,48 @@ def _ppt_entry(product_id: str, package: dict) -> dict | None:
             previews = []
     return _entry(rel, "ppt", CATEGORY_PPT,
                   pages=ppt.get("pages") or 0,
-                  preview_urls=previews[:6])
+                  preview_urls=previews)
+
+
+def _presentation_entry(product_id: str, package: dict) -> dict | None:
+    """Presentation DSL 资产：没有原生 PPTX 时仍保留可打开的 Web 演示入口。"""
+    presentation = package.get("presentation") or {}
+    if not presentation:
+        return None
+    # 项目资产列表也会调用 collect_files；这里惰性补写，确保历史任务立即可见。
+    ensure_text_assets(product_id, package)
+    relative = f"studio_assets/{_canonical_id(product_id)}/presentation.json"
+    path = Path(get_settings().OUTPUT_DIR).resolve() / relative
+    if not path.is_file():
+        return None
+    pages = presentation.get("pages") or presentation.get("slides") or []
+    return _entry(
+        relative,
+        "presentation",
+        CATEGORY_PPT,
+        generated=True,
+        pages=len(pages) if isinstance(pages, list) else 0,
+        viewer_url=f"/presentation?product_id={_canonical_id(product_id)}",
+    )
+
+
+def _keywords_entry(product_id: str, package: dict) -> dict | None:
+    """任务 Keywords 资产：独立 JSON 文件 + 一级 Keywords 页面入口。"""
+    keywords = package.get("keywords")
+    if not isinstance(keywords, dict) or not keywords:
+        return None
+    ensure_text_assets(product_id, package)
+    relative = f"studio_assets/{_canonical_id(product_id)}/keywords.json"
+    path = Path(get_settings().OUTPUT_DIR).resolve() / relative
+    if not path.is_file():
+        return None
+    return _entry(
+        relative,
+        "keywords",
+        CATEGORY_KEYWORDS,
+        generated=True,
+        viewer_url=f"/keywords?product_id={_canonical_id(product_id)}",
+    )
 
 
 def _text_deliverables(product_id: str) -> list[dict]:
@@ -669,6 +808,17 @@ def collect_files(product_id: str, package: dict | None) -> list[dict]:
     if ppt and ppt["path"] not in seen:
         entries.append(ppt)
         seen.add(ppt["path"])
+
+    # Presentation DSL（即使原生 PPTX 节点失败，也必须进入项目资产库）
+    presentation = _presentation_entry(product_id, package)
+    if presentation and presentation["path"] not in seen:
+        entries.append(presentation)
+        seen.add(presentation["path"])
+
+    keywords = _keywords_entry(product_id, package)
+    if keywords and keywords["path"] not in seen:
+        entries.append(keywords)
+        seen.add(keywords["path"])
 
     # 设计图资产库 + 上传素材
     for entry in (*_design_studio_images(product_id), *_uploaded_images(product_id)):

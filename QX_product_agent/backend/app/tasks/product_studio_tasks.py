@@ -328,6 +328,7 @@ def run_product_studio_pipeline(self: ProductStudioTask, product_id: str):
         node_models = {
             "requirement_parser": loop.llm.model,
             "research": loops["research"].llm.model,
+            "competitor_matrix": loops["research"].llm.model,
             "competitor_analysis": loops["research"].llm.model,
             "strategy": loops["strategy"].llm.model,
             "design": loops["design"].llm.model,
@@ -372,7 +373,7 @@ def run_product_studio_pipeline(self: ProductStudioTask, product_id: str):
             _p = _session.get(SP, _parse_product_id(product_id))
             _saved = json.loads(_p.asset_package or "{}") if _p and _p.asset_package else {}
             if _saved.get("_resume"):
-                for key in ("requirement", "research", "competitor_analysis", "strategy",
+                for key in ("requirement", "research", "competitor_matrix", "competitor_analysis", "strategy",
                             "design", "presentation", "node_status", "_completed_nodes",
                             "_gate_passed", "critic_score", "revision_count",
                             "_sources_review", "source_gathering_meta"):
@@ -463,9 +464,25 @@ def run_product_studio_pipeline(self: ProductStudioTask, product_id: str):
     try:
         from app.services.product_keywords import generate_and_save_keywords
 
-        generate_and_save_keywords(product_id, package_dict, llm=loop.llm)
+        package_dict["keywords"] = generate_and_save_keywords(
+            product_id, package_dict, llm=loop.llm,
+        )
     except Exception as exc:  # noqa: BLE001 —— 关键词生成失败不影响流水线完成
         logger.warning("[Product Keywords] 生成失败 | product=%s | %s", product_id, exc)
+    # ── Knowledge + Memory：Studio 任务完成后写入任务知识库与记忆图 ──
+    # 两者均为增强能力，失败不回滚主资产；所有记录通过 studio_product_id 关联。
+    try:
+        from app.rag.studio_knowledge import sync_studio_knowledge
+
+        sync_studio_knowledge(product_id, package_dict, idea=idea)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("[Studio Knowledge] 同步失败 | product=%s | %s", product_id, exc)
+    try:
+        from app.rag.studio_memory import extract_memory_from_studio_product
+
+        extract_memory_from_studio_product(product_id, package_dict, llm=loop.llm)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("[Studio Memory] 同步失败 | product=%s | %s", product_id, exc)
     # ── Design Studio v2：任务完成后把生图（设计思路 + 图片）导入资产库 ──
     try:
         from app.services.design_studio import import_from_product_package

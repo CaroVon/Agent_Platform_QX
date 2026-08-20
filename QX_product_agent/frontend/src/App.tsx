@@ -8,6 +8,8 @@ import { DesignStudioPage } from '@/pages/DesignStudioPage'
 // PresentationPage 引入 echarts+recharts（约 1.5MB），懒加载使其不进主包
 const PresentationPage = lazy(() =>
   import('@/pages/PresentationPage').then((m) => ({ default: m.PresentationPage })))
+const KeywordsPage = lazy(() =>
+  import('@/pages/KeywordsPage').then((m) => ({ default: m.KeywordsPage })))
 // MemoryPage 引入 echarts（关系图），懒加载
 const MemoryPage = lazy(() =>
   import('@/pages/MemoryPage').then((m) => ({ default: m.MemoryPage })))
@@ -69,6 +71,9 @@ export function App() {
         <Route path="/design" element={<DesignStudioPage />} />
         <Route path="/presentation" element={
           <Suspense fallback={<PageFallback />}><PresentationPage /></Suspense>
+        } />
+        <Route path="/keywords" element={
+          <Suspense fallback={<PageFallback />}><KeywordsPage /></Suspense>
         } />
         <Route path="/knowledge" element={<KnowledgePage />} />
         <Route path="/memory" element={

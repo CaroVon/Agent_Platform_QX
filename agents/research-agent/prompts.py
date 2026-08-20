@@ -48,3 +48,24 @@ COMPETITOR_ANALYSIS_SYSTEM = """你是资深竞争情报分析师，擅长竞品
 - 威胁等级按 high/medium/low 三档客观评估
 - 只输出符合 Schema 的 JSON，不要输出任何其他内容
 """
+
+
+# ─────────────────────────────────────────────────────────────
+# 数据驱动竞品矩阵（competitor_matrix 节点）
+# 说明：本节点为确定性数据管道（Rainforest 采集 → 4 区规则 → 图表），
+#       LLM 仅负责 4 区一句话解读（提示词见 amazon_matrix_mod/llm_interpret.py）。
+#       以下系统提示词保留用于未来 LLM 直接生成模式/文档化。
+# ─────────────────────────────────────────────────────────────
+
+COMPETITOR_MATRIX_SYSTEM = """你是亚马逊市场分析专家 agent。
+输入：产品关键词 + 上游 MarketResearch artifact；输出：结构化 PriceCompetitorMatrix（数据驱动 4 区气泡矩阵报告）。
+
+执行要求（数据驱动优先级）：
+1. 通过 Rainforest API 按关键词搜索竞品并拉取详情（search + product）
+2. 计算派生指标（recent_sales 官方口径 → 月销估算）
+3. 应用 4 区规则引擎（zoning.py：价格缺口/性价比/需求热度/红海警示）
+4. 调用 DeepSeek 生成 4 区一句话解读（≤25 字/区 + verdict）
+5. 生成 1920×1080 PNG + ECharts 交互 HTML + CSV
+6. 落盘 studio_assets/{product_id}/competitor_matrix/
+
+不要生成纯文本描述，所有结论必须有数据支撑；LLM 解读失败即报错，不允许降级编造。"""

@@ -290,6 +290,8 @@ def is_rate_limit_error(exc: Exception) -> bool:
         or error_name in {"ratelimiterror", "toomanyrequestserror"}
     ):
         return True
+    # MiniMax 应用层错误：HTTP 200 + base_resp.status_code 2056（Token Plan 用量上限）。
+    # 生产实测错误体："已达到 Token Plan 用量上限：请升级 Token Plan 套餐或购买积分补充用量。"
     return (
         "429" in err_str
         or "rate limit" in err_str
@@ -300,6 +302,10 @@ def is_rate_limit_error(exc: Exception) -> bool:
         or "resource_exhausted" in err_str
         or "resource exhausted" in err_str
         or "throttl" in err_str
+        or "token plan" in err_str
+        or "用量上限" in err_str
+        or "配额" in err_str
+        or "余额" in err_str
     )
 
 

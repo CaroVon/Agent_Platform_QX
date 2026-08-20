@@ -24,6 +24,7 @@ class ProductStudioState(TypedDict, total=False):
     requirement: dict[str, Any] | None
     research: dict[str, Any] | None
     competitor_analysis: dict[str, Any] | None
+    competitor_matrix: dict[str, Any] | None
     strategy: dict[str, Any] | None
     design: dict[str, Any] | None
     presentation: dict[str, Any] | None

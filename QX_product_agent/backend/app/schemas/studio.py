@@ -38,6 +38,7 @@ class ProductAssetResponse(BaseModel):
     # ── 六节点结构化资产（未完成时为 None） ──
     requirement: dict[str, Any] | None = None
     research: dict[str, Any] | None = None
+    competitor_matrix: dict[str, Any] | None = None
     competitor_analysis: dict[str, Any] | None = None
     strategy: dict[str, Any] | None = None
     design: dict[str, Any] | None = None

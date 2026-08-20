@@ -423,10 +423,11 @@ export const knowledgeApi = {
   },
 
   /** 📦 知识资产登记列表（upload/obsidian/experience） */
-  assets(opts?: { scope?: string; source?: string }): Promise<KnowledgeAssetListResponse> {
+  assets(opts?: { scope?: string; source?: string; studioProductId?: string }): Promise<KnowledgeAssetListResponse> {
     const params = new URLSearchParams()
     if (opts?.scope) params.set('scope', opts.scope)
     if (opts?.source) params.set('source', opts.source)
+    if (opts?.studioProductId) params.set('studio_product_id', opts.studioProductId)
     const qs = params.toString()
     return request(`/knowledge/assets${qs ? `?${qs}` : ''}`)
   },
@@ -444,6 +445,7 @@ export const memoryApi = {
   graph(opts?: {
     scope?: 'global' | 'project'
     projectId?: string
+    studioProductId?: string
     q?: string
     entityTypes?: string[]
     limit?: number
@@ -451,6 +453,7 @@ export const memoryApi = {
     const params = new URLSearchParams()
     params.set('scope', opts?.scope ?? 'global')
     if (opts?.projectId) params.set('project_id', opts.projectId)
+    if (opts?.studioProductId) params.set('studio_product_id', opts.studioProductId)
     if (opts?.q) params.set('q', opts.q)
     if (opts?.entityTypes?.length) params.set('entity_types', opts.entityTypes.join(','))
     if (opts?.limit) params.set('limit', String(opts.limit))
@@ -463,10 +466,11 @@ export const memoryApi = {
   },
 
   /** 💡 记忆洞察列表 */
-  insights(opts?: { scope?: 'global' | 'project'; projectId?: string; q?: string }): Promise<MemoryInsightsResponse> {
+  insights(opts?: { scope?: 'global' | 'project'; projectId?: string; studioProductId?: string; q?: string }): Promise<MemoryInsightsResponse> {
     const params = new URLSearchParams()
     params.set('scope', opts?.scope ?? 'project')
     if (opts?.projectId) params.set('project_id', opts.projectId)
+    if (opts?.studioProductId) params.set('studio_product_id', opts.studioProductId)
     if (opts?.q) params.set('q', opts.q)
     return request(`/memory/insights?${params.toString()}`)
   },
@@ -474,6 +478,10 @@ export const memoryApi = {
   /** ♻️ 手动触发某项目的记忆图重建（异步） */
   rebuild(projectId: string): Promise<{ project_id: string; message: string; celery_task_id: string }> {
     return request(`/memory/rebuild/${projectId}`, { method: 'POST' })
+  },
+
+  rebuildStudio(productId: string): Promise<{ product_id: string; message: string; celery_task_id: string }> {
+    return request(`/memory/rebuild-studio/${productId}`, { method: 'POST' })
   },
 
   /** 🗑️ 删除实体（纠错，级联关系） */

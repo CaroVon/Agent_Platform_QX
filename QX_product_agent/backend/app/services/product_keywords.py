@@ -37,6 +37,7 @@ KEYWORD_GROUPS: dict[str, str] = {
 _KEY_ASSETS = (
     "requirement",
     "research",
+    "competitor_matrix",
     "competitor_analysis",
     "strategy",
     "design",

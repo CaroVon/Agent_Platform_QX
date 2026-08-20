@@ -17,6 +17,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+import threading
 from functools import lru_cache
 from typing import Any
 
@@ -28,11 +29,62 @@ logger = logging.getLogger(__name__)
 
 
 class LLMError(RuntimeError):
-    """模型调用失败（网络 / 认证 / 服务端错误）。"""
+    """模型调用失败（网络 / 认证 / 服务端错误）。
+
+    扩展字段（供限流分类与自适应并发降级使用）：
+      - status_code: HTTP 状态码；MiniMax 等兼容端点在 HTTP 200 内返回
+        业务错误时，此处为业务错误码（如图片接口配额耗尽的 2056）
+      - error_body: 原始响应体片段，供关键词判定
+    """
+
+    def __init__(
+        self,
+        message: str,
+        status_code: int | None = None,
+        error_body: str = "",
+    ):
+        super().__init__(message)
+        self.status_code = status_code
+        self.error_body = error_body
 
 
 class LLMOutputParseError(ValueError):
     """模型输出不是合法 JSON，或解析失败。"""
+
+
+# ── 限流分类（供并发控制器决定降级策略） ──────────────────────────
+# MiniMax 配额耗尽关键词（中文 + 英文；图片接口实测 2056:
+#   "已达到 Token Plan 用量上限：请升级 Token Plan 套餐或购买积分补充用量。"）
+_QUOTA_MARKERS = (
+    "token plan", "用量上限", "配额", "quota", "余额",
+    "insufficient", "plan exhausted", "credit",
+)
+
+
+def classify_llm_error(exc: Exception) -> str:
+    """把 LLM 调用异常分为三类，供自适应并发控制器决策。
+
+    Returns:
+      - "rate_limit_transient": 瞬时限流（RPM/TPM 429）。暂停 + 降并发后
+        重试可能成功 → 页面重排队。
+      - "rate_limit_quota": 配额耗尽（MiniMax Token Plan 等）。重试无意义，
+        → 页面立即 fallback，不浪费请求。
+      - "other": 网络 / 认证 / 解析等其它错误。按页面级重试处理。
+    """
+    if not isinstance(exc, LLMError):
+        return "other"
+    code = exc.status_code
+    text = f"{exc} {exc.error_body}".lower()
+    if any(marker in text for marker in _QUOTA_MARKERS):
+        return "rate_limit_quota"
+    if code == 429:
+        return "rate_limit_transient"
+    if any(k in text for k in (
+        "rate limit", "rate-limit", "rate_limit", "too many requests",
+        "throttl", "429",
+    )):
+        return "rate_limit_transient"
+    return "other"
 
 
 def _extract_json_block(text: str) -> str:
@@ -73,10 +125,11 @@ class LLMClient:
         self.max_tokens = max_tokens
         self.temperature = temperature
         self.extra_body = extra_body
-        # ── token 用量累计（成本可观测） ──
+        # ── token 用量累计（成本可观测；并发调用需加锁防丢更新） ──
         self.total_prompt_tokens = 0
         self.total_completion_tokens = 0
         self.total_requests = 0
+        self._stats_lock = threading.Lock()
 
     @property
     def usage_summary(self) -> dict:
@@ -128,10 +181,31 @@ class LLMClient:
 
         if resp.status_code != 200:
             raise LLMError(
-                f"LLM 返回 {resp.status_code}: {resp.text[:300]}"
+                f"LLM 返回 {resp.status_code}: {resp.text[:300]}",
+                status_code=resp.status_code,
+                error_body=resp.text[:1000],
             )
 
         data = resp.json()
+        # MiniMax 兼容：HTTP 200 但业务错误（如 Token Plan 用量上限 → base_resp.status_code 2056）。
+        # 必须在此识别，否则会落入下方"响应结构异常"而丢失限流分类信息。
+        base_resp = data.get("base_resp") or {}
+        biz_code = base_resp.get("status_code")
+        if biz_code not in (None, 0, "0"):
+            raise LLMError(
+                f"LLM 业务错误 {biz_code}: {str(base_resp.get('status_msg') or '')[:300]}",
+                status_code=int(biz_code) if str(biz_code).isdigit() else None,
+                error_body=str(data)[:1000],
+            )
+        # OpenAI 兼容网关：200 + error 字段
+        if data.get("error"):
+            err = data["error"]
+            code = err.get("code") if isinstance(err, dict) else None
+            raise LLMError(
+                f"LLM 业务错误: {str(err)[:300]}",
+                status_code=int(code) if str(code).isdigit() else None,
+                error_body=str(data)[:1000],
+            )
         try:
             content = data["choices"][0]["message"]["content"] or ""
         except (KeyError, IndexError, TypeError) as exc:
@@ -139,9 +213,10 @@ class LLMClient:
         # ── usage 累计（多数兼容端点返回 usage 字段） ──
         try:
             usage = data.get("usage") or {}
-            self.total_prompt_tokens += int(usage.get("prompt_tokens") or 0)
-            self.total_completion_tokens += int(usage.get("completion_tokens") or 0)
-            self.total_requests += 1
+            with self._stats_lock:  # 并发调用下防止计数器丢更新
+                self.total_prompt_tokens += int(usage.get("prompt_tokens") or 0)
+                self.total_completion_tokens += int(usage.get("completion_tokens") or 0)
+                self.total_requests += 1
         except (TypeError, ValueError):
             pass
         return content

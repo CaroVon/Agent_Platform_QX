@@ -286,6 +286,6 @@ def build_ppt_asset_index() -> list[dict[str, Any]]:
             "size": a["size"],
             "svg_count": a["svg_count"],
             "created_at": a["created_at_utc"],
-            "svg_previews": a.get("svg_previews", [])[:6],
+            "svg_previews": a.get("svg_previews", []),
         })
     return out

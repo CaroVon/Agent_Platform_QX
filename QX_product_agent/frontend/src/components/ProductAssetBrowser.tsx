@@ -8,10 +8,9 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useLocation } from 'react-router-dom'
-import { Boxes, ChevronRight, Loader2, PenLine } from 'lucide-react'
-import { KeywordsEditor } from '@/components/KeywordsEditor'
+import { Boxes, ChevronRight, Loader2 } from 'lucide-react'
+import type { StudioProduct } from '@/types/studio'
 import { productApi } from '@/lib/api'
-import { KEYWORD_GROUP_LABELS, type StudioKeywords, type StudioProduct } from '@/types/studio'
 import { cn } from '@/lib/utils'
 
 const STATUS_META: Record<string, { label: string; cls: string }> = {
@@ -21,18 +20,6 @@ const STATUS_META: Record<string, { label: string; cls: string }> = {
   completed: { label: '已完成', cls: 'bg-emerald-500/10 text-emerald-600' },
   failed: { label: '失败', cls: 'bg-destructive/10 text-destructive' },
 }
-
-/** 关键词组 chip 配色（与 KeywordsEditor 保持一致） */
-const KEYWORD_CHIP_COLORS: Record<string, string> = {
-  design: 'bg-sky-500/10 text-sky-700',
-  function: 'bg-emerald-500/10 text-emerald-700',
-  appearance: 'bg-violet-500/10 text-violet-700',
-  audience: 'bg-amber-500/10 text-amber-700',
-  scenario: 'bg-rose-500/10 text-rose-700',
-}
-
-/** 侧边栏每行最多展示的关键词 chip 数（超出折叠为 +n） */
-const MAX_KEYWORD_CHIPS = 4
 
 export function ProductAssetBrowser({
   renderDetail,
@@ -47,7 +34,6 @@ export function ProductAssetBrowser({
   const [products, setProducts] = useState<StudioProduct[]>([])
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
-  const [editingKeywords, setEditingKeywords] = useState(false)
   const timerRef = useRef<number | null>(null)
 
   const load = useCallback(async () => {
@@ -62,7 +48,9 @@ export function ProductAssetBrowser({
       const byId = new Map(completed.map((p) => [p.product_id, p]))
       const merged = list.map((i) => byId.get(i.product_id) ?? (i as StudioProduct))
       setProducts(merged)
-      const requested = (location.state as { productId?: string } | null)?.productId
+      const requested =
+        (location.state as { productId?: string } | null)?.productId
+        ?? new URLSearchParams(location.search).get('product_id')
       setSelectedId((prev) => {
         if (prev && merged.some((p) => p.product_id === prev)) return prev
         if (requested && merged.some((p) => p.product_id === requested)) return requested
@@ -87,7 +75,7 @@ export function ProductAssetBrowser({
     } finally {
       setLoading(false)
     }
-  }, [location.state])
+  }, [location.state, location.search])
 
   useEffect(() => {
     let cancelled = false
@@ -127,18 +115,6 @@ export function ProductAssetBrowser({
   const hasPpt = (p: StudioProduct) => Boolean(p.ppt_design?.pptx_relative)
   const isRecoveredPpt = (p: StudioProduct) => Boolean(p.ppt_design?.pptx_relative && p.ppt_design?.recovered)
 
-  /** 按固定分组顺序展平关键词（供侧边栏 chip 展示） */
-  const flattenKeywords = (keywords?: StudioKeywords | null): Array<{ word: string; group: string }> => {
-    if (!keywords) return []
-    const out: Array<{ word: string; group: string }> = []
-    for (const group of Object.keys(KEYWORD_GROUP_LABELS)) {
-      for (const word of keywords[group] ?? []) {
-        if (word) out.push({ word, group })
-      }
-    }
-    return out
-  }
-
   if (loading) {
     return (
       <div className="flex items-center justify-center py-24 text-muted-foreground">
@@ -174,22 +150,10 @@ export function ProductAssetBrowser({
               </span>
             )}
           </div>
-          {selected && (
-            <button
-              type="button"
-              onClick={() => setEditingKeywords(true)}
-              title="编辑关键词组（Key Words）"
-              className="inline-flex shrink-0 items-center gap-1 rounded-md border border-[#24415E]/20 px-1.5 py-0.5 text-[10px] font-medium text-[#24415E] transition-colors hover:bg-[#24415E]/5"
-            >
-              <PenLine className="h-3 w-3" />
-              Key Words
-            </button>
-          )}
         </div>
         {products.map((p) => {
           const active = p.product_id === selectedId
           const meta = STATUS_META[p.status] ?? STATUS_META.failed
-          const keywordChips = flattenKeywords(p.keywords)
           return (
             <button
               key={p.product_id}
@@ -228,30 +192,6 @@ export function ProductAssetBrowser({
                 )}
                 <ChevronRight className="h-3.5 w-3.5 shrink-0 opacity-40" />
               </span>
-              {/* ─── Key Words 列：该任务的关键词 chips ─────── */}
-              {keywordChips.length > 0 && (
-                <span
-                  className="flex flex-wrap gap-1"
-                  title={keywordChips.map((c) => `${KEYWORD_GROUP_LABELS[c.group] ?? c.group}:${c.word}`).join('  ')}
-                >
-                  {keywordChips.slice(0, MAX_KEYWORD_CHIPS).map(({ word, group }) => (
-                    <span
-                      key={`${group}-${word}`}
-                      className={cn(
-                        'max-w-[140px] truncate rounded-full px-1.5 py-0.5 text-[10px] leading-tight',
-                        KEYWORD_CHIP_COLORS[group] ?? 'bg-secondary text-muted-foreground',
-                      )}
-                    >
-                      {word}
-                    </span>
-                  ))}
-                  {keywordChips.length > MAX_KEYWORD_CHIPS && (
-                    <span className="rounded-full bg-secondary px-1.5 py-0.5 text-[10px] text-muted-foreground">
-                      +{keywordChips.length - MAX_KEYWORD_CHIPS}
-                    </span>
-                  )}
-                </span>
-              )}
             </button>
           )
         })}
@@ -277,17 +217,6 @@ export function ProductAssetBrowser({
         )}
       </div>
 
-      {/* ─── Key Words 编辑弹窗 ─────────────────────────────── */}
-      {editingKeywords && selected && (
-        <KeywordsEditor
-          product={selected}
-          onClose={() => setEditingKeywords(false)}
-          onSaved={() => {
-            setEditingKeywords(false)
-            load()
-          }}
-        />
-      )}
     </div>
   )
 }

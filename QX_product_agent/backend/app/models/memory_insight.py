@@ -33,6 +33,10 @@ class MemoryInsight(Base):
         UUIDType, ForeignKey("projects.id", ondelete="CASCADE"),
         nullable=True, index=True, doc="来源项目"
     )
+    studio_product_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUIDType, ForeignKey("studio_products.id", ondelete="CASCADE"),
+        nullable=True, index=True, doc="AI Product Studio 任务 ID"
+    )
     content: Mapped[str] = mapped_column(
         Text, nullable=False, doc="洞察/结论文本（≤500 字）"
     )

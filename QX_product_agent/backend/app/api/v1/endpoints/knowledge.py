@@ -147,11 +147,14 @@ async def search_knowledge(
 async def list_knowledge_assets(
     scope: str | None = Query(None, description="过滤范围: global / domain:{tag}"),
     source: str | None = Query(None, description="过滤来源: upload/obsidian/experience"),
+    studio_product_id: str | None = Query(None, description="Product Studio 任务 ID"),
     limit: int = Query(200, ge=1, le=500),
 ):
     """知识资产列表（全局/领域登记表）。"""
     from app.repositories import ProjectRepo
-    assets = ProjectRepo().list_knowledge_assets(scope=scope, source=source, limit=limit)
+    assets = ProjectRepo().list_knowledge_assets(scope=scope, source=source,
+                                                  studio_product_id=studio_product_id,
+                                                  limit=limit)
     return {
         "total": len(assets),
         "assets": [
@@ -159,6 +162,7 @@ async def list_knowledge_assets(
                 "id": str(a.id),
                 "scope": a.scope,
                 "source": a.source,
+                "studio_product_id": str(a.studio_product_id) if a.studio_product_id else None,
                 "title": a.title,
                 "source_url": a.source_url,
                 "tags": json.loads(a.tags) if a.tags else [],

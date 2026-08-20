@@ -12,12 +12,14 @@ import {
   Archive,
   ChevronDown,
   Download,
+  ExternalLink,
   FileImage,
   FileText,
   FileType,
   Loader2,
   Presentation,
   RefreshCw,
+  Tags,
 } from 'lucide-react'
 import { WorkspaceHeader } from '@/components/WorkspaceHeader'
 import { projectAssetsApi } from '@/lib/api'
@@ -36,6 +38,7 @@ const FILE_ICONS: Record<string, typeof FileText> = {
   doc: FileText,
   ppt: Presentation,
   presentation: FileType,
+  keywords: Tags,
   image: FileImage,
 }
 
@@ -137,7 +140,7 @@ export function ProjectAssetLibraryPage() {
   }
 
   const grouped = (files: ProjectAssetFile[]): Array<[string, ProjectAssetFile[]]> => {
-    const order = ['文档', '演示文稿', '设计图片', '素材']
+    const order = ['文档', '演示文稿', '关键词', '设计图片', '素材']
     const map = new Map<string, ProjectAssetFile[]>()
     for (const f of files) {
       const list = map.get(f.category) ?? []
@@ -233,8 +236,9 @@ export function ProjectAssetLibraryPage() {
                       <span>{lib.doc_count} 份文档（MD/PDF）</span>
                       {lib.has_pptx && <span>{lib.ppt_count} 份演示文稿（PPTX）</span>}
                       {lib.presentation_count > 0 && (
-                        <span>{lib.presentation_count} 份演示导出</span>
+                        <span>{lib.presentation_count} 份 Web 演示</span>
                       )}
+                      {(lib.keywords_count ?? 0) > 0 && <span>{lib.keywords_count} 份 Keywords</span>}
                       <span>{lib.image_count} 张图片</span>
                       <span>共 {formatSize(lib.total_size)}</span>
                       {lib.updated_at && (
@@ -291,13 +295,12 @@ export function ProjectAssetLibraryPage() {
                             </div>
                             <div className="overflow-hidden rounded-xl border">
                               {items.map((file, idx) => {
-                                const Icon = FILE_ICONS[file.kind] ?? FileText
                                 return (
-                              <div
-                                key={`${file.path}-${idx}`}
-                                className="flex items-center gap-3 border-b bg-card px-4 py-2.5 text-xs last:border-b-0"
-                              >
-                                <AssetThumbnail file={file} />
+                                  <div
+                                    key={`${file.path}-${idx}`}
+                                    className="flex items-center gap-3 border-b bg-card px-4 py-2.5 text-xs last:border-b-0"
+                                  >
+                                    <AssetThumbnail file={file} />
                                     <div className="min-w-0 flex-1">
                                       <div className="truncate font-medium" title={file.name}>
                                         {file.name}
@@ -315,6 +318,14 @@ export function ProjectAssetLibraryPage() {
                                     >
                                       <Download className="h-3 w-3" /> 下载
                                     </a>
+                                    {file.viewer_url && (
+                                      <a
+                                        href={file.viewer_url}
+                                        className="flex shrink-0 items-center gap-1 rounded-md border border-[#24415E]/20 bg-card px-2.5 py-1.5 font-medium text-[#24415E] transition-colors hover:bg-[#24415E]/5"
+                                      >
+                                        <ExternalLink className="h-3 w-3" /> 打开演示
+                                      </a>
+                                    )}
                                   </div>
                                 )
                               })}

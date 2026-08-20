@@ -33,6 +33,10 @@ class KnowledgeAsset(Base):
         UUIDType, ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True,
         doc="资产归属用户（NULL=系统级资产）"
     )
+    studio_product_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUIDType, ForeignKey("studio_products.id", ondelete="CASCADE"),
+        nullable=True, index=True, doc="AI Product Studio 任务 ID"
+    )
     source: Mapped[str] = mapped_column(
         String(50), nullable=False, default="upload", server_default="upload",
         doc="来源: upload（上传）/ obsidian（Vault 同步）/ experience（经验包）/ studio（平台记忆）"

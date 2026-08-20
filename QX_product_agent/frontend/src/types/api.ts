@@ -439,6 +439,7 @@ export interface KnowledgeAsset {
   id: string
   scope: string
   source: 'upload' | 'obsidian' | 'experience' | string
+  studio_product_id?: string | null
   title: string
   source_url: string | null
   tags: string[]
@@ -486,6 +487,8 @@ export interface MemoryGraphNode {
   type: MemoryEntityType
   summary: string
   scope: 'global' | 'project'
+  project_id?: string | null
+  studio_product_id?: string | null
   confidence: number
   degree: number
   /** 搜索命中焦点（前端高亮邻域） */
@@ -506,6 +509,7 @@ export interface MemoryGraphEdge {
 export interface MemoryGraphResponse {
   scope: 'global' | 'project'
   project_id: string | null
+  studio_product_id?: string | null
   query: string
   nodes: MemoryGraphNode[]
   edges: MemoryGraphEdge[]
@@ -515,6 +519,7 @@ export interface MemoryGraphResponse {
     truncated: boolean
     limit: number
     projects_covered: number
+    studio_products_covered?: number
   }
 }
 
@@ -530,6 +535,8 @@ export interface MemoryRelationItem {
 
 export interface MemoryInsightItem {
   id: string
+  project_id?: string | null
+  studio_product_id?: string | null
   content: string
   source: string
   confidence: number

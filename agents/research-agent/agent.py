@@ -15,10 +15,16 @@ from typing import Any
 
 from agent_platform.harness.agent_loop import BaseAgent
 from agent_platform.memory.memory_store import MemoryStore
-from agent_platform.schemas import AgentResult, MarketResearch, CompetitorAnalysis
+from agent_platform.schemas import (
+    AgentResult,
+    MarketResearch,
+    CompetitorAnalysis,
+    PriceCompetitorMatrix,
+)
 
 from agents.research_agent.prompts import (
     COMPETITOR_ANALYSIS_SYSTEM,
+    COMPETITOR_MATRIX_SYSTEM,
     MARKET_RESEARCH_SYSTEM,
 )
 
@@ -232,6 +238,49 @@ class ResearchAgent(BaseAgent):
         )
         return result
 
+    def analyze_competitor_matrix(
+        self,
+        idea: str,
+        market_research: MarketResearch,
+        our_asin: str | None = None,
+        product_id: str | None = None,
+        top_n: int = 50,
+        skip_llm: bool = False,
+        source: str = "rainforest",
+        memory: MemoryStore | None = None,
+        memory_namespace: str = "default",
+    ) -> AgentResult:
+        """数据驱动竞品矩阵（MOD）：基于市场研究 → 关键词 → Rainforest 采集 →
+        4 区规则 → LLM 解读 → 双图/CSV/MD 落盘 → PriceCompetitorMatrix。
+
+        上游：market_research（必填）
+        输出：PriceCompetitorMatrix artifact + studio_assets/{product_id}/competitor_matrix/
+        说明：本节点为确定性数据管道（不经过 LLM 生成循环），LLM 仅做 4 区解读；
+              解读失败即报错（已确认策略，不降级）。
+        """
+        keyword = (getattr(market_research, "keyword", None) or idea or "").strip()
+        if not keyword:
+            return AgentResult(success=False, error="缺少主关键词（idea 或 state.keyword 为空）")
+        market_context = ""
+        if market_research.market_size:
+            market_context = market_research.market_size.summary or ""
+        try:
+            from amazon_matrix_mod.run_mod import run_pipeline
+
+            data = run_pipeline(
+                keyword=keyword,
+                top_n=top_n,
+                our_asin=our_asin,
+                product_id=product_id,
+                market_context=market_context,
+                skip_llm=skip_llm,
+                source=source,
+            )
+            PriceCompetitorMatrix.model_validate(data)
+            return AgentResult(success=True, data=data)
+        except Exception as exc:  # noqa: BLE001 —— 失败即报错（节点层重试 2 次后 failed）
+            return AgentResult(success=False, error=f"竞品矩阵管道失败: {exc}")
+
     def execute(
         self,
         task: str,
@@ -248,6 +297,27 @@ class ResearchAgent(BaseAgent):
                 memory_namespace=memory_namespace,
                 instruction=str(state.get("instruction") or ""),
                 sources=state.get("_approved_sources"),
+            )
+
+        if task == "competitor_matrix":
+            research_data = state.get("research")
+            research = (
+                MarketResearch.model_validate(research_data)
+                if research_data is not None
+                else None
+            )
+            if research is None:
+                return AgentResult(success=False, error="缺少上游市场研究成果")
+            return self.analyze_competitor_matrix(
+                idea,
+                research,
+                our_asin=state.get("our_asin"),
+                product_id=state.get("product_id"),
+                top_n=int(state.get("top_n") or 50),
+                skip_llm=bool(state.get("skip_llm")),
+                source=str(state.get("source") or "rainforest"),
+                memory=memory,
+                memory_namespace=memory_namespace,
             )
 
         if task == "competitor_analysis":

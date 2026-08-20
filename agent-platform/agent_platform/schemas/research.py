@@ -12,7 +12,7 @@ Research Agent 输出契约（对齐产品需求）:
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
@@ -80,3 +80,43 @@ class CompetitorAnalysis(BaseModel):
         default_factory=list, description="差异化机会点"
     )
     sources: list[SourceRef] = Field(default_factory=list, description="本资产使用的资料来源（必须来自审核资料列表）")
+
+
+# ─────────────────────────────────────────────────────────────
+# 数据驱动竞品矩阵（competitor_matrix 节点，区别于上文文本型 CompetitorMatrix）
+# ─────────────────────────────────────────────────────────────
+
+ZoneName = Literal["price_gap", "value_opportunity", "demand_heat", "red_ocean", "neutral"]
+
+
+class PriceCompetitorMatrixEntry(BaseModel):
+    """PriceCompetitorMatrix 中的单竞品行（Rainforest 实测字段契约，见执行前最终方案 §1.2）。"""
+
+    asin: str
+    title: str
+    brand: str | None = None
+    main_image_url: str | None = None
+    current_price: float | None = None
+    rating: float | None = None
+    review_count: int | None = None
+    est_monthly_sales: int | None = None
+    bsr: int | None = None
+    bsr_category: str | None = None
+    seller_type: str | None = None
+    is_fba: bool | None = None
+    zone: ZoneName = "neutral"
+
+
+class PriceCompetitorMatrix(BaseModel):
+    """竞品矩阵（数据驱动 MOD 报告）节点输出 —— 供 competitor_matrix 节点与
+    任务资产库「竞品矩阵」资产使用。"""
+
+    keyword: str
+    marketplace: str
+    our_asin: str | None = None
+    products: list[PriceCompetitorMatrixEntry] = Field(default_factory=list)
+    zoning_rules: dict[str, dict[str, Any]] = Field(default_factory=dict)
+    llm_interpretation: dict[str, str] = Field(default_factory=dict)
+    artifacts_paths: dict[str, str] = Field(default_factory=dict)
+    fetched_at: str = ""
+    cost_estimate: dict[str, Any] = Field(default_factory=dict)

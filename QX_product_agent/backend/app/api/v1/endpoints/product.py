@@ -62,6 +62,7 @@ router = APIRouter(prefix="/product", tags=["product-studio"])
 _ASSET_KEYS = (
     "requirement",
     "research",
+    "competitor_matrix",
     "competitor_analysis",
     "strategy",
     "design",

@@ -153,7 +153,7 @@ def extract_memory_from_project(project_id: str) -> dict[str, Any] | None:
     # ── 2. LLM 结构化抽取 ───────────────────────────────────
     try:
         llm = _get_chat_llm(settings)
-        raw = llm.invoke(_EXTRACT_PROMPT.format(corpus=corpus)).content or ""
+        raw = llm.invoke(_EXTRACT_PROMPT.replace("{corpus}", corpus)).content or ""
         data = _parse_extract_json(raw)
     except Exception as e:  # noqa: BLE001
         logger.warning("[记忆图] LLM 抽取失败: %s", e)
@@ -524,6 +524,7 @@ def _evidence_snippet(evidence_json: str | None) -> str:
 def get_memory_graph(
     scope: str = "global",
     project_id: str | None = None,
+    studio_product_id: str | None = None,
     q: str | None = None,
     entity_types: list[str] | None = None,
     limit: int = 300,
@@ -537,10 +538,10 @@ def get_memory_graph(
     """
     repo = _get_repo()
 
-    if scope == "project" and not project_id:
+    if scope == "project" and not project_id and not studio_product_id:
         scope = "global"
     entities = repo.list_memory_entities(
-        scope=scope, project_id=project_id, q=q,
+        scope=scope, project_id=project_id, studio_product_id=studio_product_id, q=q,
         entity_types=entity_types, min_confidence=min_confidence,
     )
 
@@ -612,6 +613,8 @@ def get_memory_graph(
             "type": e.type,
             "summary": e.summary or "",
             "scope": e.scope,
+            "project_id": str(e.project_id) if e.project_id else None,
+            "studio_product_id": str(e.studio_product_id) if e.studio_product_id else None,
             "confidence": round(e.confidence or 0.6, 2),
             "degree": degree.get(str(e.id), 0),
             "focused": str(e.id) in focused_ids,
@@ -624,6 +627,7 @@ def get_memory_graph(
     return {
         "scope": scope,
         "project_id": project_id,
+        "studio_product_id": studio_product_id,
         "query": q or "",
         "nodes": nodes,
         "edges": edges,
@@ -633,6 +637,7 @@ def get_memory_graph(
             "truncated": truncated,
             "limit": limit,
             "projects_covered": len({e.project_id for e in entities if e.project_id}),
+            "studio_products_covered": len({e.studio_product_id for e in entities if e.studio_product_id}),
         },
     }
 

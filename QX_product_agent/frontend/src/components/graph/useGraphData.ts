@@ -35,7 +35,10 @@ export function useGraphData() {
     try {
       const result = await memoryApi.graph({
         scope: filter.scope,
-        projectId: filter.scope === 'project' ? filter.projectId || undefined : undefined,
+        projectId: filter.scope === 'project' && !filter.projectId.startsWith('studio:')
+          ? filter.projectId || undefined : undefined,
+        studioProductId: filter.scope === 'project' && filter.projectId.startsWith('studio:')
+          ? filter.projectId.slice('studio:'.length) : undefined,
         q: filter.q || undefined,
         entityTypes: filter.entityTypes.length ? filter.entityTypes : undefined,
         limit: 400,
@@ -61,7 +64,11 @@ export function useGraphData() {
     async (projectId: string) => {
       setRebuilding(true)
       try {
-        await memoryApi.rebuild(projectId)
+        if (projectId.startsWith('studio:')) {
+          await memoryApi.rebuildStudio(projectId.slice('studio:'.length))
+        } else {
+          await memoryApi.rebuild(projectId)
+        }
         // 等异步沉淀完成后刷新（轮询 3 次）
         for (let i = 0; i < 3; i++) {
           await new Promise((r) => setTimeout(r, 4000))

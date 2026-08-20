@@ -13,7 +13,9 @@ from __future__ import annotations
 
 import json
 import re
+import sys
 import xml.etree.ElementTree as ET
+from pathlib import Path
 
 W, H = 1280, 720
 FONT = "Noto Sans SC, Source Han Sans SC, PingFang SC, Microsoft YaHei, sans-serif"
@@ -209,6 +211,46 @@ def validate_native_contract(svg: str) -> tuple[bool, str]:
         root = ET.fromstring(svg)
     except ET.ParseError as exc:
         return False, f"XML 解析失败: {exc}"
+
+    # 复用 ppt-master 转换器的确定性规则，避免生成整套页面后才发现
+    # gradient/filter/geometry 无法转换。导入失败时保留下面的轻量兜底检查。
+    scripts_dir = Path(__file__).resolve().parent / "vendor" / "ppt-master" / "scripts"
+    if str(scripts_dir) not in sys.path:
+        sys.path.insert(0, str(scripts_dir))
+    try:
+        from svg_to_pptx.drawingml.paths import (
+            project_freeform_geometry_errors,
+            project_gradient_geometry_errors,
+        )
+        from svg_to_pptx.drawingml.utils import (
+            project_definition_errors,
+            project_filter_errors,
+            project_geometry_length_errors,
+            project_gradient_errors,
+            project_paint_reference_errors,
+            project_paint_errors,
+            project_transform_errors,
+        )
+        from svg_to_pptx.drawingml.text_properties import project_text_property_errors
+
+        errors: list[str] = []
+        for validator in (
+            project_geometry_length_errors,
+            project_freeform_geometry_errors,
+            project_paint_errors,
+            project_paint_reference_errors,
+            project_definition_errors,
+            project_gradient_errors,
+            project_gradient_geometry_errors,
+            project_filter_errors,
+            project_transform_errors,
+            project_text_property_errors,
+        ):
+            errors.extend(validator(root))
+        if errors:
+            return False, errors[0]
+    except (ImportError, ModuleNotFoundError):
+        pass
 
     for element in root.iter():
         tag = str(element.tag).rsplit("}", 1)[-1].lower()

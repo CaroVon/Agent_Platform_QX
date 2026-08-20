@@ -11,7 +11,11 @@ from __future__ import annotations
 from pydantic import BaseModel, Field
 
 from agent_platform.schemas.requirement import RequirementSpec
-from agent_platform.schemas.research import CompetitorAnalysis, MarketResearch
+from agent_platform.schemas.research import (
+    CompetitorAnalysis,
+    MarketResearch,
+    PriceCompetitorMatrix,
+)
 from agent_platform.schemas.product import ProductStrategy
 from agent_platform.schemas.design import UXDesign
 from agent_platform.schemas.presentation import Presentation
@@ -37,6 +41,10 @@ class ProductAssetPackage(BaseModel):
     requirement: RequirementSpec | None = None
     research: MarketResearch | None = None
     competitor_analysis: CompetitorAnalysis | None = None
+    competitor_matrix: PriceCompetitorMatrix | None = Field(
+        default=None,
+        description="数据驱动竞品矩阵 MOD 报告（competitor_matrix 节点）",
+    )
     strategy: ProductStrategy | None = None
     design: UXDesign | None = None
     presentation: Presentation | None = None
