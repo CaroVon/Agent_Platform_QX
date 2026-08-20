@@ -11,6 +11,9 @@ export default defineConfig({
   },
   server: {
     port: 5173,
+    host: true,
+    // Cloudflare tunnel 公网域名放行（下游手工使用场景）
+    allowedHosts: true,
     proxy: {
       '/api': {
         target: 'http://localhost:8000',
