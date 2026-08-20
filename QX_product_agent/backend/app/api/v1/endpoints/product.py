@@ -1293,7 +1293,13 @@ _SUGGEST_SYSTEM = """你是产品创意顾问。根据用户已输入的部分�
 
 
 class SuggestRequest(BaseModel):
-    input: str = Field(..., min_length=2, max_length=200)
+    input: str | None = Field(default=None, min_length=2, max_length=200)
+    # 兼容别名（历史前端/脚本曾传 idea）
+    idea: str | None = Field(default=None, min_length=2, max_length=200)
+
+    @property
+    def text(self) -> str:
+        return (self.input or self.idea or "").strip()
 
 
 class SuggestResponse(BaseModel):
@@ -1318,7 +1324,7 @@ async def suggest_product_directions(body: SuggestRequest):
         )
         resp = llm.invoke([
             {"role": "system", "content": _SUGGEST_SYSTEM},
-            {"role": "user", "content": f"我目前的想法：{body.input.strip()}"},
+            {"role": "user", "content": f"我目前的想法：{body.text}"},
         ])
         text = resp.content or ""
         # 提取 JSON

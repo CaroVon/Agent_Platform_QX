@@ -136,7 +136,11 @@ async function request<T>(
     let detail = `HTTP ${res.status}`
     try {
       const body = await res.json()
+      // 422 校验错误的 detail 是数组/对象（FastAPI 验证器结构），需序列化为可读文本
       detail = body.detail ?? detail
+      if (typeof detail !== 'string') {
+        detail = JSON.stringify(detail)
+      }
     } catch {
       // ignore JSON parse errors
     }
@@ -605,7 +609,8 @@ export const productApi = {
   async suggest(idea: string): Promise<{ suggestions: string[] }> {
     return request<{ suggestions: string[] }>(`/product/suggest`, {
       method: 'POST',
-      body: JSON.stringify({ idea }),
+      // 后端契约字段为 input（此前误传 idea → 422）
+      body: JSON.stringify({ input: idea }),
     })
   },
 
