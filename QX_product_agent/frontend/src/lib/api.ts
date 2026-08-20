@@ -117,13 +117,15 @@ async function request<T>(
   _retried = false,
 ): Promise<T> {
   const token = await ensureAuthToken()
+  // headers 合并而非整表覆盖：调用方自带 headers（如 Idempotency-Key）时
+  // 必须保留默认 Content-Type，否则后端无法按 JSON 解析 body（422 实测）
   const res = await fetch(`${API_BASE}${url}`, {
+    ...options,
     headers: {
       'Content-Type': 'application/json',
       Authorization: `Bearer ${token}`,
       ...options?.headers,
     },
-    ...options,
   })
 
   // token 失效（重启换密钥等）：清缓存重试一次
