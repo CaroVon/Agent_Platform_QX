@@ -81,7 +81,7 @@ export function GraphSidebar({ entityId, onClose, onDeleted }: GraphSidebarProps
   }
 
   return (
-    <aside className="flex w-80 shrink-0 flex-col overflow-hidden rounded-lg border border-border bg-card shadow-elev-sm">
+    <aside className="flex max-h-[620px] w-80 shrink-0 self-start flex-col overflow-hidden rounded-lg border border-border bg-card shadow-elev-sm">
       <div className="flex items-center justify-between border-b border-border px-4 py-3">
         <h3 className="text-sm font-semibold">实体详情</h3>
         <button
@@ -115,14 +115,14 @@ export function GraphSidebar({ entityId, onClose, onDeleted }: GraphSidebarProps
                     </span>
                   )}
                 </div>
-                <h4 className="mt-1.5 text-base font-semibold">{entity.name}</h4>
+                <h4 className="mt-1.5 break-words text-base font-semibold">{entity.name}</h4>
                 {entity.aliases && entity.aliases.length > 0 && (
-                  <p className="mt-0.5 text-xs text-muted-foreground">
+                  <p className="mt-0.5 break-words text-xs text-muted-foreground">
                     又名：{entity.aliases.join(' / ')}
                   </p>
                 )}
                 {entity.summary && (
-                  <p className="mt-2 text-xs leading-relaxed text-muted-foreground">
+                  <p className="mt-2 break-words text-xs leading-relaxed text-muted-foreground">
                     {entity.summary}
                   </p>
                 )}
@@ -141,14 +141,14 @@ export function GraphSidebar({ entityId, onClose, onDeleted }: GraphSidebarProps
                       key={`${rel.relation_id ?? rel.other?.id ?? i}-${i}`}
                       className="rounded-md border border-border bg-background/50 px-3 py-2"
                     >
-                      <div className="flex items-center gap-1.5 text-xs">
+                      <div className="flex flex-wrap items-center gap-1.5 text-xs">
                         <span className="text-muted-foreground">
                           {rel.direction === 'in' ? '←' : '→'}
                         </span>
-                        <span className="font-medium text-foreground">
+                        <span className="break-all font-medium text-foreground">
                           {rel.other?.name ?? rel.other?.id ?? '（未知实体）'}
                         </span>
-                        <span className="rounded bg-secondary px-1.5 py-0.5">
+                        <span className="max-w-full break-all rounded bg-secondary px-1.5 py-0.5">
                           {rel.relation}
                         </span>
                       </div>
