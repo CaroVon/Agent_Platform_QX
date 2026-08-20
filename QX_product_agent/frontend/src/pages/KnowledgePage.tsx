@@ -7,7 +7,6 @@
  */
 
 import { useEffect, useMemo, useState } from 'react'
-import { Link } from 'react-router-dom'
 import {
   Brain,
   Database,
@@ -20,7 +19,7 @@ import {
 import { WorkspaceHeader } from '@/components/WorkspaceHeader'
 import { FileUploader } from '@/components/FileUploader'
 import { ImageSearch } from '@/components/ImageSearch'
-import { productApi, projectsApi, knowledgeApi, API_BASE, ensureAuthToken } from '@/lib/api'
+import { projectsApi, knowledgeApi, API_BASE, ensureAuthToken } from '@/lib/api'
 import type {
   ProjectResponse,
   KnowledgeSearchHit,
@@ -52,7 +51,6 @@ export function KnowledgePage() {
   const [tab, setTab] = useState<Tab>('docs')
   const [documents, setDocuments] = useState<KnowledgeDocument[]>([])
   const [projects, setProjects] = useState<ProjectResponse[]>([])
-  const [studioProducts, setStudioProducts] = useState<Array<{ product_id: string; idea: string; status: string }>>([])
   const [projectId, setProjectId] = useState('')
   const [loading, setLoading] = useState(true)
 
@@ -77,21 +75,16 @@ export function KnowledgePage() {
     let cancelled = false
     const load = async () => {
       try {
-        const [docs, projList, studioList] = await Promise.all([
+        const [docs, projList] = await Promise.all([
           fetch(`${API_BASE}/knowledge/documents`, {
             headers: { Authorization: `Bearer ${await ensureAuthToken()}` },
           }).then((r) => (r.ok ? r.json() : [])),
           projectsApi.list(0, 100),
-          productApi.list(0, 100),
         ])
         if (cancelled) return
         setDocuments(Array.isArray(docs) ? docs : [])
         setProjects(projList)
-        setStudioProducts(studioList)
-        if (!projectId) {
-          if (projList.length > 0) setProjectId(projList[0].id)
-          else if (studioList.length > 0) setProjectId(`studio:${studioList[0].product_id}`)
-        }
+        if (!projectId && projList.length > 0) setProjectId(projList[0].id)
       } finally {
         if (!cancelled) setLoading(false)
       }
@@ -102,9 +95,6 @@ export function KnowledgePage() {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
-
-  const studioProductId = projectId.startsWith('studio:') ? projectId.slice('studio:'.length) : ''
-  const legacyProjectId = studioProductId ? '' : projectId
 
   const loadImages = useMemo(
     () => async (pid: string) => {
@@ -125,11 +115,10 @@ export function KnowledgePage() {
     () => async (pid: string) => {
       setDomainLoading(true)
       try {
-        const studioId = pid.startsWith('studio:') ? pid.slice('studio:'.length) : ''
         const [sim, exp, ast] = await Promise.all([
-          studioId ? Promise.resolve(null) : projectsApi.getSimilar(pid).catch(() => null),
+          projectsApi.getSimilar(pid).catch(() => null),
           knowledgeApi.domains().catch(() => null),
-          knowledgeApi.assets(studioId ? { studioProductId: studioId } : undefined).catch(() => null),
+          knowledgeApi.assets().catch(() => null),
         ])
         setSimilar(sim?.similar_projects ?? [])
         setBorrowable(sim?.borrowable_experience ?? '')
@@ -143,17 +132,17 @@ export function KnowledgePage() {
   )
 
   useEffect(() => {
-    if (!legacyProjectId) return
-    void loadImages(legacyProjectId)
+    if (!projectId) return
+    void loadImages(projectId)
     void loadDomain(projectId)
-  }, [projectId, legacyProjectId, loadImages, loadDomain])
+  }, [projectId, loadImages, loadDomain])
 
   // 切到图片/领域 Tab 时刷新
   useEffect(() => {
-    if (tab === 'images' && legacyProjectId) void loadImages(legacyProjectId)
+    if (tab === 'images' && projectId) void loadImages(projectId)
     if (tab === 'domain' && projectId) void loadDomain(projectId)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tab, legacyProjectId, projectId, loadImages, loadDomain])
+  }, [tab])
 
   const doSearch = async () => {
     if (!query.trim() || searching) return
@@ -161,8 +150,7 @@ export function KnowledgePage() {
     setSearched(true)
     try {
       const data = await knowledgeApi.search(query.trim(), {
-        scope: studioProductId ? 'task' : undefined,
-        projectId: (studioProductId || legacyProjectId) || undefined,
+        projectId: projectId || undefined,
         k: 12,
       })
       setHits(data.hits)
@@ -230,13 +218,12 @@ export function KnowledgePage() {
           onChange={(e) => setProjectId(e.target.value)}
           className="h-9 w-full max-w-md rounded-md border border-input bg-background px-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
         >
-          {projects.length === 0 && studioProducts.length === 0 && <option value="">（暂无任务）</option>}
-          {projects.length > 0 && <optgroup label="研究项目">
-            {projects.map((p) => <option key={p.id} value={p.id}>{p.topic}</option>)}
-          </optgroup>}
-          {studioProducts.length > 0 && <optgroup label="Product Studio 任务">
-            {studioProducts.map((p) => <option key={p.product_id} value={`studio:${p.product_id}`}>{p.idea}</option>)}
-          </optgroup>}
+          {projects.length === 0 && <option value="">（暂无研究项目）</option>}
+          {projects.map((p) => (
+            <option key={p.id} value={p.id}>
+              {p.topic}
+            </option>
+          ))}
         </select>
       </div>
 
@@ -332,7 +319,7 @@ export function KnowledgePage() {
                   </ul>
                 )}
 
-                  {legacyProjectId && (
+                {projectId && (
                   <div className="mt-6 border-t pt-5">
                     <h3 className="mb-3 text-sm font-medium">文件上传（文档 → 任务知识库）</h3>
                     <FileUploader projectId={projectId} />
@@ -343,7 +330,7 @@ export function KnowledgePage() {
           )}
 
           {/* ═══════════ Tab2: 图片知识 ═══════════ */}
-          {tab === 'images' && legacyProjectId && (
+          {tab === 'images' && projectId && (
             <>
               <section className="rounded-2xl border bg-card p-7 shadow-sm">
                 <div className="mb-2 flex items-center gap-2">
@@ -354,7 +341,7 @@ export function KnowledgePage() {
                     MiniMax VL 自动分析（概述/OCR/标签）后写入任务知识库
                   </span>
                 </div>
-                <FileUploader projectId={legacyProjectId} imageKb />
+                <FileUploader projectId={projectId} imageKb />
               </section>
 
               <section className="rounded-2xl border bg-card p-7 shadow-sm">
@@ -443,12 +430,6 @@ export function KnowledgePage() {
                   <span className="text-xs text-muted-foreground">
                     主题向量 + 领域标签 + 模板 加权相似度
                   </span>
-                  <Link
-                    to="/memory"
-                    className="ml-auto flex shrink-0 items-center gap-1.5 rounded-md bg-secondary px-3 py-1.5 text-xs font-medium text-muted-foreground transition-colors hover:text-foreground"
-                  >
-                    🕸️ 查看知识关系图
-                  </Link>
                 </div>
                 {domainLoading ? (
                   <div className="flex items-center justify-center py-8 text-muted-foreground">

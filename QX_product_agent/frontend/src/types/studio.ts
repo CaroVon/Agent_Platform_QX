@@ -6,7 +6,25 @@
  * ============================================================
  */
 
-export type StudioStatus = 'queued' | 'running' | 'completed' | 'failed' | 'waiting_approval' | 'paused'
+export type StudioStatus =
+  | 'queued'
+  | 'running'
+  | 'paused'
+  | 'completed'
+  | 'failed'
+  | 'waiting_approval'
+
+export type KeywordGroups = Record<string, string[]>
+
+export type SuggestionResponse = {
+  suggestions: string[]
+}
+
+export type ClarifyRequest = {
+  idea: string
+  messages: Array<{ role: 'user' | 'assistant'; content: string }>
+  max_rounds?: number
+}
 
 export interface StudioProductCreateResponse {
   product_id: string
@@ -143,20 +161,6 @@ import type {
   QualityGateReport,
 } from '@/types/presentation'
 
-// ─── Key Words（任务完成后 AI 总结，用户可编辑） ──────────────
-
-/** 关键词组：方面 → 关键词列表（design 设计 / function 功能 / appearance 外观 / audience 人群 / scenario 场景） */
-export type StudioKeywords = Record<string, string[]>
-
-/** 关键词组固定顺序与中文标签（侧边栏展示与编辑弹窗共用） */
-export const KEYWORD_GROUP_LABELS: Record<string, string> = {
-  design: '设计',
-  function: '功能',
-  appearance: '外观',
-  audience: '人群',
-  scenario: '场景',
-}
-
 // @deprecated 旧版 SlideDeck（P2 前资产包，兼容展示用）
 export type SlideBlockType =
   | 'title' | 'subtitle' | 'text' | 'bullets'
@@ -199,6 +203,10 @@ export interface StudioProduct {
   error_message?: string | null
   created_at?: string | null
   updated_at?: string | null
+  keywords?: KeywordGroups | null
+  node_status?: Record<string, string>
+  node_models?: Record<string, string>
+  errors?: Record<string, string>
   requirement?: Record<string, unknown> | null
   research?: MarketResearch | null
   competitor_analysis?: CompetitorAnalysis | null
@@ -224,11 +232,6 @@ export interface StudioProduct {
   } | null
   critic_score?: number | null
   gate_report?: QualityGateReport | null
-  /** Key Words：设计/功能/外观/人群/场景 关键词组（AI 总结，用户可编辑） */
-  keywords?: StudioKeywords | null
-  node_status: Record<string, string>
-  node_models?: Record<string, string>
-  errors: Record<string, string>
 }
 
 export interface ExportPdfResponse {
@@ -237,55 +240,14 @@ export interface ExportPdfResponse {
   message: string
 }
 
-// ─── 项目资产库（每个任务的全部资产归档 / 单文件下载 / 打包下载） ────
-
-/** 单个资产文件条目（GET /api/v1/project-assets/{product_id} 响应中的 files） */
-export interface ProjectAssetFile {
-  name: string
-  /** 相对 OUTPUT_DIR 的路径（zip 打包与后端校验用） */
-  path: string
-  /** 预览/下载 URL（/api/v1/files/... 静态地址） */
-  url: string
+/** P7: PPT 资产库索引项（GET /api/v1/product/ppt-assets 响应） */
+export interface PptAssetIndexEntry {
+  folder_name: string
+  title: string
+  pptx_url: string
   size: number
-  /** doc | ppt | presentation | keywords | image */
-  kind: string
-  /** 文档 | 演示文稿 | 设计图片 | 素材 */
-  category: string
-  /** 由项目资产库服务产出的文本 md/pdf */
-  generated?: boolean
-  pages?: number
-  preview_urls?: string[]
-  preview_url?: string | null
-  viewer_url?: string | null
-}
-
-/** 任务资产库明细（GET /api/v1/project-assets/{product_id} 响应） */
-export interface ProjectAssetLibrary {
-  product_id: string
-  idea: string
-  status: string
-  updated_at?: string | null
-  files: ProjectAssetFile[]
-  total_size: number
-  generated_at?: string | null
-}
-
-/** 任务资产库摘要（GET /api/v1/project-assets 列表项） */
-export interface ProjectAssetSummary {
-  product_id: string
-  idea: string
-  status: string
-  updated_at?: string | null
-  file_count: number
-  total_size: number
-  doc_count: number
-  ppt_count: number
-  presentation_count: number
-  keywords_count?: number
-  image_count: number
-  has_pptx: boolean
-  has_presentation?: boolean
-  has_keywords?: boolean
+  svg_count: number
+  created_at?: string | null
   svg_previews: string[]
 }
 

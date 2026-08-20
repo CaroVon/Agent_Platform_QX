@@ -241,6 +241,8 @@ async def create_product(
             idea_hash=idea_hash,
             status=StudioProductStatus.QUEUED,
             owner_id=user.id,
+            theme_id=(body.theme_id or None) or None,
+            style_id=(body.style_id or None) or None,
         )
         db.add(product)
         try:
@@ -271,6 +273,14 @@ async def create_product(
         idea=product.idea,
         status=product.status.value,
     )
+
+
+@router.get("/ppt-options", response_model=dict)
+async def get_ppt_options(user: User = Depends(get_current_user)):
+    """模板选择器数据源：设计主题（9 套，含预览图路径）+ 风格方法论（13 套）。"""
+    from app.services.ppt_options import ppt_options
+
+    return ppt_options()
 
 
 @router.get("/ppt-assets", response_model=list[dict])
@@ -557,6 +567,8 @@ async def update_product_keywords(
             groups[key] = [str(v).strip() for v in values if str(v).strip()]
 
     product.keywords = json.dumps(groups, ensure_ascii=False)
+    # 手动编辑标记：后续 regenerate 不再自动重算 keywords
+    product.keywords_edited = True
     if product.asset_package:
         try:
             package = json.loads(product.asset_package)
@@ -892,11 +904,24 @@ async def regenerate_product_asset(
     package[asset] = result
     product.asset_package = json.dumps(package, ensure_ascii=False)
     await db.commit()
+
+    # MOD（竞品矩阵）重生成后：keywords 自动重算（用户手动编辑过则跳过）
+    keywords_refreshed = None
+    if asset == "competitor_matrix":
+        try:
+            from app.services.product_keywords import refresh_keywords_if_auto
+
+            keywords_refreshed = await asyncio.to_thread(
+                refresh_keywords_if_auto, str(product_id))
+        except Exception as exc:  # noqa: BLE001 —— 重算失败不影响 regenerate 结果
+            keywords_refreshed = {"refreshed": False, "reason": str(exc)[:120]}
+
     return {
         "product_id": str(product.id),
         "asset": asset,
         "updated": True,
         "versions": len(versions.get(asset) or []),
+        "keywords_refreshed": keywords_refreshed,
     }
 
 

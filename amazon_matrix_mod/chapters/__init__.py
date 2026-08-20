@@ -28,11 +28,13 @@ def render_all(df: pd.DataFrame, products_raw: dict, search_raw: dict | None,
     chapters.append(ch03_price.analyze(df, out_dir))
     chapters.append(ch04_demand.analyze(df, out_dir))
 
-    # 第 5 章：气泡矩阵 = 主报告图（mod_report.png），由合成阶段引用
-    chapters.append({"num": 5, "title": "竞品气泡矩阵（核心图）",
+    # 第 5 章：气泡矩阵 = 核心主图（matrix_chart.svg），由 run_mod 顶层生成
+    chapters.append({"num": 5, "title": "竞品矩阵（核心图）",
                      "conclusion": [f"N={len(df)} 个竞品；4 区分布见分区引擎"],
-                     "images": ["mod_report.png"],
-                     "md": "## 5. 竞品气泡矩阵\n\n见主报告图 `mod_report.png`（价格×月销，气泡=竞品主图，4 区着色）。\n"})
+                     "images": ["matrix_chart.svg"],
+                     "md": "## 5. 竞品气泡矩阵\n\n见核心主图 `matrix_chart.svg`"
+                           "（价格×月销对数轴，缩略图=竞品主图，边框色=分区，"
+                           "我方产品金框高亮；PPT 版见 competitor_matrix.pptx）。\n"})
 
     chapters.append(ch06_health.analyze(df, products_raw, out_dir))
     chapters.append(ch07_reviews.analyze(df, reviews_raw, products_raw, out_dir))

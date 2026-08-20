@@ -1,19 +1,20 @@
-"""章节引擎公共组件 —— 图表样式/中文字体/保存。"""
+"""章节引擎公共组件 —— SVG 图表渲染（svgcharts 层，matplotlib 已移除）。"""
 from __future__ import annotations
 
 import os
 
-import matplotlib
-matplotlib.use("Agg")
-import matplotlib.pyplot as plt  # noqa: E402
-from matplotlib.font_manager import FontProperties, fontManager  # noqa: E402
+from amazon_matrix_mod.svgcharts import charts
+from amazon_matrix_mod.svgcharts.svg import el, save, svg_document, text
+from amazon_matrix_mod.svgcharts.style import C, FONT_CHAIN, SERIES
 
-from amazon_matrix_mod.plot_static import _CJK  # 复用中文字体探测
+# 章节图统一画布（白色底，嵌入报告/PPT 均可）
+CHART_W, CHART_H = 1100, 460
 
+# 兼容旧引用的颜色常量（matplotlib 版遗留命名）
 BRAND_COLORS = {
     "blue": "#1565C0", "green": "#2E7D32", "amber": "#F9A825",
     "red": "#C62828", "grey": "#9E9E9E", "navy": "#12355B",
-    "light": "#E3F2FD",
+    "light": "#DCE7F5",
 }
 ZONE_COLORS = {
     "price_gap": "#2E7D32", "value_opportunity": "#1565C0",
@@ -21,19 +22,16 @@ ZONE_COLORS = {
 }
 
 
-def setup_style():
-    plt.rcParams["font.sans-serif"] = [_CJK]
-    plt.rcParams["axes.unicode_minus"] = False
-    plt.rcParams["figure.facecolor"] = "white"
-
-
-def save_chart(fig, out_dir: str, name: str, dpi: int = 110) -> str:
+def save_chart(draw, out_dir: str, name: str, w: int = CHART_W,
+               h: int = CHART_H) -> str:
+    """渲染章节图。draw(root) 在白色画布内绘制；返回文件名（非绝对路径，
+    供 md 相对引用与 run_mod 统一拼装）。"""
     os.makedirs(out_dir, exist_ok=True)
-    path = os.path.join(out_dir, name)
-    fig.savefig(path, dpi=dpi, bbox_inches="tight", facecolor="white")
-    plt.close(fig)
-    return path
+    root = svg_document(w, h, bg="#FFFFFF")
+    draw(root)
+    save(root, os.path.join(out_dir, name))
+    return name
 
 
-def fp(size: int = 10, weight: str = "normal") -> FontProperties:
-    return FontProperties(family=_CJK, size=size, weight=weight)
+def chart_title(root, title: str, y: float = 34) -> None:
+    text(root, 40, y, title, size=15, fill=C.NAVY, weight="600", family=FONT_CHAIN)

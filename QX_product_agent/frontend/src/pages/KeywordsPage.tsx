@@ -1,22 +1,33 @@
-/** Product Studio 一级 Keywords 资产管理页。 */
+/**
+ * KeywordsPage —— 关键词资产管理
+ *
+ * 后端：PUT /api/v1/product/{product_id}/keywords
+ * Groups（固定 5 个）：design / function / appearance / audience / scenario
+ */
 
 import { useCallback, useEffect, useState } from 'react'
 import { Loader2, PenLine, RefreshCw, Tags } from 'lucide-react'
-import { KeywordsEditor } from '@/components/KeywordsEditor'
 import { WorkspaceHeader } from '@/components/WorkspaceHeader'
 import { productApi } from '@/lib/api'
-import { KEYWORD_GROUP_LABELS, type StudioProduct } from '@/types/studio'
+import type { StudioProduct } from '@/types/studio'
+import { cn } from '@/lib/utils'
+import { Button } from '@/components/common/button'
+import { KeywordsEditor, KEYWORD_GROUPS } from '@/components/KeywordsEditor'
 
-const GROUP_COLORS: Record<string, string> = {
-  design: 'bg-sky-500/10 text-sky-700 border-sky-500/20',
-  function: 'bg-emerald-500/10 text-emerald-700 border-emerald-500/20',
-  appearance: 'bg-violet-500/10 text-violet-700 border-violet-500/20',
-  audience: 'bg-amber-500/10 text-amber-700 border-amber-500/20',
-  scenario: 'bg-rose-500/10 text-rose-700 border-rose-500/20',
+const COLOR_MAP: Record<string, string> = {
+  design: 'border-primary/40 bg-primary/10 text-primary',
+  function: 'border-accent/40 bg-accent/10 text-accent',
+  appearance: 'border-warning/40 bg-warning/10 text-warning',
+  audience: 'border-success/40 bg-success/10 text-success',
+  scenario: 'border-muted-foreground/30 bg-muted text-muted-foreground',
 }
 
-const countKeywords = (product: StudioProduct) =>
-  Object.values(product.keywords ?? {}).reduce((sum, words) => sum + words.length, 0)
+function keywordCount(product: StudioProduct): number {
+  return Object.values(product.keywords ?? {}).reduce(
+    (sum, words) => sum + (words?.length ?? 0),
+    0,
+  )
+}
 
 export function KeywordsPage() {
   const [products, setProducts] = useState<StudioProduct[]>([])
@@ -31,15 +42,20 @@ export function KeywordsPage() {
     try {
       setError('')
       const list = await productApi.list(0, 100)
+      // 只保留已完成的任务（关键词在该状态下生成）
+      const candidates = list.filter(
+        (item) =>
+          item.status === 'completed' || item.status === 'running' || item.status === 'queued',
+      )
+      // 拉取每个的详情（含 keywords）
       const details = await Promise.all(
-        list.filter((item) => item.status === 'completed')
-          .map((item) => productApi.get(item.product_id).catch(() => null)),
+        candidates.map((item) =>
+          productApi.get(item.product_id).catch(() => null),
+        ),
       )
       const merged = details.filter((item): item is StudioProduct => item !== null)
       setProducts(merged)
       setSelectedId((current) => {
-        const requested = new URLSearchParams(window.location.search).get('product_id')
-        if (requested && merged.some((item) => item.product_id === requested)) return requested
         if (current && merged.some((item) => item.product_id === current)) return current
         return merged[0]?.product_id ?? ''
       })
@@ -51,7 +67,9 @@ export function KeywordsPage() {
     }
   }, [])
 
-  useEffect(() => { load() }, [load])
+  useEffect(() => {
+    load()
+  }, [load])
 
   const selected = products.find((item) => item.product_id === selectedId) ?? null
 
@@ -59,56 +77,166 @@ export function KeywordsPage() {
     <div>
       <WorkspaceHeader
         crumb="创作 · Keywords"
-        title="Keywords"
-        description="按 Product Studio 任务管理设计、功能、外观、人群与场景关键词，并作为项目资产归档。"
+        title="关键词资产"
+        description="按 Product Studio 任务管理设计、功能、外观、人群与场景关键词。修改后同步到任务资产库。"
       />
+
       <div className="mb-6 flex items-center justify-between">
-        <div className="text-sm text-muted-foreground">共 <span className="font-semibold text-foreground">{products.length}</span> 个任务</div>
-        <button type="button" onClick={() => load()} disabled={refreshing}
-          className="flex items-center gap-2 rounded-lg border bg-card px-4 py-2 text-xs font-medium text-muted-foreground hover:text-foreground disabled:opacity-50">
-          <RefreshCw className={`h-3.5 w-3.5 ${refreshing ? 'animate-spin' : ''}`} /> 刷新
-        </button>
+        <div className="text-sm text-muted-foreground">
+          共{' '}
+          <span className="font-mono font-semibold text-foreground">
+            {products.length}
+          </span>{' '}
+          个任务
+        </div>
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={() => load()}
+          disabled={refreshing}
+        >
+          <RefreshCw
+            className={cn('h-3.5 w-3.5', refreshing && 'animate-spin')}
+          />
+          刷新
+        </Button>
       </div>
+
       {loading ? (
-        <div className="flex items-center justify-center py-24 text-muted-foreground"><Loader2 className="mr-2 h-5 w-5 animate-spin" /> 加载 Keywords…</div>
+        <div className="flex items-center justify-center py-24 font-mono text-[12px] uppercase tracking-[0.18em] text-muted-foreground">
+          <Loader2 className="mr-2 h-5 w-5 animate-spin" />
+          加载关键词
+          <span className="typing-dot" />
+          <span className="typing-dot" />
+          <span className="typing-dot" />
+        </div>
       ) : error ? (
-        <div className="rounded-xl border border-destructive/30 bg-destructive/5 px-5 py-3 text-sm text-destructive">{error}</div>
+        <div className="border border-destructive/40 bg-destructive/10 px-5 py-3 font-mono text-[12px] text-destructive">
+          <span className="font-semibold">[ERROR]</span> {error}
+        </div>
       ) : products.length === 0 ? (
-        <div className="flex min-h-[360px] flex-col items-center justify-center rounded-2xl border border-dashed bg-card/40 text-center">
-          <Tags className="h-8 w-8 text-muted-foreground/40" /><p className="mt-4 text-sm font-medium">暂无已完成任务</p>
-          <p className="mt-1 text-xs text-muted-foreground">Product Studio 任务完成后，AI 关键词会自动出现在这里。</p>
+        <div className="flex min-h-[360px] flex-col items-center justify-center rounded-lg border border-dashed border-border bg-card/40 text-center">
+          <Tags className="h-8 w-8 text-muted-foreground/40" />
+          <p className="mt-4 text-sm font-medium">暂无关键词资产</p>
+          <p className="mt-1 max-w-md text-xs text-muted-foreground">
+            Product Studio 任务完成后，AI 提取的关键词会自动出现在这里。
+          </p>
         </div>
       ) : (
         <div className="grid gap-6 lg:grid-cols-[280px_1fr]">
+          {/* 左：任务列表 */}
           <aside className="space-y-1.5">
-            {products.map((product) => (
-              <button key={product.product_id} type="button" onClick={() => setSelectedId(product.product_id)}
-                className={`flex w-full items-center gap-3 rounded-lg px-3 py-3 text-left transition-colors ${product.product_id === selectedId ? 'bg-secondary text-foreground' : 'text-muted-foreground hover:bg-secondary/50 hover:text-foreground'}`}>
-                <Tags className="h-4 w-4 shrink-0" /><span className="min-w-0 flex-1 truncate text-sm">{product.idea}</span>
-                <span className="shrink-0 rounded-full bg-background px-2 py-0.5 text-[10px]">{countKeywords(product)}</span>
-              </button>
-            ))}
+            {products.map((product) => {
+              const count = keywordCount(product)
+              const isActive = product.product_id === selectedId
+              return (
+                <button
+                  key={product.product_id}
+                  type="button"
+                  onClick={() => setSelectedId(product.product_id)}
+                  className={cn(
+                    'flex w-full items-center gap-3 rounded-md px-3 py-3 text-left transition-colors',
+                    isActive
+                      ? 'bg-primary/10 text-primary'
+                      : 'text-muted-foreground hover:bg-secondary hover:text-foreground',
+                  )}
+                >
+                  <Tags className="h-4 w-4 shrink-0" />
+                  <span className="min-w-0 flex-1 truncate text-sm">
+                    {product.idea}
+                  </span>
+                  {count > 0 && (
+                    <span className="font-mono text-[10px] text-primary">
+                      {count}
+                    </span>
+                  )}
+                </button>
+              )
+            })}
           </aside>
+
+          {/* 右：选中任务的关键词 */}
           {selected && (
-            <section className="rounded-2xl border bg-card p-6 shadow-sm">
-              <div className="flex items-start justify-between gap-4 border-b pb-5">
-                <div className="min-w-0"><div className="text-[10px] font-medium uppercase tracking-widest text-muted-foreground">Key Words · 项目资产</div>
-                  <h2 className="mt-2 text-lg font-semibold">{selected.idea}</h2>
-                  <p className="mt-1 text-xs text-muted-foreground">{countKeywords(selected)} 个关键词，保存后同步进入该任务项目资产库。</p>
+            <section className="rounded-lg border border-border bg-card p-6 shadow-elev-sm">
+              <div className="flex flex-wrap items-start justify-between gap-3 border-b border-border pb-5">
+                <div className="min-w-0">
+                  <div className="font-mono text-[11px] uppercase tracking-[0.18em] text-muted-foreground">
+                    Key Words · 项目资产
+                  </div>
+                  <h2 className="mt-1.5 font-display text-lg font-semibold tracking-tight text-foreground">
+                    {selected.idea}
+                  </h2>
+                  <p className="mt-1 font-mono text-[11px] text-muted-foreground">
+                    共{' '}
+                    <span className="font-semibold text-primary">
+                      {keywordCount(selected)}
+                    </span>{' '}
+                    个关键词 · 保存后同步到项目资产库
+                  </p>
                 </div>
-                <button type="button" onClick={() => setEditing(true)} className="flex shrink-0 items-center gap-1.5 rounded-lg bg-[#24415E] px-4 py-2 text-xs font-medium text-white hover:opacity-90"><PenLine className="h-3.5 w-3.5" /> 编辑关键词</button>
+                <Button onClick={() => setEditing(true)}>
+                  <PenLine className="h-3.5 w-3.5" />
+                  编辑关键词
+                </Button>
               </div>
-              <div className="mt-6 grid gap-5 sm:grid-cols-2">
-                {Object.entries(KEYWORD_GROUP_LABELS).map(([key, label]) => {
-                  const words = selected.keywords?.[key] ?? []
-                  return <div key={key} className="rounded-xl border bg-background/50 p-4"><div className="mb-3 flex items-center justify-between"><span className="text-sm font-medium">{label}</span><span className="text-[10px] text-muted-foreground">{words.length} 个</span></div>{words.length ? <div className="flex flex-wrap gap-1.5">{words.map((word) => <span key={word} className={`rounded-full border px-2.5 py-1 text-[11px] ${GROUP_COLORS[key]}`}>{word}</span>)}</div> : <p className="text-xs text-muted-foreground/60">暂无关键词</p>}</div>
+
+              <div className="mt-6 grid gap-5 sm:grid-cols-2 lg:grid-cols-3">
+                {KEYWORD_GROUPS.map((g) => {
+                  const words =
+                    (selected.keywords?.[g.key] as string[] | undefined) ?? []
+                  return (
+                    <div
+                      key={g.key}
+                      className="rounded-md border border-border bg-background/40 p-4"
+                    >
+                      <div className="mb-3 flex items-center justify-between">
+                        <span
+                          className={cn(
+                            'rounded-sm border px-2 py-0.5 font-mono text-[10px] uppercase tracking-[0.14em]',
+                            COLOR_MAP[g.key],
+                          )}
+                        >
+                          {g.label}
+                        </span>
+                        <span className="font-mono text-[10px] uppercase text-muted-foreground">
+                          {words.length}
+                        </span>
+                      </div>
+                      {words.length > 0 ? (
+                        <div className="flex flex-wrap gap-1.5">
+                          {words.map((word, i) => (
+                            <span
+                              key={`${g.key}-${i}-${word}`}
+                              className="rounded-full border border-white/15 bg-white/10 px-2.5 py-1 font-mono text-[12px] text-white"
+                            >
+                              {word}
+                            </span>
+                          ))}
+                        </div>
+                      ) : (
+                        <p className="text-xs text-muted-foreground/60">
+                          暂无关键词
+                        </p>
+                      )}
+                    </div>
+                  )
                 })}
               </div>
             </section>
           )}
         </div>
       )}
-      {editing && selected && <KeywordsEditor product={selected} onClose={() => setEditing(false)} onSaved={() => { setEditing(false); load() }} />}
+
+      {editing && selected && (
+        <KeywordsEditor
+          product={selected}
+          onClose={() => setEditing(false)}
+          onSaved={() => {
+            setEditing(false)
+            load()
+          }}
+        />
+      )}
     </div>
   )
 }

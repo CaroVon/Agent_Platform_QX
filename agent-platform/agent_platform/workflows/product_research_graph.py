@@ -357,10 +357,26 @@ class ProductResearchGraph:
         # CyberPPT 风格锁定：未显式选主题时确定性分配 8 套咨询风之一
         from agent_platform.harness.enforce_coverage import ensure_consulting_theme
 
-        presentation = ensure_consulting_theme(
-            presentation,
-            seed=state.get("product_id") or state.get("idea", ""),
-        )
+        # 模板选择权：任务指定主题（state.ppt_theme，前端选择）优先于
+        # LLM 选择与哈希兜底（显式选择含 default 时也不再轮换）
+        requested_theme = str(state.get("ppt_theme") or "")
+        theme_applied = False
+        if requested_theme:
+            from agent_platform.schemas.presentation import THEME_PRESETS, Theme
+
+            preset = THEME_PRESETS.get(requested_theme)
+            if preset:
+                presentation.theme = Theme(
+                    id=requested_theme,
+                    name=preset.get("name", requested_theme),
+                    palette=dict(preset.get("palette") or {}),
+                )
+                theme_applied = True
+        if not theme_applied:
+            presentation = ensure_consulting_theme(
+                presentation,
+                seed=state.get("product_id") or state.get("idea", ""),
+            )
         updates["presentation"] = presentation.model_dump()
         # 修订计数：仅当本轮是"修订重跑"（critic 已发信号）时 +1
         if state.get("_revise_requested"):

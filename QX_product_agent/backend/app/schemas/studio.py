@@ -16,6 +16,11 @@ class ProductCreateRequest(BaseModel):
     """创建产品（触发 Research → Product → Design → Presentation 流水线）。"""
 
     idea: str = Field(..., min_length=1, max_length=500, description="产品想法")
+    # 模板选择权（前端）：设计主题/风格方法论，空 = LLM 自主决策
+    theme_id: str | None = Field(default=None, max_length=64,
+                                 description="设计主题 id（THEME_PRESETS）")
+    style_id: str | None = Field(default=None, max_length=64,
+                                 description="风格方法论 id（ppt-master styles）")
 
 
 class ProductCreateResponse(BaseModel):

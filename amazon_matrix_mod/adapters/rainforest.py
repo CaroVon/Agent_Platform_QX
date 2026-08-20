@@ -79,8 +79,13 @@ def _parse_bsr(p: dict) -> tuple[int | None, str | None]:
 
 
 def search(keyword: str, limit: int = 50, sort_by: str | None = None,
-           exclude_sponsored: bool = True, max_page: int = 1) -> list[dict]:
-    """关键词搜索 → 竞品列表（每页 1 credit）。"""
+           exclude_sponsored: bool = True, max_page: int = 1,
+           return_raw: bool = False):
+    """关键词搜索 → 竞品列表（每页 1 credit）。
+
+    return_raw=True 时返回 (rows, 原始响应 dict)，供调用方复用 search_raw
+    避免二次请求多耗 1 credit。
+    """
     params = {"type": "search", "amazon_domain": DEFAULT_DOMAIN,
               "search_term": keyword,
               "exclude_sponsored": "true" if exclude_sponsored else "false"}
@@ -107,7 +112,7 @@ def search(keyword: str, limit: int = 50, sort_by: str | None = None,
         })
         if len(out) >= limit:
             break
-    return out
+    return (out, data) if return_raw else out
 
 
 def product(asin: str) -> dict:
@@ -155,13 +160,20 @@ def fetch_competitors(keyword: str, limit: int = 50, sort_by: str | None = None,
 
 def _iter_products(keyword: str, limit: int, sort_by: str | None,
                    exclude_sponsored: bool, asins: list[str] | None,
-                   progress=None):
-    """采集生成器：yield (归一化行, 原始 product dict)。"""
+                   progress=None, meta: dict | None = None):
+    """采集生成器：yield (归一化行, 原始 product dict)。
+
+    meta 传入 dict 时，search 原始响应写入 meta["search_raw"]（供落盘复用，
+    避免再发一次 search 请求浪费 credit）。
+    """
     if asins:
         candidates = [{"asin": a} for a in asins]
     else:
-        candidates = search(keyword, limit=limit, sort_by=sort_by,
-                            exclude_sponsored=exclude_sponsored)
+        candidates, search_raw = search(keyword, limit=limit, sort_by=sort_by,
+                                        exclude_sponsored=exclude_sponsored,
+                                        return_raw=True)
+        if meta is not None:
+            meta["search_raw"] = search_raw
     for i, item in enumerate(candidates, 1):
         asin = item.get("asin")
         if not asin:

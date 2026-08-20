@@ -37,11 +37,18 @@ def _cfg() -> dict:
 
 
 def _strip_think(text: str) -> str:
-    """剥离 M3 思考块（<think>...</think>，可能含未转义嵌套）。"""
-    while "<think>" in text and "</think>" in text:
+    """剥离 M3 思考块（<think>...</think>，可能含未转义嵌套）。
+
+    截断产生的未闭合 <think>（无 </think>）同样剥离到块尾——闭包缺失时
+    其后内容属于思考过程残留，不可作为正文使用（实测 max_tokens 截断会复现）。
+    """
+    while "<think>" in text:
         start = text.find("<think>")
-        end = text.find("</think>", start) + len("</think>")
-        text = text[:start] + text[end:]
+        end = text.find("</think>", start)
+        if end == -1:
+            text = text[:start]
+            break
+        text = text[:start] + text[end + len("</think>"):]
     return text.strip()
 
 
@@ -149,7 +156,8 @@ def executive_summary(chapters: list[dict], keyword: str) -> str:
 结论：
 {chr(10).join(lines)[:2500]}"""
     try:
-        return chat(prompt, max_tokens=400).strip()
+        # max_tokens 2000：<think> 思考块占额，400 会截断导致摘要丢失
+        return chat(prompt, max_tokens=2000).strip()
     except Exception as exc:  # noqa: BLE001
         log.warning("M3 执行摘要失败: %s", exc)
         return ""

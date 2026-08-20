@@ -26,10 +26,16 @@ def upgrade() -> None:
         if "studio_product_id" not in _columns(bind, table):
             op.add_column(
                 table,
-                sa.Column("studio_product_id", sa.UUID(), nullable=True),
+                sa.Column(
+                    "studio_product_id",
+                    sa.UUID(),
+                    nullable=True,
+                ),
             )
             op.create_index(
-                f"ix_{table}_studio_product_id", table, ["studio_product_id"],
+                f"ix_{table}_studio_product_id",
+                table,
+                ["studio_product_id"],
             )
 
 

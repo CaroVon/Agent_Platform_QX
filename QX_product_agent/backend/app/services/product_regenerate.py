@@ -94,6 +94,8 @@ def regenerate_asset(
 
     state = {
         "idea": package.get("idea") or product.idea,
+        # product_id 必传：competitor_matrix 等节点依赖它落 studio_assets/{id}/
+        "product_id": str(product.id),
         "requirement": package.get("requirement"),
         "research": package.get("research"),
         "competitor_analysis": package.get("competitor_analysis"),

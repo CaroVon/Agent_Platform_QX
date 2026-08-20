@@ -10,7 +10,7 @@ import enum
 import uuid
 from datetime import datetime
 
-from sqlalchemy import DateTime, Enum, String, Text, func
+from sqlalchemy import Boolean, DateTime, Enum, String, Text, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.models.base import Base, UUIDType
@@ -79,6 +79,18 @@ class StudioProduct(Base):
     )
     keywords: Mapped[str | None] = mapped_column(
         Text, nullable=True, doc="产品关键词组（JSON：方面 → 关键词列表，如 design/function/appearance/audience/scenario）"
+    )
+    # ── 模板选择权（前端指定设计主题/风格方法论；空 = LLM 自主决策） ──
+    theme_id: Mapped[str | None] = mapped_column(
+        String(64), nullable=True, doc="设计主题 id（THEME_PRESETS，用户指定）"
+    )
+    style_id: Mapped[str | None] = mapped_column(
+        String(64), nullable=True, doc="风格方法论 id（ppt-master styles，用户指定）"
+    )
+    # 用户是否手动编辑过 keywords（编辑过则跳过自动重算）
+    keywords_edited: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default="0",
+        doc="keywords 手动编辑标记（True 时 regenerate 不自动重算）"
     )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()

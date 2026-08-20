@@ -42,7 +42,8 @@ def _image_gen_script() -> Path:
 def _env() -> dict:
     env = os.environ.copy()
     # 读取 QX backend/.env 的 MiniMax 配置
-    env_path = Path(__file__).resolve().parents[3] / "QX_product_agent" / "backend" / ".env"
+    # （gen_visual.py 位于 {root}/amazon_matrix_mod/ → parents[1] = {root}）
+    env_path = Path(__file__).resolve().parents[1] / "QX_product_agent" / "backend" / ".env"
     if env_path.is_file():
         for line in env_path.read_text(encoding="utf-8").splitlines():
             line = line.strip()
@@ -70,10 +71,12 @@ def _generate(prompt: str, out_dir: str, name: str, aspect: str = "16:9",
         if proc.returncode != 0:
             log.warning("image_gen 失败: %s", (proc.stderr or proc.stdout)[-300:])
             return None
-        # 脚本可能输出带扩展名文件，检查
-        for cand in (out, out + ".png", out + ".jpg", out.replace(".png", ".jpg")):
-            if os.path.isfile(cand) and os.path.getsize(cand) > 10000:
-                return cand
+        # 后端实际输出后缀不定（minimax 为 .jpg）——按文件名主干 glob 发现
+        stem = os.path.splitext(name)[0]
+        for cand in sorted(Path(out_dir).glob(f"{stem}.*")):
+            if cand.suffix.lower() in (".png", ".jpg", ".jpeg", ".webp") \
+                    and cand.is_file() and cand.stat().st_size > 10000:
+                return str(cand)
         return None
     except Exception as exc:  # noqa: BLE001
         log.warning("image_gen 异常: %s", exc)
@@ -90,8 +93,10 @@ def generate_visuals(keyword: str, out_dir: str, skip_zones: bool = False) -> di
                  "**留白≥40% 供数据图叠加**，16:9 高清，无文字无 Logo")
     result["background"] = _generate(bg_prompt, out_dir, "background.png", aspect="16:9", size="2K")
 
-    cover_prompt = (f"{keyword} 竞品矩阵 MOD 报告封面视觉，产品剪影悬浮于抽象价格/销量数据流之上，"
-                    "高端咨询风格，深蓝金配色，居中构图，大留白供标题排版，16:9，无文字")
+    cover_prompt = (f"{keyword} 竞品分析报告封面视觉：纯抽象构图——产品剪影悬浮于"
+                    "价格/销量数据流曲线之上，高端咨询风，深蓝金配色，居中构图，"
+                    "大面积留白供标题排版。严格禁止：任何文字/字母/数字/书刊/屏幕/"
+                    "标签等带字形元素（避免生成乱码假字），16:9，无文字")
     result["cover"] = _generate(cover_prompt, out_dir, "cover.png", aspect="16:9", size="2K")
 
     if not skip_zones:

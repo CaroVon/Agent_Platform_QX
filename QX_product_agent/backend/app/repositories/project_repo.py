@@ -609,7 +609,9 @@ class ProjectRepo:
             if source:
                 stmt = stmt.where(KnowledgeAsset.source == source)
             if studio_product_id:
-                stmt = stmt.where(KnowledgeAsset.studio_product_id == uuid.UUID(studio_product_id))
+                stmt = stmt.where(
+                    KnowledgeAsset.studio_product_id == uuid.UUID(studio_product_id)
+                )
             rows = session.execute(stmt).scalars().all()
             for a in rows:
                 session.expunge(a)
@@ -737,11 +739,13 @@ class ProjectRepo:
 
     def find_studio_entity(self, studio_product_id: str, name: str) -> MemoryEntity | None:
         with Session(self._engine) as session:
-            entity = session.execute(select(MemoryEntity).where(
-                MemoryEntity.scope == "project",
-                MemoryEntity.studio_product_id == uuid.UUID(studio_product_id),
-                MemoryEntity.name == name,
-            )).scalar_one_or_none()
+            entity = session.execute(
+                select(MemoryEntity).where(
+                    MemoryEntity.scope == "project",
+                    MemoryEntity.studio_product_id == uuid.UUID(studio_product_id),
+                    MemoryEntity.name == name,
+                )
+            ).scalar_one_or_none()
             if entity is None:
                 return None
             session.expunge(entity)
@@ -749,10 +753,12 @@ class ProjectRepo:
 
     def list_studio_entities(self, studio_product_id: str) -> list[MemoryEntity]:
         with Session(self._engine) as session:
-            rows = session.execute(select(MemoryEntity).where(
-                MemoryEntity.scope == "project",
-                MemoryEntity.studio_product_id == uuid.UUID(studio_product_id),
-            )).scalars().all()
+            rows = session.execute(
+                select(MemoryEntity).where(
+                    MemoryEntity.scope == "project",
+                    MemoryEntity.studio_product_id == uuid.UUID(studio_product_id),
+                )
+            ).scalars().all()
             for entity in rows:
                 session.expunge(entity)
             return list(rows)
@@ -804,14 +810,56 @@ class ProjectRepo:
             ).all()
             return len({r[0] for r in rows})
 
-    def count_studio_entity_by_name_across_products(self, name: str, exclude_product: str) -> int:
+    def count_studio_entity_by_name_across_products(
+        self, name: str, exclude_product: str,
+    ) -> int:
+        """统计同名 Studio 实体出现在多少个其他 Product Studio 任务。"""
         with Session(self._engine) as session:
-            rows = session.execute(select(MemoryEntity.studio_product_id).where(
-                MemoryEntity.scope == "project", MemoryEntity.name == name,
-                MemoryEntity.studio_product_id.is_not(None),
-                MemoryEntity.studio_product_id != uuid.UUID(exclude_product),
-            )).all()
+            rows = session.execute(
+                select(MemoryEntity.studio_product_id).where(
+                    MemoryEntity.scope == "project",
+                    MemoryEntity.name == name,
+                    MemoryEntity.studio_product_id.is_not(None),
+                    MemoryEntity.studio_product_id != uuid.UUID(exclude_product),
+                )
+            ).all()
             return len({row[0] for row in rows})
+
+    def count_entity_across_all_tasks(
+        self, name: str,
+        exclude_project: str | None = None,
+        exclude_product: str | None = None,
+    ) -> int:
+        """同名实体出现的不同任务总数（research 项目 + Studio 任务合并计数）。
+
+        全局提升的双通道合并口径：此前 research 与 Studio 互不计数，单一
+        通道任务永不满足 ≥2 复现条件 → 全局记忆永远为空（实测根因）。
+        """
+        with Session(self._engine) as session:
+            stmt = select(
+                MemoryEntity.project_id, MemoryEntity.studio_product_id,
+            ).where(
+                MemoryEntity.scope == "project",
+                MemoryEntity.name == name,
+            )
+            if exclude_project:
+                stmt = stmt.where(
+                    (MemoryEntity.project_id != uuid.UUID(exclude_project))
+                    | MemoryEntity.project_id.is_(None),
+                )
+            if exclude_product:
+                stmt = stmt.where(
+                    (MemoryEntity.studio_product_id != uuid.UUID(exclude_product))
+                    | MemoryEntity.studio_product_id.is_(None),
+                )
+            rows = session.execute(stmt).all()
+            tasks: set = set()
+            for project_id, studio_product_id in rows:
+                if project_id is not None:
+                    tasks.add(("p", project_id))
+                if studio_product_id is not None:
+                    tasks.add(("s", studio_product_id))
+            return len(tasks)
 
     def search_entities_by_keyword(
         self, query: str, scope: str = "project",
@@ -846,7 +894,9 @@ class ProjectRepo:
             if project_id:
                 stmt = stmt.where(MemoryEntity.project_id == uuid.UUID(project_id))
             if studio_product_id:
-                stmt = stmt.where(MemoryEntity.studio_product_id == uuid.UUID(studio_product_id))
+                stmt = stmt.where(
+                    MemoryEntity.studio_product_id == uuid.UUID(studio_product_id)
+                )
             if q:
                 stmt = stmt.where(MemoryEntity.name.ilike(f"%{q}%"))
             if entity_types:
@@ -1062,7 +1112,9 @@ class ProjectRepo:
             if project_id:
                 stmt = stmt.where(MemoryInsight.project_id == uuid.UUID(project_id))
             if studio_product_id:
-                stmt = stmt.where(MemoryInsight.studio_product_id == uuid.UUID(studio_product_id))
+                stmt = stmt.where(
+                    MemoryInsight.studio_product_id == uuid.UUID(studio_product_id)
+                )
             rows = session.execute(stmt.order_by(MemoryInsight.created_at.desc()).limit(limit)).scalars().all()
             for i in rows:
                 session.expunge(i)
@@ -1143,3 +1195,19 @@ class ProjectRepo:
             for e in rows:
                 session.expunge(e)
             return list(rows)
+
+    def get_studio_product(self, product_id: str):
+        """读取 AI Product Studio 产品（记忆图语料源）。"""
+        from app.models.studio_product import StudioProduct
+        try:
+            pid = uuid.UUID(product_id)
+        except ValueError:
+            return None
+        with Session(self._engine) as session:
+            product = session.execute(
+                select(StudioProduct).where(StudioProduct.id == pid)
+            ).scalar_one_or_none()
+            if product is None:
+                return None
+            session.expunge(product)
+            return product

@@ -2,37 +2,56 @@ import { cn } from '@/lib/utils'
 import type { ProjectStatusEnum, TaskStatusEnum } from '@/types/api'
 
 interface BadgeProps extends React.HTMLAttributes<HTMLSpanElement> {
-  variant?: 'default' | 'secondary' | 'outline' | 'success' | 'warning' | 'destructive'
+  variant?:
+    | 'default'
+    | 'secondary'
+    | 'outline'
+    | 'success'
+    | 'warning'
+    | 'destructive'
+    | 'info'
+    | 'processing'
   children?: React.ReactNode
 }
 
-export function Badge({ className, variant = 'default', ...props }: BadgeProps) {
+export function Badge({
+  className,
+  variant = 'default',
+  children,
+  ...props
+}: BadgeProps) {
   return (
     <span
       className={cn(
-        'inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium transition-colors',
+        'inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-medium leading-none transition-colors',
         {
-          'bg-primary text-primary-foreground': variant === 'default',
+          'bg-primary/15 text-primary': variant === 'default',
           'bg-secondary text-secondary-foreground': variant === 'secondary',
-          'border border-input text-foreground': variant === 'outline',
-          'bg-emerald-50 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300': variant === 'success',
-          'bg-amber-50 text-amber-700 dark:bg-amber-950 dark:text-amber-300': variant === 'warning',
-          'bg-red-50 text-red-700 dark:bg-red-950 dark:text-red-300': variant === 'destructive',
+          'border border-border text-foreground': variant === 'outline',
+          'bg-success/15 text-success': variant === 'success',
+          'bg-warning/15 text-warning': variant === 'warning',
+          'bg-destructive/15 text-destructive': variant === 'destructive',
+          'bg-accent/15 text-accent': variant === 'info',
+          'bg-primary/15 text-primary animate-pulse-dot': variant === 'processing',
         },
         className,
       )}
       {...props}
-    />
+    >
+      {variant === 'processing' && (
+        <span className="h-1.5 w-1.5 rounded-full bg-current" />
+      )}
+      {children}
+    </span>
   )
 }
 
-/** 项目状态对应的 Badge 变体 */
 const projectBadgeVariant: Record<ProjectStatusEnum, BadgeProps['variant']> = {
-  preparing_data: 'default',
+  preparing_data: 'processing',
   waiting_for_sources: 'warning',
-  preparing_outline: 'default',
+  preparing_outline: 'processing',
   waiting_for_outline: 'warning',
-  drafting: 'default',
+  drafting: 'processing',
   completed: 'success',
   failed: 'destructive',
 }
@@ -48,17 +67,13 @@ const projectBadgeLabel: Record<ProjectStatusEnum, string> = {
 }
 
 export function ProjectStatusBadge({ status }: { status: ProjectStatusEnum }) {
-  return (
-    <Badge variant={projectBadgeVariant[status]}>
-      {projectBadgeLabel[status]}
-    </Badge>
-  )
+  const variant = projectBadgeVariant[status]
+  return <Badge variant={variant}>{projectBadgeLabel[status]}</Badge>
 }
 
-/** 任务状态对应的 Badge 变体 */
 const taskBadgeVariant: Record<TaskStatusEnum, BadgeProps['variant']> = {
-  pending: 'secondary',
-  processing: 'default',
+  pending: 'outline',
+  processing: 'processing',
   completed: 'success',
   failed: 'destructive',
 }
@@ -71,9 +86,6 @@ const taskBadgeLabel: Record<TaskStatusEnum, string> = {
 }
 
 export function TaskStatusBadge({ status }: { status: TaskStatusEnum }) {
-  return (
-    <Badge variant={taskBadgeVariant[status]}>
-      {taskBadgeLabel[status]}
-    </Badge>
-  )
+  const variant = taskBadgeVariant[status]
+  return <Badge variant={variant}>{taskBadgeLabel[status]}</Badge>
 }

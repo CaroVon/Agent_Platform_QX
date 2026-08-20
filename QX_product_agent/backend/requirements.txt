@@ -65,3 +65,9 @@ watchfiles==1.2.0
 python-dateutil==2.9.0.post0
 PyYAML==6.0.3
 Jinja2==3.1.6
+
+# --- 竞品矩阵 MOD（amazon_matrix_mod，worker 内运行） ---
+pandas>=2.2
+numpy>=1.26
+# SVG→PNG 光栅化（M3 审图回环；Chromium 走 ~/.cache/ms-playwright）
+playwright>=1.40

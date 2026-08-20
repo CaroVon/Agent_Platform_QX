@@ -152,9 +152,12 @@ async def list_knowledge_assets(
 ):
     """知识资产列表（全局/领域登记表）。"""
     from app.repositories import ProjectRepo
-    assets = ProjectRepo().list_knowledge_assets(scope=scope, source=source,
-                                                  studio_product_id=studio_product_id,
-                                                  limit=limit)
+    assets = ProjectRepo().list_knowledge_assets(
+        scope=scope,
+        source=source,
+        studio_product_id=studio_product_id,
+        limit=limit,
+    )
     return {
         "total": len(assets),
         "assets": [

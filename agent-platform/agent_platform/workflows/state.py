@@ -19,6 +19,14 @@ class ProductStudioState(TypedDict, total=False):
     # 产品 UUID 必须进入 LangGraph 状态，供 PPT/资产节点做目录与产物隔离。
     product_id: str
     memory_namespace: str
+    # 模板选择权（前端指定）：设计主题/风格方法论（presentation 与 MOD 消费）
+    ppt_theme: str
+    ppt_style: str
+    # 竞品矩阵（MOD）运行参数：数据源（rainforest|mock）/ 完整模式 / 视觉生成
+    source: str
+    mod_full: bool
+    mod_visuals: bool
+    top_n: int
 
     # ─── 节点产物（dict 形式，最终由 ProductAssetPackage 收敛校验） ──
     requirement: dict[str, Any] | None

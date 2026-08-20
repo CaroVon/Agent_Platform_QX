@@ -31,18 +31,14 @@ import type {
   SimilarProjectsResponse,
   KnowledgeAssetListResponse,
   DomainExperienceListResponse,
-  MemoryGraphResponse,
-  MemoryEntityDetail,
-  MemoryInsightsResponse,
 } from '@/types/api'
 import type {
   ExportPdfResponse,
+  PptAssetIndexEntry,
   StudioProduct,
   StudioProductCreateResponse,
   DesignStudioLibrary,
   DesignStudioItem,
-  ProjectAssetLibrary,
-  ProjectAssetSummary,
 } from '@/types/studio'
 import type { PresentationDSL } from '@/types/presentation'
 
@@ -122,12 +118,12 @@ async function request<T>(
 ): Promise<T> {
   const token = await ensureAuthToken()
   const res = await fetch(`${API_BASE}${url}`, {
-    ...options,
     headers: {
       'Content-Type': 'application/json',
       Authorization: `Bearer ${token}`,
       ...options?.headers,
     },
+    ...options,
   })
 
   // token 失效（重启换密钥等）：清缓存重试一次
@@ -423,11 +419,10 @@ export const knowledgeApi = {
   },
 
   /** 📦 知识资产登记列表（upload/obsidian/experience） */
-  assets(opts?: { scope?: string; source?: string; studioProductId?: string }): Promise<KnowledgeAssetListResponse> {
+  assets(opts?: { scope?: string; source?: string }): Promise<KnowledgeAssetListResponse> {
     const params = new URLSearchParams()
     if (opts?.scope) params.set('scope', opts.scope)
     if (opts?.source) params.set('source', opts.source)
-    if (opts?.studioProductId) params.set('studio_product_id', opts.studioProductId)
     const qs = params.toString()
     return request(`/knowledge/assets${qs ? `?${qs}` : ''}`)
   },
@@ -435,58 +430,6 @@ export const knowledgeApi = {
   /** 🧠 领域经验包列表 */
   domains(): Promise<DomainExperienceListResponse> {
     return request('/knowledge/domains')
-  },
-}
-
-// ─── 🆕 记忆系统 API（P4：关系图 / 实体 / 洞察 / 重建 / 删除） ───
-
-export const memoryApi = {
-  /** 🕸️ 知识关系图数据（scope=global|project，支持搜索/类型过滤） */
-  graph(opts?: {
-    scope?: 'global' | 'project'
-    projectId?: string
-    studioProductId?: string
-    q?: string
-    entityTypes?: string[]
-    limit?: number
-  }): Promise<MemoryGraphResponse> {
-    const params = new URLSearchParams()
-    params.set('scope', opts?.scope ?? 'global')
-    if (opts?.projectId) params.set('project_id', opts.projectId)
-    if (opts?.studioProductId) params.set('studio_product_id', opts.studioProductId)
-    if (opts?.q) params.set('q', opts.q)
-    if (opts?.entityTypes?.length) params.set('entity_types', opts.entityTypes.join(','))
-    if (opts?.limit) params.set('limit', String(opts.limit))
-    return request(`/memory/graph?${params.toString()}`)
-  },
-
-  /** 🔍 实体详情（邻域关系 + 关联洞察 + 证据） */
-  entity(entityId: string): Promise<MemoryEntityDetail> {
-    return request(`/memory/entities/${entityId}`)
-  },
-
-  /** 💡 记忆洞察列表 */
-  insights(opts?: { scope?: 'global' | 'project'; projectId?: string; studioProductId?: string; q?: string }): Promise<MemoryInsightsResponse> {
-    const params = new URLSearchParams()
-    params.set('scope', opts?.scope ?? 'project')
-    if (opts?.projectId) params.set('project_id', opts.projectId)
-    if (opts?.studioProductId) params.set('studio_product_id', opts.studioProductId)
-    if (opts?.q) params.set('q', opts.q)
-    return request(`/memory/insights?${params.toString()}`)
-  },
-
-  /** ♻️ 手动触发某项目的记忆图重建（异步） */
-  rebuild(projectId: string): Promise<{ project_id: string; message: string; celery_task_id: string }> {
-    return request(`/memory/rebuild/${projectId}`, { method: 'POST' })
-  },
-
-  rebuildStudio(productId: string): Promise<{ product_id: string; message: string; celery_task_id: string }> {
-    return request(`/memory/rebuild-studio/${productId}`, { method: 'POST' })
-  },
-
-  /** 🗑️ 删除实体（纠错，级联关系） */
-  deleteEntity(entityId: string): Promise<{ detail: string }> {
-    return request(`/memory/entities/${entityId}`, { method: 'DELETE' })
   },
 }
 
@@ -511,14 +454,45 @@ export function connectDraftStream(projectId: string): EventSource {
 
 // ─── AI Product Studio API ────────────────────────────────────
 
+/** 模板选择器数据源（GET /product/ppt-options） */
+export interface PptThemeOption {
+  id: string
+  name: string
+  summary: string
+  palette: Record<string, string>
+  preview: string
+}
+
+export interface PptStyleOption {
+  id: string
+  summary: string
+  keywords: string[]
+}
+
+export interface PptOptions {
+  themes: PptThemeOption[]
+  styles: PptStyleOption[]
+}
+
 export const productApi = {
   /** 创建产品：触发 Research → Product → Design → Presentation 流水线（异步） */
-  create(idea: string): Promise<StudioProductCreateResponse> {
+  create(
+    idea: string,
+    opts?: { theme_id?: string | null; style_id?: string | null },
+  ): Promise<StudioProductCreateResponse> {
+    const body: Record<string, unknown> = { idea }
+    if (opts?.theme_id) body.theme_id = opts.theme_id
+    if (opts?.style_id) body.style_id = opts.style_id
     return request('/product/create', {
       method: 'POST',
       headers: { 'Idempotency-Key': productIdempotencyKey(idea) },
-      body: JSON.stringify({ idea }),
+      body: JSON.stringify(body),
     })
+  },
+
+  /** 模板选择器数据源：设计主题（含预览图）+ 风格方法论 */
+  pptOptions(): Promise<PptOptions> {
+    return request('/product/ppt-options')
   },
 
   /** 获取产品资产包（前端轮询直至 status=completed/failed） */
@@ -526,35 +500,9 @@ export const productApi = {
     return request(`/product/${productId}`)
   },
 
-  /** 暂停正在执行的流水线，保留已生成资产 */
-  pause(productId: string): Promise<{ product_id: string; status: string; message: string }> {
-    return request(`/product/${productId}/pause`, { method: 'POST' })
-  },
-
-  /** 恢复已暂停的流水线 */
-  resume(productId: string): Promise<{ product_id: string; status: string; message: string }> {
-    return request(`/product/${productId}/resume`, { method: 'POST' })
-  },
-
-  /** 结束流水线，不再继续执行 */
-  cancel(productId: string): Promise<{ product_id: string; status: string; message: string }> {
-    return request(`/product/${productId}/cancel`, { method: 'POST' })
-  },
-
   /** 产品列表 */
-  list(skip = 0, limit = 50): Promise<Array<{ product_id: string; idea: string; status: string; created_at?: string | null; keywords?: import('@/types/studio').StudioKeywords | null }>> {
+  list(skip = 0, limit = 50): Promise<Array<{ product_id: string; idea: string; status: string; created_at?: string | null }>> {
     return request(`/product?skip=${skip}&limit=${limit}`)
-  },
-
-  /** 整体替换产品关键词组（用户编辑入口；同步写入资产包） */
-  updateKeywords(
-    productId: string,
-    keywords: import('@/types/studio').StudioKeywords,
-  ): Promise<{ product_id: string; keywords: import('@/types/studio').StudioKeywords; updated: boolean }> {
-    return request(`/product/${productId}/keywords`, {
-      method: 'PUT',
-      body: JSON.stringify({ keywords }),
-    })
   },
 
   /** 局部重生成资产（instruction 为空则无指导重跑） */
@@ -637,29 +585,28 @@ export const productApi = {
     })
   },
 
-  /** 需求澄清对话（SSE）：返回原始 Response，调用方读取 event: content/meta/done */
-  async clarify(body: { idea?: string; messages: Array<{ role: string; content: string }>; max_rounds?: number }): Promise<Response> {
-    return fetch(`${API_BASE}/product/clarify`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${await ensureAuthToken()}`,
-      },
-      body: JSON.stringify(body),
-    })
-  },
-
-  /** 动态补全建议（输入停顿后调用） */
-  suggest(input: string): Promise<{ suggestions: string[] }> {
-    return request(`/product/suggest`, {
-      method: 'POST',
-      body: JSON.stringify({ input }),
-    })
-  },
-
   /** 真实执行事件日志（节点/状态/明细/时间） */
   logs(productId: string): Promise<{ product_id: string; logs: Array<{ ts: string; node: string; status: string; detail?: string }> }> {
     return request(`/product/${productId}/logs`)
+  },
+
+  async pause(productId: string): Promise<{ status: string }> {
+    return request(`/product/${productId}/pause`, { method: 'POST' })
+  },
+
+  async resume(productId: string): Promise<{ status: string }> {
+    return request(`/product/${productId}/resume`, { method: 'POST' })
+  },
+
+  async cancel(productId: string): Promise<{ status: string }> {
+    return request(`/product/${productId}/cancel`, { method: 'POST' })
+  },
+
+  async suggest(idea: string): Promise<{ suggestions: string[] }> {
+    return request<{ suggestions: string[] }>(`/product/suggest`, {
+      method: 'POST',
+      body: JSON.stringify({ idea }),
+    })
   },
 
   /** 导出演示为 PPT 风格 PDF（Slide JSON → Renderer → WeasyPrint） */
@@ -694,6 +641,17 @@ export const productApi = {
     })
   },
 
+  /** 更新关键词组（设计 / 功能 / 外观 / 人群 / 场景） */
+  async updateKeywords(
+    productId: string,
+    keywords: Record<string, string[]>,
+  ): Promise<{ product_id: string; keywords: Record<string, string[]>; updated: boolean }> {
+    return request(`/product/${productId}/keywords`, {
+      method: 'PUT',
+      body: JSON.stringify({ keywords }),
+    })
+  },
+
   /** 编辑器素材搜索（无状态 DuckDuckGo，结果不持久化） */
   searchImages(
     productId: string,
@@ -708,6 +666,11 @@ export const productApi = {
   /** DesignStudio 资产库：列出产品图片资产（生图/上传共用） */
   listAssets(productId: string): Promise<{ assets: Array<{ name: string; url: string; size: number }> }> {
     return request(`/product/${productId}/assets`)
+  },
+
+  /** P7: PPT 资产库 —— 扫描磁盘 ppt_projects 的全部 PPT 资产（只读） */
+  pptAssets(): Promise<PptAssetIndexEntry[]> {
+    return request('/product/ppt-assets')
   },
 
   /** P7: 该产品在磁盘上的 PPT 资产（即使 asset_package 未记录） */
@@ -740,38 +703,6 @@ export const productApi = {
       throw new ApiError(res.status, detail)
     }
     return res.json()
-  },
-}
-
-// ─── 项目资产库 API（每个任务的全部资产归档 / 下载） ────────────
-
-export const projectAssetsApi = {
-  /** 任务资产库列表（含各任务资产统计摘要） */
-  list(): Promise<ProjectAssetSummary[]> {
-    return request('/project-assets')
-  },
-
-  /** 任务资产库明细（后端惰性补产文本 md/pdf 后返回全部资产清单） */
-  get(productId: string): Promise<ProjectAssetLibrary> {
-    return request(`/project-assets/${productId}`)
-  },
-
-  /** 打包下载任务全部资产（ZIP，带鉴权 → Blob 触发下载） */
-  async downloadZip(productId: string): Promise<Blob> {
-    const res = await fetch(`${API_BASE}/project-assets/${productId}/download`, {
-      headers: { Authorization: `Bearer ${await ensureAuthToken()}` },
-    })
-    if (!res.ok) {
-      let detail = `HTTP ${res.status}`
-      try {
-        const body = await res.json()
-        detail = body.detail ?? detail
-      } catch {
-        /* ignore */
-      }
-      throw new ApiError(res.status, detail)
-    }
-    return res.blob()
   },
 }
 
@@ -911,5 +842,128 @@ export const editorApi = {
       throw new ApiError(res.status, detail)
     }
     return res
+  },
+}
+
+// ─── Memory Graph API ──────────────────────────────────────────────
+
+export interface MemoryGraphRequest {
+  scope: 'global' | 'project'
+  projectId?: string
+  studioProductId?: string
+  q?: string
+  entityTypes?: string[]
+}
+
+export const memoryApi = {
+  async graph(params: MemoryGraphRequest): Promise<import('@/types/api').MemoryGraphResponse> {
+    const search = new URLSearchParams()
+    search.set('scope', params.scope)
+    if (params.projectId) search.set('project_id', params.projectId)
+    if (params.studioProductId) search.set('studio_product_id', params.studioProductId)
+    if (params.q) search.set('q', params.q)
+    if (params.entityTypes?.length)
+      params.entityTypes.forEach((t) => search.append('entity_types', t))
+    return request(`/memory/graph?${search.toString()}`)
+  },
+
+  async entity(id: string): Promise<import('@/types/api').MemoryEntityDetail> {
+    return request(`/memory/entities/${encodeURIComponent(id)}`)
+  },
+
+  async insights(params: { scope: 'global' | 'project'; projectId?: string; studioProductId?: string }) {
+    const search = new URLSearchParams()
+    search.set('scope', params.scope)
+    if (params.projectId) search.set('project_id', params.projectId)
+    if (params.studioProductId) search.set('studio_product_id', params.studioProductId)
+    return request<import('@/types/api').MemoryInsightsResponse>(
+      `/memory/insights?${search.toString()}`,
+    )
+  },
+
+  /** 重建记忆图谱：Studio 任务走专用端点（studio: 前缀剥离后为 product UUID） */
+  async rebuild(projectId: string): Promise<{ status: string }> {
+    if (projectId.startsWith('studio:')) {
+      return request(
+        `/memory/rebuild-studio/${encodeURIComponent(projectId.slice('studio:'.length))}`,
+        { method: 'POST' },
+      )
+    }
+    return request(`/memory/rebuild/${encodeURIComponent(projectId)}`, {
+      method: 'POST',
+    })
+  },
+
+  /** 手动提升实体到全局记忆 */
+  async promoteEntity(id: string): Promise<{ promoted: boolean }> {
+    return request(`/memory/entities/${encodeURIComponent(id)}/promote`, {
+      method: 'POST',
+    })
+  },
+
+  /** 删除实体（级联删除关系） */
+  async deleteEntity(id: string): Promise<{ deleted: boolean }> {
+    return request(`/memory/entities/${encodeURIComponent(id)}`, {
+      method: 'DELETE',
+    })
+  },
+}
+
+// ─── 项目资产库 API ──────────────────────────────────────
+
+export interface ProjectAssetFile {
+  kind: 'doc' | 'ppt' | 'presentation' | 'keywords' | 'image'
+  name: string
+  size: number
+  url: string
+  category?: string
+  preview_url?: string | null
+  preview_urls?: string[]
+}
+
+export interface ProjectAssetSummary {
+  product_id: string
+  idea: string
+  status: string
+  updated_at: string | null
+  file_count: number
+  total_size: number
+  doc_count: number
+  ppt_count: number
+  presentation_count: number
+  keywords_count: number
+  image_count: number
+  has_pptx: boolean
+  has_presentation: boolean
+  has_keywords: boolean
+  svg_previews: string[]
+}
+
+export interface ProjectAssetLibrary {
+  product_id: string
+  idea: string
+  status: string
+  updated_at: string | null
+  files: ProjectAssetFile[]
+  total_size: number
+  generated_at?: string | null
+}
+
+export const projectAssetsApi = {
+  /** 任务资产库列表（每个任务的资产统计） */
+  async list(): Promise<ProjectAssetSummary[]> {
+    return request<ProjectAssetSummary[]>('/project-assets')
+  },
+
+  /** 单个任务资产库明细（含全部文件清单） */
+  async get(productId: string): Promise<ProjectAssetLibrary> {
+    return request<ProjectAssetLibrary>(
+      `/project-assets/${encodeURIComponent(productId)}`,
+    )
+  },
+
+  /** ZIP 打包下载 */
+  async downloadUrl(productId: string): Promise<string> {
+    return `${API_BASE}/project-assets/${encodeURIComponent(productId)}/download`
   },
 }

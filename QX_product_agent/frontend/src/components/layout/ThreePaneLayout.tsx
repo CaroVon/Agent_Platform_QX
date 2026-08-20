@@ -1,23 +1,10 @@
 /**
- * ============================================================
- * ThreePaneLayout —— 现代三栏工作台骨架
- *
- * 布局结构（100vh，无全局滚动条，各栏独立滚动）：
- * ┌──────────┬──────────────────────┬────────────┐
- * │  左栏    │      中栏            │   右栏     │
- * │ (w-64)   │     (flex-1)         │  (w-80)    │
- * │          │                      │            │
- * │ 大纲目录 │ 编辑器 + 进度条      │ 引用/对话  │
- * │ 树      │                      │ (默认折叠) │
- * └──────────┴──────────────────────┴────────────┘
- * ============================================================
+ * ThreePaneLayout —— 现代商务三栏工作台
  */
 
 import { type ReactNode, createContext, useContext, useState, useCallback } from 'react'
 import { cn } from '@/lib/utils'
 import type { RightPanelView } from '@/types/index'
-
-// ─── 面板状态 Context ──────────────────────────────────────────
 
 interface ThreePaneContextType {
   rightPanel: RightPanelView
@@ -33,14 +20,9 @@ export function useThreePane() {
   return ctx
 }
 
-// ─── 布局组件 ──────────────────────────────────────────────────
-
 interface ThreePaneLayoutProps {
-  /** 左栏：大纲目录树 */
   leftPane: ReactNode
-  /** 中栏：编辑器 + 进度指示器 */
   centerPane: ReactNode
-  /** 右栏：引用溯源 / Agent 对话（可选） */
   rightPane?: ReactNode
 }
 
@@ -57,22 +39,19 @@ export function ThreePaneLayout({
 
   return (
     <ThreePaneContext.Provider value={{ rightPanel, setRightPanel, toggleRightPanel }}>
-      <div className="flex h-screen w-full overflow-hidden bg-background">
-        {/* ─── 左栏：大纲目录 ────────────────────────────────── */}
-        <aside className="w-64 shrink-0 border-r border-border bg-card overflow-y-auto">
+      <div className="flex h-[calc(100vh-3.5rem)] w-full overflow-hidden rounded-tl-xl bg-background">
+        <aside className="w-64 shrink-0 overflow-y-auto border-r border-border bg-card/40">
           {leftPane}
         </aside>
 
-        {/* ─── 中栏：编辑器 ──────────────────────────────────── */}
-        <main className="flex flex-1 flex-col min-w-0 overflow-hidden">
+        <main className="flex min-w-0 flex-1 flex-col overflow-hidden bg-background">
           {centerPane}
         </main>
 
-        {/* ─── 右栏：引用/对话 ──────────────────────────────── */}
         {rightPane && (
           <aside
             className={cn(
-              'shrink-0 border-l border-border bg-card transition-all duration-300 ease-in-out overflow-y-auto',
+              'shrink-0 overflow-y-auto border-l border-border bg-card/40 transition-all duration-300 ease-out',
               rightPanel !== 'closed' ? 'w-80 opacity-100' : 'w-0 opacity-0 overflow-hidden',
             )}
           >

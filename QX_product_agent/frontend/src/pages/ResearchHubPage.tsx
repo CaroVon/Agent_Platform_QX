@@ -62,7 +62,7 @@ export function ResearchHubPage() {
                   </div>
                   {competitors.competitive_landscape && (
                     <div className="rounded-2xl border bg-card px-7 py-5">
-                      <h4 className="font-editorial mb-2 text-sm font-semibold tracking-tight">
+                      <h4 className="font-serif mb-2 text-sm font-semibold tracking-tight">
                         竞争格局
                       </h4>
                       <p className="text-sm leading-relaxed text-muted-foreground">

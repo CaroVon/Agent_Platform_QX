@@ -407,6 +407,15 @@ class PptDesignAgent(BaseAgent):
             logger.warning("spec_lock 反推失败: %s", exc)
             backfill = {"error": str(exc)}
 
+        # ── 5b) MOD 附录合并：主 deck 主题重渲染竞品矩阵页并续接页码 ──
+        mod_merge = self._merge_mod_appendix(
+            project_dir=project_dir,
+            state=state,
+            out_dir=out_dir,
+            main_files=files,
+            theme_id=str(theme.get("id") or ""),
+        )
+
         # ── 6) finalize + svg_to_pptx ───────────────────────────
         python = sys.executable
         for script, args in (
@@ -454,8 +463,94 @@ class PptDesignAgent(BaseAgent):
             # ── 元信息 ──
             "svg_stats": svg_stats,
             "spec_lock_backfill": backfill,
+            "mod_appendix": mod_merge,
             "created_at": datetime.now(timezone.utc).isoformat(),
         }
+
+    # ── MOD 附录合并（双管线链接：主 PPT 在前，MOD 分析页续后） ──
+    @staticmethod
+    def _merge_mod_appendix(project_dir: Path, state: dict, out_dir: Path,
+                            main_files: list, theme_id: str) -> dict:
+        """把竞品矩阵（MOD）页面用主 deck 主题重渲染并追加进 svg_output。
+
+        - 输入：studio_assets/{product_id}/competitor_matrix/ppt/deck_ctx.json
+          （MOD 节点持久化的确定性渲染输入）
+        - 页码：主页面 NN/MM 的 MM 总数同步改为合并后总数（页脚/根属性一致）
+        - 降级：任何失败仅产出主 PPT，不阻塞主管线
+        """
+        product_id = str(state.get("product_id") or "")
+        empty = {"merged": False, "pages": 0}
+        if not product_id or not state.get("competitor_matrix"):
+            return empty
+        try:
+            import pandas as _pd
+            from amazon_matrix_mod.deck import build as _mod_build
+            from amazon_matrix_mod.deck.plan import plan_pages as _mod_plan
+            from amazon_matrix_mod.deck.themes import Theme as _ModTheme
+
+            mod_out = out_dir / "studio_assets" / product_id / "competitor_matrix"
+            ctx = _mod_build.load_deck_ctx(str(mod_out))
+            if not ctx:
+                return {**empty, "reason": "deck_ctx.json 缺失（MOD 未跑 full）"}
+            # 相对路径还原为绝对路径（deck_ctx 持久化时转为相对 out_dir）
+            abs_of = lambda p: (str(mod_out / p) if p and not os.path.isabs(p) else p)
+            ctx["df"] = _pd.DataFrame(ctx.get("df") or [])
+            ctx["image_cache_dir"] = abs_of(ctx.get("image_cache_dir"))
+            vis = ctx.get("visuals") or {}
+            ctx["visuals"] = {
+                "background": abs_of(vis.get("background")),
+                "cover": abs_of(vis.get("cover")),
+                "zones": {k: abs_of(v) for k, v in (vis.get("zones") or {}).items()},
+            }
+            ctx["theme"] = _ModTheme(theme_id) if theme_id else _ModTheme(
+                ctx.get("theme_id") or "cyber-ivory-navy")
+
+            n_main = len(main_files)
+            n_mod = len(_mod_plan(ctx))
+            total = n_main + n_mod
+            svg_dir = project_dir / "svg_output"
+            written = _mod_build.render_mod_pages(
+                str(svg_dir), ctx, start_index=n_main + 1, total_after_merge=total)
+
+            # 主页面页脚 — NN / MM — 与根属性 page-total 同步为合并总数
+            for f in main_files:
+                p = Path(f) if not isinstance(f, Path) else f
+                if not p.is_absolute():
+                    p = svg_dir / p.name
+                try:
+                    text_content = p.read_text(encoding="utf-8")
+                    patched = re.sub(r"— (\d{2}) / \d{2} —",
+                                     rf"— \1 / {total:02d} —", text_content)
+                    patched = patched.replace(
+                        f'data-pptx-page-total="{n_main}"',
+                        f'data-pptx-page-total="{total}"')
+                    if patched != text_content:
+                        p.write_text(patched, encoding="utf-8")
+                except OSError:
+                    continue
+
+            # spec_lock page_rhythm 追加 MOD 附录条目
+            lock_path = project_dir / "spec_lock.md"
+            try:
+                lock = lock_path.read_text(encoding="utf-8")
+                extra = "\n".join(f"- P{i:02d}: dense"
+                                  for i in range(n_main + 1, total + 1))
+                if "## page_rhythm" in lock:
+                    head, _, rest = lock.partition("## page_rhythm")
+                    section, sep, tail = rest.partition("\n## ")
+                    lock = (head + "## page_rhythm" + section.rstrip()
+                            + "\n" + extra + ("\n## " + tail if sep else ""))
+                    lock_path.write_text(lock, encoding="utf-8")
+            except OSError:
+                pass
+
+            logger.info("[ppt_design] MOD 附录合并 %d 页（主题 %s，总页数 %d）",
+                        len(written), ctx["theme"].id, total)
+            return {"merged": True, "pages": len(written),
+                    "theme": ctx["theme"].id, "total_pages": total}
+        except Exception as exc:  # noqa: BLE001 —— 合并失败降级为主 PPT
+            logger.warning("[ppt_design] MOD 附录合并失败（降级）: %s", str(exc)[:200])
+            return {**empty, "reason": str(exc)[:200]}
 
     # ── 设计规范（MiniMax 自由创作；确定性兜底） ──────────────
     _SPEC_SYSTEM = (

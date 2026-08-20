@@ -123,6 +123,8 @@ class Settings(BaseSettings):
     # ─── 外部 API Key（优先从 .env 读取） ────────────────────────
     TAVILY_API_KEY: str = Field(default="")
     FIRECRAWL_API_KEY: str = Field(default="")
+    # Rainforest（竞品矩阵 MOD 数据源；未配置时 MOD 节点走 mock/复用存档）
+    RAINFOREST_API_KEY: str = Field(default="")
     DEEPSEEK_API_KEY: str = Field(default="")
     DEEPSEEK_BASE_URL: str = Field(default="https://api.deepseek.com/v1")
     DEEPSEEK_MODEL: str = Field(default="deepseek-chat")

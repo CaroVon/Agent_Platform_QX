@@ -9,14 +9,13 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useLocation } from 'react-router-dom'
 import { Boxes, ChevronRight, Loader2 } from 'lucide-react'
-import type { StudioProduct } from '@/types/studio'
 import { productApi } from '@/lib/api'
+import type { StudioProduct } from '@/types/studio'
 import { cn } from '@/lib/utils'
 
 const STATUS_META: Record<string, { label: string; cls: string }> = {
   running: { label: '进行中', cls: 'bg-[#24415E]/10 text-[#24415E] animate-soft-pulse' },
   queued: { label: '排队中', cls: 'bg-slate-500/10 text-slate-500' },
-  paused: { label: '已暂停', cls: 'bg-amber-500/10 text-amber-700' },
   completed: { label: '已完成', cls: 'bg-emerald-500/10 text-emerald-600' },
   failed: { label: '失败', cls: 'bg-destructive/10 text-destructive' },
 }
@@ -48,9 +47,7 @@ export function ProductAssetBrowser({
       const byId = new Map(completed.map((p) => [p.product_id, p]))
       const merged = list.map((i) => byId.get(i.product_id) ?? (i as StudioProduct))
       setProducts(merged)
-      const requested =
-        (location.state as { productId?: string } | null)?.productId
-        ?? new URLSearchParams(location.search).get('product_id')
+      const requested = (location.state as { productId?: string } | null)?.productId
       setSelectedId((prev) => {
         if (prev && merged.some((p) => p.product_id === prev)) return prev
         if (requested && merged.some((p) => p.product_id === requested)) return requested
@@ -75,7 +72,7 @@ export function ProductAssetBrowser({
     } finally {
       setLoading(false)
     }
-  }, [location.state, location.search])
+  }, [location.state])
 
   useEffect(() => {
     let cancelled = false
@@ -141,15 +138,13 @@ export function ProductAssetBrowser({
     <div className="grid gap-6 lg:grid-cols-[280px_1fr]">
       {/* ─── 产品列表（全部状态） ─────────────────────────────── */}
       <aside className="space-y-1.5">
-        <div className="flex items-center justify-between gap-2 px-2 pb-2">
-          <div className="text-[10px] font-medium uppercase tracking-widest text-muted-foreground">
-            产品资产
-            {runningCount > 0 && (
-              <span className="ml-1.5 rounded-full bg-[#24415E]/10 px-1.5 py-0.5 text-[#24415E]">
-                {runningCount} 个任务进行中
-              </span>
-            )}
-          </div>
+        <div className="px-2 pb-2 text-[10px] font-medium uppercase tracking-widest text-muted-foreground">
+          产品资产
+          {runningCount > 0 && (
+            <span className="ml-1.5 rounded-full bg-[#24415E]/10 px-1.5 py-0.5 text-[#24415E]">
+              {runningCount} 个任务进行中
+            </span>
+          )}
         </div>
         {products.map((p) => {
           const active = p.product_id === selectedId
@@ -160,38 +155,36 @@ export function ProductAssetBrowser({
               type="button"
               onClick={() => setSelectedId(p.product_id)}
               className={cn(
-                'flex w-full flex-col items-stretch gap-1 rounded-lg px-3 py-2.5 text-left text-sm transition-colors',
+                'flex w-full items-center gap-2 rounded-lg px-3 py-2.5 text-left text-sm transition-colors',
                 active
                   ? 'bg-secondary font-medium text-foreground'
                   : 'text-muted-foreground hover:bg-secondary/50 hover:text-foreground',
               )}
             >
-              <span className="flex w-full items-center gap-2">
-                <span className="min-w-0 flex-1 truncate">{displayName(p)}</span>
-                {hasPpt(p) && (
-                  <span
-                    title={isRecoveredPpt(p) ? '已从磁盘资产对账恢复（可下载）' : '已生成可编辑 PPT（ppt-master）'}
-                    className="flex shrink-0 items-center gap-1 rounded-full bg-emerald-600/10 px-1.5 py-0.5 text-[10px] font-medium text-emerald-600"
-                  >
-                    PPT
-                    {isRecoveredPpt(p) && <span className="text-[9px] opacity-70">·恢复</span>}
-                  </span>
-                )}
-                <span className={cn('shrink-0 rounded-full px-1.5 py-0.5 text-[10px]', meta.cls)}>
-                  {meta.label}
+              <span className="min-w-0 flex-1 truncate">{displayName(p)}</span>
+              {hasPpt(p) && (
+                <span
+                  title={isRecoveredPpt(p) ? '已从磁盘资产对账恢复（可下载）' : '已生成可编辑 PPT（ppt-master）'}
+                  className="flex shrink-0 items-center gap-1 rounded-full bg-emerald-600/10 px-1.5 py-0.5 text-[10px] font-medium text-emerald-600"
+                >
+                  PPT
+                  {isRecoveredPpt(p) && <span className="text-[9px] opacity-70">·恢复</span>}
                 </span>
-                {p.critic_score != null && p.status === 'completed' && (
-                  <span
-                    className={cn(
-                      'shrink-0 rounded-full px-1.5 py-0.5 text-[10px]',
-                      p.critic_score >= 80 ? 'bg-emerald-500/10 text-emerald-600' : 'bg-amber-500/10 text-amber-600',
-                    )}
-                  >
-                    {p.critic_score}
-                  </span>
-                )}
-                <ChevronRight className="h-3.5 w-3.5 shrink-0 opacity-40" />
+              )}
+              <span className={cn('shrink-0 rounded-full px-1.5 py-0.5 text-[10px]', meta.cls)}>
+                {meta.label}
               </span>
+              {p.critic_score != null && p.status === 'completed' && (
+                <span
+                  className={cn(
+                    'shrink-0 rounded-full px-1.5 py-0.5 text-[10px]',
+                    p.critic_score >= 80 ? 'bg-emerald-500/10 text-emerald-600' : 'bg-amber-500/10 text-amber-600',
+                  )}
+                >
+                  {p.critic_score}
+                </span>
+              )}
+              <ChevronRight className="h-3.5 w-3.5 shrink-0 opacity-40" />
             </button>
           )
         })}
@@ -216,7 +209,6 @@ export function ProductAssetBrowser({
           </div>
         )}
       </div>
-
     </div>
   )
 }

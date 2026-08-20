@@ -1,23 +1,35 @@
 /**
- * KeywordsEditor —— 产品关键词组编辑弹窗
+ * KeywordsEditor —— 关键词编辑弹窗
  *
- * 五个固定分组（设计/功能/外观/人群/场景）：
- *   - 每个分组展示关键词 chips，可单个删除
- *   - 输入框回车 / 点击添加新关键词
- *   - 保存整体替换（PUT /product/{id}/keywords，同步写入资产包）
+ * 后端：PUT /api/v1/product/{product_id}/keywords
+ * Body: { keywords: Record<group, string[]> }
+ * Groups（固定）：design / function / appearance / audience / scenario
  */
 
-import { useEffect, useMemo, useState } from 'react'
-import { Loader2, Plus, Tags, X } from 'lucide-react'
+import { useEffect, useState } from 'react'
+import { Loader2, X } from 'lucide-react'
 import { productApi } from '@/lib/api'
-import { KEYWORD_GROUP_LABELS, type StudioKeywords, type StudioProduct } from '@/types/studio'
+import type { StudioProduct } from '@/types/studio'
+import { Button } from '@/components/common/button'
+import { Input } from '@/components/common/input'
+import { cn } from '@/lib/utils'
 
-const GROUP_COLORS: Record<string, string> = {
-  design: 'bg-sky-500/10 text-sky-700 border-sky-500/20',
-  function: 'bg-emerald-500/10 text-emerald-700 border-emerald-500/20',
-  appearance: 'bg-violet-500/10 text-violet-700 border-violet-500/20',
-  audience: 'bg-amber-500/10 text-amber-700 border-amber-500/20',
-  scenario: 'bg-rose-500/10 text-rose-700 border-rose-500/20',
+export const KEYWORD_GROUPS = [
+  { key: 'design', label: '设计', hint: '视觉 / 风格 / 材质' },
+  { key: 'function', label: '功能', hint: '核心能力 / 卖点' },
+  { key: 'appearance', label: '外观', hint: '形态 / 颜色 / 质感' },
+  { key: 'audience', label: '人群', hint: '目标用户画像' },
+  { key: 'scenario', label: '场景', hint: '使用情境' },
+] as const
+
+export type KeywordGroupKey = (typeof KEYWORD_GROUPS)[number]['key']
+
+const COLOR_MAP: Record<string, string> = {
+  design: 'border-primary/40 bg-primary/10 text-primary',
+  function: 'border-accent/40 bg-accent/10 text-accent',
+  appearance: 'border-warning/40 bg-warning/10 text-warning',
+  audience: 'border-success/40 bg-success/10 text-success',
+  scenario: 'border-muted-foreground/30 bg-muted text-muted-foreground',
 }
 
 export function KeywordsEditor({
@@ -29,38 +41,40 @@ export function KeywordsEditor({
   onClose: () => void
   onSaved: () => void
 }) {
-  const [groups, setGroups] = useState<StudioKeywords>(() => {
-    const base: StudioKeywords = {}
-    for (const key of Object.keys(KEYWORD_GROUP_LABELS)) base[key] = []
-    const existing = product.keywords ?? {}
-    for (const [key, words] of Object.entries(existing)) {
-      if (Array.isArray(words)) base[key] = [...words]
-    }
-    return base
-  })
-  const [draft, setDraft] = useState<Record<string, string>>({})
+  // 初始值：当前产品已有 keywords 优先，否则空数组
+  const initial: Record<KeywordGroupKey, string[]> = KEYWORD_GROUPS.reduce(
+    (acc, g) => {
+      const list = (product.keywords?.[g.key] as string[] | undefined) ?? []
+      acc[g.key] = [...list]
+      return acc
+    },
+    {} as Record<KeywordGroupKey, string[]>,
+  )
+
+  const [draft, setDraft] = useState<Record<KeywordGroupKey, string[]>>(initial)
+  const [inputs, setInputs] = useState<Record<KeywordGroupKey, string>>(
+    KEYWORD_GROUPS.reduce(
+      (acc, g) => ({ ...acc, [g.key]: '' }),
+      {} as Record<KeywordGroupKey, string>,
+    ),
+  )
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
 
-  const totalCount = useMemo(
-    () => Object.values(groups).reduce((sum, words) => sum + words.length, 0),
-    [groups],
-  )
-
-  const addKeyword = (groupKey: string) => {
-    const word = (draft[groupKey] ?? '').trim()
-    if (!word) return
-    setGroups((prev) => ({
+  const addKeyword = (group: KeywordGroupKey) => {
+    const v = inputs[group].trim()
+    if (!v) return
+    setDraft((prev) => ({
       ...prev,
-      [groupKey]: prev[groupKey]?.includes(word) ? prev[groupKey] : [...(prev[groupKey] ?? []), word],
+      [group]: [...prev[group], v],
     }))
-    setDraft((prev) => ({ ...prev, [groupKey]: '' }))
+    setInputs((prev) => ({ ...prev, [group]: '' }))
   }
 
-  const removeKeyword = (groupKey: string, word: string) => {
-    setGroups((prev) => ({
+  const removeKeyword = (group: KeywordGroupKey, idx: number) => {
+    setDraft((prev) => ({
       ...prev,
-      [groupKey]: (prev[groupKey] ?? []).filter((w) => w !== word),
+      [group]: prev[group].filter((_, i) => i !== idx),
     }))
   }
 
@@ -69,7 +83,12 @@ export function KeywordsEditor({
     setSaving(true)
     setError('')
     try {
-      await productApi.updateKeywords(product.product_id, groups)
+      // 过滤空字符串
+      const cleaned: Record<string, string[]> = {}
+      for (const k of Object.keys(draft)) {
+        cleaned[k] = draft[k as KeywordGroupKey].filter((s) => s.trim().length > 0)
+      }
+      await productApi.updateKeywords(product.product_id, cleaned)
       onSaved()
     } catch (err) {
       setError(err instanceof Error ? err.message : '保存失败')
@@ -78,116 +97,136 @@ export function KeywordsEditor({
     }
   }
 
+  // ESC 关闭
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose()
+    }
+    document.addEventListener('keydown', onKey)
+    return () => document.removeEventListener('keydown', onKey)
+  }, [onClose])
+
   return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
-      onClick={(e) => {
-        if (e.target === e.currentTarget) onClose()
-      }}
-    >
-      <div className="flex max-h-[82vh] w-full max-w-lg flex-col rounded-2xl border bg-card shadow-xl animate-step-in">
-        {/* ─── 头部 ─────────────────────────────────────── */}
-        <div className="flex items-center justify-between border-b border-border/60 px-5 py-4">
-          <div className="flex items-center gap-2">
-            <Tags className="h-4 w-4 text-[#24415E]" />
-            <div>
-              <div className="text-sm font-semibold">Key Words · 关键词组</div>
-              <div className="mt-0.5 max-w-[320px] truncate text-[11px] text-muted-foreground">
-                {product.idea}
-              </div>
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-background/80 p-4 backdrop-blur-sm">
+      <div className="relative max-h-[90vh] w-full max-w-3xl overflow-y-auto rounded-lg border border-border bg-card shadow-elev-xl">
+        {/* 顶部条 */}
+        <div className="sticky top-0 z-10 flex items-center justify-between border-b border-border bg-card/95 px-6 py-4 backdrop-blur">
+          <div>
+            <div className="font-mono text-[11px] uppercase tracking-[0.18em] text-muted-foreground">
+              关键词编辑
             </div>
+            <h3 className="mt-0.5 font-display text-lg font-semibold text-foreground">
+              {product.idea}
+            </h3>
           </div>
           <button
             type="button"
             onClick={onClose}
-            className="rounded-lg p-1.5 text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
+            className="rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
             aria-label="关闭"
           >
             <X className="h-4 w-4" />
           </button>
         </div>
 
-        {/* ─── 分组编辑区 ───────────────────────────────── */}
-        <div className="flex-1 space-y-4 overflow-y-auto px-5 py-4">
-          <p className="text-[11px] leading-relaxed text-muted-foreground">
-            关键词由 AI 在任务完成后自动总结，可在此自由增删改；保存后作为产品资产的一部分进入资产库。
-          </p>
-          {Object.entries(KEYWORD_GROUP_LABELS).map(([key, label]) => (
-            <div key={key}>
-              <div className="mb-1.5 text-[11px] font-medium text-foreground/80">
-                {label}
-                <span className="ml-1 text-[10px] text-muted-foreground/70">
-                  {groups[key]?.length ?? 0} 个
+        {/* 内容 */}
+        <div className="space-y-5 px-6 py-5">
+          {error && (
+            <div className="border border-destructive/40 bg-destructive/10 px-4 py-2.5 font-mono text-[12px] text-destructive">
+              <span className="font-semibold">[ERROR]</span> {error}
+            </div>
+          )}
+
+          {KEYWORD_GROUPS.map((g) => (
+            <div
+              key={g.key}
+              className="rounded-lg border border-border bg-background/40 p-4"
+            >
+              <div className="mb-3 flex items-baseline justify-between">
+                <div>
+                  <div className="flex items-center gap-2">
+                    <span
+                      className={cn(
+                        'rounded-sm border px-2 py-0.5 font-mono text-[10px] uppercase tracking-[0.14em]',
+                        COLOR_MAP[g.key],
+                      )}
+                    >
+                      {g.key}
+                    </span>
+                    <span className="font-display text-sm font-semibold text-foreground">
+                      {g.label}
+                    </span>
+                  </div>
+                  <p className="mt-1 text-xs text-muted-foreground">{g.hint}</p>
+                </div>
+                <span className="font-mono text-[10px] uppercase text-muted-foreground">
+                  {draft[g.key].length} 个
                 </span>
               </div>
-              <div className="flex flex-wrap items-center gap-1.5">
-                {(groups[key] ?? []).map((word) => (
-                  <span
-                    key={word}
-                    className={`inline-flex items-center gap-1 rounded-full border px-2.5 py-1 text-[11px] ${GROUP_COLORS[key] ?? 'bg-secondary text-muted-foreground border-border'}`}
-                  >
-                    {word}
-                    <button
-                      type="button"
-                      title="删除该关键词"
-                      onClick={() => removeKeyword(key, word)}
-                      className="rounded-full p-0.5 opacity-60 transition-opacity hover:opacity-100"
+
+              {/* 关键词列表 */}
+              <div className="mb-3 flex flex-wrap gap-1.5">
+                {draft[g.key].length === 0 ? (
+                  <span className="text-xs text-muted-foreground/60">暂无关键词</span>
+                ) : (
+                  draft[g.key].map((word, i) => (
+                    <span
+                      key={`${g.key}-${i}-${word}`}
+                      className="inline-flex items-center gap-1.5 rounded-full border border-white/15 bg-white/10 px-2.5 py-1 font-mono text-[12px] text-white"
                     >
-                      <X className="h-3 w-3" />
-                    </button>
-                  </span>
-                ))}
-                {groups[key]?.length === 0 && (
-                  <span className="text-[11px] text-muted-foreground/50">暂无关键词</span>
+                      {word}
+                      <button
+                        type="button"
+                        onClick={() => removeKeyword(g.key, i)}
+                        className="hover:opacity-70"
+                        aria-label={`移除 ${word}`}
+                      >
+                        <X className="h-2.5 w-2.5" />
+                      </button>
+                    </span>
+                  ))
                 )}
               </div>
-              <div className="mt-1.5 flex gap-1.5">
-                <input
+
+              {/* 添加输入 */}
+              <div className="flex items-center gap-2">
+                <Input
                   type="text"
-                  value={draft[key] ?? ''}
-                  onChange={(e) => setDraft((prev) => ({ ...prev, [key]: e.target.value }))}
+                  value={inputs[g.key]}
+                  onChange={(e) =>
+                    setInputs((prev) => ({ ...prev, [g.key]: e.target.value }))
+                  }
                   onKeyDown={(e) => {
-                    if (e.key === 'Enter') addKeyword(key)
+                    if (e.key === 'Enter') {
+                      e.preventDefault()
+                      addKeyword(g.key)
+                    }
                   }}
-                  placeholder={`添加「${label}」关键词…`}
-                  maxLength={30}
-                  className="h-8 min-w-0 flex-1 rounded-lg border bg-background px-2.5 text-xs outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                  placeholder={`添加${g.label}关键词…`}
+                  className="h-9 flex-1"
                 />
-                <button
-                  type="button"
-                  onClick={() => addKeyword(key)}
-                  disabled={!(draft[key] ?? '').trim()}
-                  className="inline-flex h-8 items-center gap-1 rounded-lg border border-[#24415E]/25 px-2.5 text-xs font-medium text-[#24415E] transition-colors hover:bg-[#24415E]/5 disabled:opacity-40"
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => addKeyword(g.key)}
+                  disabled={!inputs[g.key].trim()}
                 >
-                  <Plus className="h-3.5 w-3.5" /> 添加
-                </button>
+                  添加
+                </Button>
               </div>
             </div>
           ))}
         </div>
 
-        {/* ─── 底部 ─────────────────────────────────────── */}
-        <div className="flex items-center justify-between gap-3 border-t border-border/60 px-5 py-3.5">
-          <span className="text-[11px] text-muted-foreground">共 {totalCount} 个关键词</span>
-          {error && <span className="min-w-0 flex-1 truncate text-right text-[11px] text-destructive">{error}</span>}
-          <div className="flex gap-2">
-            <button
-              type="button"
-              onClick={onClose}
-              className="rounded-lg border px-4 py-2 text-xs font-medium text-muted-foreground transition-colors hover:bg-secondary"
-            >
-              取消
-            </button>
-            <button
-              type="button"
-              onClick={handleSave}
-              disabled={saving}
-              className="inline-flex items-center gap-1.5 rounded-lg bg-[#24415E] px-5 py-2 text-xs font-medium text-white transition-opacity hover:opacity-90 disabled:opacity-50"
-            >
-              {saving && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
-              {saving ? '保存中…' : '保存关键词'}
-            </button>
-          </div>
+        {/* 底部操作 */}
+        <div className="sticky bottom-0 flex items-center justify-end gap-3 border-t border-border bg-card/95 px-6 py-4 backdrop-blur">
+          <Button variant="outline" size="sm" onClick={onClose}>
+            取消
+          </Button>
+          <Button onClick={handleSave} disabled={saving}>
+            {saving && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+            {saving ? '保存中…' : '保存到资产'}
+          </Button>
         </div>
       </div>
     </div>

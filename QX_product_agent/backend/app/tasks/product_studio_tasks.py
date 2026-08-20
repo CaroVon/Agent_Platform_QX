@@ -48,11 +48,43 @@ class ProductStudioTask(Task):
         return self._settings
 
 
+def _bridge_env_file_keys(keys: tuple[str, ...]) -> None:
+    """从 backend/.env 补读未导出的键到 os.environ（setdefault 不覆盖现有）。"""
+    from pathlib import Path as _Path
+
+    env_file = _Path(__file__).resolve().parents[2] / ".env"
+    if not env_file.is_file():
+        return
+    wanted = set(keys)
+    try:
+        for line in env_file.read_text(encoding="utf-8").splitlines():
+            line = line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            k, _, v = line.partition("=")
+            k = k.strip()
+            if k in wanted and v.strip():
+                os.environ.setdefault(k, v.strip())
+    except OSError:
+        pass
+
+
 def _bridge_env(settings) -> None:
     """把 QX 配置桥接为平台层环境变量（平台层只读自己的环境变量）。"""
     os.environ.setdefault("AGENT_PLATFORM_LLM_API_KEY", settings.DEEPSEEK_API_KEY)
     os.environ.setdefault("AGENT_PLATFORM_LLM_BASE_URL", settings.DEEPSEEK_BASE_URL)
     os.environ.setdefault("AGENT_PLATFORM_LLM_MODEL", settings.DEEPSEEK_MODEL)
+    # MOD（amazon_matrix_mod.llm_interpret）直读 DEEPSEEK_* 环境变量
+    if settings.DEEPSEEK_API_KEY:
+        os.environ.setdefault("DEEPSEEK_API_KEY", settings.DEEPSEEK_API_KEY)
+        os.environ.setdefault("DEEPSEEK_BASE_URL", settings.DEEPSEEK_BASE_URL)
+        os.environ.setdefault("DEEPSEEK_MODEL", settings.DEEPSEEK_MODEL)
+    # MOD 的 M3/生图读 AGENT_PLATFORM_PRESENTATION_*（QX .env 未导出为环境变量，
+    # pydantic Settings 也不声明这些键 → 从 .env 文件补读注入）
+    _bridge_env_file_keys(("AGENT_PLATFORM_PRESENTATION_LLM_API_KEY",
+                           "AGENT_PLATFORM_PRESENTATION_LLM_BASE_URL",
+                           "AGENT_PLATFORM_PRESENTATION_LLM_MODEL",
+                           "AGENT_PLATFORM_PRESENTATION_LLM_EXTRA_JSON"))
     if settings.TAVILY_API_KEY:
         os.environ.setdefault("AGENT_PLATFORM_TAVILY_API_KEY", settings.TAVILY_API_KEY)
     # 记忆目录放在业务输出目录下，随项目输出一起管理
@@ -60,6 +92,12 @@ def _bridge_env(settings) -> None:
         "AGENT_PLATFORM_MEMORY_DIR",
         str(Path(settings.OUTPUT_DIR) / "private" / "studio_memory"),
     )
+    # MOD（amazon_matrix_mod）产物统一落 QX OUTPUT_DIR（按任务 ID 组织），
+    # 避免落到工作区根 outputs/ 造成产出目录分裂
+    os.environ.setdefault("QX_OUTPUT_DIR", str(Path(settings.OUTPUT_DIR).resolve()))
+    # Rainforest key 若 worker 环境存在则透传（.env 中未配置时由部署环境提供）
+    if settings.RAINFOREST_API_KEY:
+        os.environ.setdefault("RAINFOREST_API_KEY", settings.RAINFOREST_API_KEY)
 
 
 def _ensure_paths(settings) -> None:
@@ -365,12 +403,26 @@ def run_product_studio_pipeline(self: ProductStudioTask, product_id: str):
         if settings.SOURCE_REVIEW and "source_gathering" not in gate_nodes:
             gate_nodes.insert(0, "source_gathering")
         extra_initial: dict = {"product_id": str(product_id), "_gate_nodes": gate_nodes}
+        # MOD 数据源覆盖（MOD_SOURCE=mock 供 0-credit 预演/测试；缺省 rainforest）
+        if os.environ.get("MOD_SOURCE"):
+            extra_initial["source"] = os.environ["MOD_SOURCE"]
+        # MOD 抓取量覆盖（缺省 20：search 1 + product 20 ≈ 21 credits）
+        if os.environ.get("MOD_TOP_N"):
+            try:
+                extra_initial["top_n"] = int(os.environ["MOD_TOP_N"])
+            except ValueError:
+                pass
         # 读取产品记录判断是否从等待批准状态恢复
         from app.core.celery_db import get_sync_engine
         from sqlalchemy.orm import Session
         from app.models.studio_product import StudioProduct as SP
         with Session(get_sync_engine()) as _session:
             _p = _session.get(SP, _parse_product_id(product_id))
+            # 模板选择权（前端指定设计主题/风格方法论 → presentation/MOD 消费）
+            if getattr(_p, "theme_id", None):
+                extra_initial["ppt_theme"] = _p.theme_id
+            if getattr(_p, "style_id", None):
+                extra_initial["ppt_style"] = _p.style_id
             _saved = json.loads(_p.asset_package or "{}") if _p and _p.asset_package else {}
             if _saved.get("_resume"):
                 for key in ("requirement", "research", "competitor_matrix", "competitor_analysis", "strategy",

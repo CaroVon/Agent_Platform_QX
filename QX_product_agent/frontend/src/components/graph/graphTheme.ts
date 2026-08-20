@@ -21,7 +21,6 @@ export interface GraphTheme {
   labelBg: string
 }
 
-/** 读取 --graph-xxx 形如 "212 55% 45%" 的 HSL 三段值，转 CSS 颜色 */
 function hslVar(name: string): string {
   if (typeof document === 'undefined') return '#888'
   const raw = getComputedStyle(document.documentElement).getPropertyValue(name).trim()
@@ -31,8 +30,7 @@ function hslVar(name: string): string {
 
 export function readGraphTheme(): GraphTheme {
   const isDark =
-    typeof document !== 'undefined' &&
-    document.documentElement.classList.contains('dark')
+    typeof document !== 'undefined' && document.documentElement.classList.contains('dark')
 
   return {
     isDark,
@@ -56,7 +54,6 @@ export function readGraphTheme(): GraphTheme {
   }
 }
 
-/** 主题切换监听：返回取消函数 */
 export function watchThemeChange(onChange: () => void): () => void {
   if (typeof document === 'undefined') return () => {}
   const target = document.documentElement

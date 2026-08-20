@@ -14,7 +14,7 @@ import { Dices, Lightbulb, Sparkles } from 'lucide-react'
 import { cn } from '@/lib/utils'
 
 /** 静态提示模板：行业 × 人群 × 场景组合示例 */
-export const PROMPT_TEMPLATES = [
+export const PMPT_TMPLATS = [
   '面向独居老人的智能药盒（用药提醒 + 家人远程监护）',
   '面向 Z 世代的 AI 睡眠健康枕（睡眠监测 + 助眠白噪音）',
   '面向健身房的智能私教镜（动作纠正 + 训练计划）',
@@ -26,7 +26,7 @@ export const PROMPT_TEMPLATES = [
 ]
 
 /** 基于输入关键词的模板联想（本地规则，动态建议的即时兜底） */
-const TEMPLATE_KEYWORDS: Array<{ kws: string[]; idea: string }> = [
+const TMPLAT_KYWDS: Array<{ kws: string[]; idea: string }> = [
   { kws: ['老人', '老年', '长辈', '药'], idea: '面向独居老人的智能药盒（用药提醒 + 家人远程监护 + 社区联动）' },
   { kws: ['睡', '枕头', '床'], idea: '面向 Z 世代的 AI 睡眠健康枕（睡眠监测 + 助眠白噪音 + 智能闹钟）' },
   { kws: ['健身', '运动', '私教', '训练'], idea: '面向健身房的智能私教镜（动作纠正 + 训练计划 + 体态评估）' },
@@ -40,7 +40,7 @@ const TEMPLATE_KEYWORDS: Array<{ kws: string[]; idea: string }> = [
 function matchTemplate(input: string): string[] {
   const t = input.trim().toLowerCase()
   if (!t) return []
-  const hits = TEMPLATE_KEYWORDS.filter(({ kws }) => kws.some((k) => t.includes(k)))
+  const hits = TMPLAT_KYWDS.filter(({ kws }) => kws.some((k) => t.includes(k)))
   return hits.map((h) => h.idea).slice(0, 2)
 }
 
@@ -72,7 +72,7 @@ export function SuggestionChip({
         disabled={disabled}
         title={title}
         className={cn(
-          'inline-flex items-center gap-1.5 rounded-full border border-border/80 bg-card px-3.5 py-1.5 text-xs text-muted-foreground transition-colors hover:border-[#24415E]/40 hover:text-[#24415E] disabled:opacity-50',
+          'inline-flex items-center gap-1.5 rounded-full border border-border/80 bg-card px-3.5 py-1.5 text-xs text-muted-foreground transition-colors hover:border-[hsl(var(--primary))]/40 hover:text-[hsl(var(--primary))] disabled:opacity-50',
           className,
         )}
       >
@@ -94,7 +94,7 @@ export function SuggestionChip({
       disabled={disabled}
       title={title}
       className={cn(
-        'w-full cursor-pointer justify-start rounded-xl border border-border/60 bg-background/60 px-3 py-2 text-left text-xs text-muted-foreground transition-colors hover:border-[#24415E]/35 hover:bg-[#24415E]/5 disabled:opacity-50',
+        'w-full cursor-pointer justify-start rounded-md border border-border/60 bg-background/60 px-3 py-2 text-left text-xs text-muted-foreground transition-colors hover:border-[hsl(var(--primary))]/35 hover:bg-[hsl(var(--primary))]/5 disabled:opacity-50',
         className,
       )}
     >
@@ -106,7 +106,7 @@ export function SuggestionChip({
           return (
             <>
               <span className="whitespace-pre-wrap">{content.substring(0, index)}</span>
-              <span className="font-medium text-[#24415E] whitespace-pre-wrap">{actual}</span>
+              <span className="font-medium text-[hsl(var(--primary))] whitespace-pre-wrap">{actual}</span>
               <span className="whitespace-pre-wrap">
                 {content.substring(index + actual.length)}
               </span>
@@ -139,7 +139,7 @@ export function SuggestionChips({
   const { matched, randomIdea } = useMemo(() => {
     const matched = matchTemplate(t)
     // 🎲 随机示例（seed 变化时重新取）
-    const random = PROMPT_TEMPLATES[seed % PROMPT_TEMPLATES.length]
+    const random = PMPT_TMPLATS[seed % PMPT_TMPLATS.length]
     return { matched, randomIdea: random }
   }, [t, seed])
 
@@ -147,7 +147,7 @@ export function SuggestionChips({
 
   return (
     <div className={cn('flex flex-wrap items-center gap-2', className)}>
-      <span className="inline-flex items-center gap-1 text-[10px] text-muted-foreground/70">
+      <span className="inline-flex items-center gap-1 text-sm text-muted-foreground/70">
         <Lightbulb className="h-3 w-3" /> 提示
       </span>
 
@@ -168,10 +168,10 @@ export function SuggestionChips({
       {/* 无输入时的示例引导 */}
       {!t && (
         <SuggestionChip
-          onClick={() => onPick(PROMPT_TEMPLATES[seed % PROMPT_TEMPLATES.length])}
+          onClick={() => onPick(PMPT_TMPLATS[seed % PMPT_TMPLATS.length])}
         >
           <Sparkles className="h-3 w-3" />
-          {PROMPT_TEMPLATES[seed % PROMPT_TEMPLATES.length]}
+          {PMPT_TMPLATS[seed % PMPT_TMPLATS.length]}
         </SuggestionChip>
       )}
 

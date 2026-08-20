@@ -120,39 +120,40 @@ def extract_memory_from_project(project_id: str) -> dict[str, Any] | None:
     settings = get_settings()
     repo = _get_repo()
 
-    try:
-        project = repo.get_project(project_id)
-    except Exception as e:  # noqa: BLE001
-        logger.warning("[记忆图] 项目读取失败: %s", e)
-        return None
+    is_studio = project_id.startswith("studio:")
+    raw_pid = project_id[len("studio:"):] if is_studio else project_id
 
-    status_value = getattr(project, "status", None)
-    if status_value is not None and getattr(status_value, "value", str(status_value)) != "completed":
-        logger.info("[记忆图] 项目未完成，跳过 | project=%s", project_id)
-        return None
+    if is_studio:
+        # ── Studio 产品：语料来自资产包 ─────────────────────
+        product = repo.get_studio_product(raw_pid)
+        if product is None:
+            logger.info("[记忆图] Studio 产品不存在，跳过 | product=%s", raw_pid)
+            return None
+        status_value = getattr(product, "status", None)
+        if status_value is not None and getattr(status_value, "value", str(status_value)) != "completed":
+            logger.info("[记忆图] Studio 产品未完成，跳过 | product=%s", raw_pid)
+            return None
+        corpus = _assemble_studio_corpus(product)
+    else:
+        try:
+            project = repo.get_project(project_id)
+        except Exception as e:  # noqa: BLE001
+            logger.warning("[记忆图] 项目读取失败: %s", e)
+            return None
+        status_value = getattr(project, "status", None)
+        if status_value is not None and getattr(status_value, "value", str(status_value)) != "completed":
+            logger.info("[记忆图] 项目未完成，跳过 | project=%s", project_id)
+            return None
+        corpus = _assemble_project_corpus(repo, project_id)
 
-    # ── 1. 语料组装（章节 + 经验包 + 图片分析） ──────────────
-    blocks = repo.list_document_blocks(project_id, limit=12)
-    corpus_parts = [f"## {b.section_title}\n{(b.content or '')[:1500]}" for b in blocks]
-    experiences = repo.list_domain_experiences(project_id, limit=2)
-    for exp in experiences:
-        corpus_parts.append(f"## 经验包\n{exp.summary[:800]}")
-    images = repo.list_kb_images(project_id, limit=5)
-    for img in images:
-        if img.analysis_text:
-            try:
-                analysis = json.loads(img.analysis_text)
-                corpus_parts.append(f"## 图片分析\n{analysis.get('summary', '')}")
-            except (json.JSONDecodeError, AttributeError):
-                pass
-    corpus = "\n\n".join(corpus_parts)[:20000]
     if not corpus.strip():
-        logger.info("[记忆图] 无可用语料，跳过 | project=%s", project_id)
+        logger.info("[记忆图] 无可用语料，跳过 | source=%s", project_id)
         return None
 
-    # ── 2. LLM 结构化抽取 ───────────────────────────────────
+    # ── LLM 结构化抽取 ─────────────────────────────────────
     try:
         llm = _get_chat_llm(settings)
+        # Prompt 含有 JSON 示例大括号，不能使用 str.format；只替换语料占位符。
         raw = llm.invoke(_EXTRACT_PROMPT.replace("{corpus}", corpus)).content or ""
         data = _parse_extract_json(raw)
     except Exception as e:  # noqa: BLE001
@@ -177,7 +178,7 @@ def extract_memory_from_project(project_id: str) -> dict[str, Any] | None:
         if etype not in ENTITY_TYPES:
             etype = "other"
         summary = str(item.get("summary") or "")[:300]
-        entity_id = _upsert_entity(repo, project_id, name, etype, summary)
+        entity_id = _upsert_entity(repo, raw_pid, name, etype, summary)
         entity_ids[name] = str(entity_id)
         saved_entities.append(str(entity_id))
 
@@ -192,8 +193,8 @@ def extract_memory_from_project(project_id: str) -> dict[str, Any] | None:
         # 未在实体列表中的两端：自动补建
         for name in (src, tgt):
             if name not in entity_ids:
-                entity_ids[name] = str(_upsert_entity(repo, project_id, name, "other", ""))
-        if _upsert_relation(repo, entity_ids[src], entity_ids[tgt], rel, project_id):
+                entity_ids[name] = str(_upsert_entity(repo, raw_pid, name, "other", ""))
+        if _upsert_relation(repo, entity_ids[src], entity_ids[tgt], rel, raw_pid):
             saved_relations += 1
 
     # ── 5. 洞察入库 ──────────────────────────────────────────
@@ -207,17 +208,17 @@ def extract_memory_from_project(project_id: str) -> dict[str, Any] | None:
             if any(kw in text for kw in entity_ids if kw and len(kw) >= 2)
         ][:10]
         repo.save_memory_insight(
-            scope="project", project_id=project_id, content=text,
+            scope="project", project_id=raw_pid, content=text,
             entity_ids=linked, source="task_summary",
-            source_url=f"project://{project_id}",
+            source_url=f"{'studio' if is_studio else 'project'}://{raw_pid}",
         )
         saved_insights += 1
 
     # ── 6. 记忆向量化（scope=memory 独立向量库） ─────────────
-    _vectorize_entities(repo, saved_entities, project_id)
+    _vectorize_entities(repo, saved_entities, raw_pid)
 
     # ── 7. 全局提升 ──────────────────────────────────────────
-    promoted = promote_global_memories(project_id)
+    promoted = promote_global_memories(raw_pid)
 
     logger.info(
         "[记忆图] 沉淀完成 | project=%s | entities=%d | relations=%d | insights=%d | promoted=%d",
@@ -362,6 +363,63 @@ def _vectorize_entities(repo, entity_ids: list[str], project_id: str) -> None:
 # 2. 全局提升（项目记忆 → 全局记忆）
 # ══════════════════════════════════════════════════════════════
 
+def promote_entity_to_global(entity_id: str) -> dict:
+    """手动把单个项目实体提升为全局（图谱侧栏「提升到全局记忆」入口）。
+
+    逻辑与 promote_global_memories 的单实体分支一致：创建/合并 global
+    实体并复制其关系；幂等（已存在 global 同名实体时合并）。
+    """
+    repo = _get_repo()
+    try:
+        entity = repo.get_entity(entity_id)
+    except Exception:  # noqa: BLE001
+        entity = None
+    if entity is None:
+        return {"promoted": False, "reason": "实体不存在"}
+    if entity.scope == "global":
+        return {"promoted": False, "reason": "已是全局实体"}
+    now = _now()
+    global_entity = repo.find_global_entity(entity.name)
+    created_new = global_entity is None
+    if global_entity:
+        repo.update_entity_merge(
+            str(global_entity.id),
+            new_alias=entity.name,
+            new_summary=entity.summary or global_entity.summary,
+            confidence_delta=0.05,
+            last_seen=now,
+        )
+        gid = global_entity.id
+    else:
+        gid = repo.save_memory_entity(
+            scope="global", project_id=None, type=entity.type,
+            name=entity.name, summary=entity.summary,
+            confidence=min(0.9, entity.confidence + 0.1),
+            first_seen=now, last_seen=now,
+        ).id
+    copied = 0
+    for rel in repo.list_relations_for_entity(str(entity.id)):
+        other_id = rel.target_entity_id if str(rel.source_entity_id) == str(entity.id) \
+            else rel.source_entity_id
+        if str(other_id) == str(entity.id):
+            continue
+        src, tgt = (gid, other_id) if str(rel.source_entity_id) == str(entity.id) \
+            else (other_id, gid)
+        if not repo.find_relation(str(src), str(tgt), rel.relation_type, active_only=True):
+            repo.save_memory_relation(
+                source_id=str(src), target_id=str(tgt),
+                relation_type=rel.relation_type,
+                evidence=rel.evidence, weight=rel.weight,
+                valid_from=rel.valid_from,
+            )
+            copied += 1
+    if not created_new and copied == 0:
+        # 幂等：全局已存在同名实体且无新增关系 → 非提升
+        return {"promoted": False, "reason": "全局已存在同名实体且无新增关系",
+                "global_entity_id": str(gid)}
+    return {"promoted": True, "global_entity_id": str(gid), "relations_copied": copied}
+
+
 def promote_global_memories(project_id: str) -> int:
     """
     将跨项目复现的实体/洞察提升为全局记忆：
@@ -376,8 +434,9 @@ def promote_global_memories(project_id: str) -> int:
         project_entities = repo.list_project_entities(project_id)
         for entity in project_entities:
             name = entity.name
-            # 跨项目计数（同 scope=project 同名词，不同 project_id）
-            similar = repo.count_entity_by_name_across_projects(name, exclude_project=project_id)
+            # 跨任务复现计数（双通道合并：research 项目 + Studio 任务）
+            similar = repo.count_entity_across_all_tasks(
+                name, exclude_project=project_id)
             if similar + 1 < PROMOTE_MIN_PROJECTS:
                 continue
             global_entity = repo.find_global_entity(name)
@@ -539,7 +598,14 @@ def get_memory_graph(
     repo = _get_repo()
 
     if scope == "project" and not project_id and not studio_product_id:
-        scope = "global"
+        # 项目视图未指定任务 → 返回空图（不回落 global：
+        # 回落会造成项目视图闪现全局旧数据，前端切换体验实测受损）
+        return {
+            "nodes": [], "edges": [], "query": q,
+            "meta": {"entity_count": 0, "relation_count": 0,
+                     "projects_covered": 0, "studio_products_covered": 0,
+                     "truncated": False},
+        }
     entities = repo.list_memory_entities(
         scope=scope, project_id=project_id, studio_product_id=studio_product_id, q=q,
         entity_types=entity_types, min_confidence=min_confidence,
@@ -637,7 +703,9 @@ def get_memory_graph(
             "truncated": truncated,
             "limit": limit,
             "projects_covered": len({e.project_id for e in entities if e.project_id}),
-            "studio_products_covered": len({e.studio_product_id for e in entities if e.studio_product_id}),
+            "studio_products_covered": len({
+                e.studio_product_id for e in entities if e.studio_product_id
+            }),
         },
     }
 
@@ -679,3 +747,51 @@ def delete_entity_cascade(entity_id: str) -> bool:
         return False
     repo.delete_entities_with_relations([entity_id])
     return True
+
+
+def _assemble_project_corpus(repo, project_id: str) -> str:
+    """传统研究报告项目语料：章节 + 经验包 + 图片分析。"""
+    blocks = repo.list_document_blocks(project_id, limit=12)
+    corpus_parts = [f"## {b.section_title}\n{(b.content or '')[:1500]}" for b in blocks]
+    experiences = repo.list_domain_experiences(project_id, limit=2)
+    for exp in experiences:
+        corpus_parts.append(f"## 经验包\n{exp.summary[:800]}")
+    images = repo.list_kb_images(project_id, limit=5)
+    for img in images:
+        if img.analysis_text:
+            try:
+                analysis = json.loads(img.analysis_text)
+                corpus_parts.append(f"## 图片分析\n{analysis.get('summary', '')}")
+            except (json.JSONDecodeError, AttributeError):
+                pass
+    return "\n\n".join(corpus_parts)[:20000]
+
+
+def _assemble_studio_corpus(product) -> str:
+    """Studio 产品语料：idea + 关键词 + 资产包文本（递归提取字符串值）。"""
+    parts = [f"## 产品想法\n{product.idea or ''}"]
+    if getattr(product, "keywords", None):
+        parts.append(f"## 关键词\n{product.keywords}")
+    if getattr(product, "asset_package", None):
+        try:
+            package = json.loads(product.asset_package)
+            text_chunks: list[str] = []
+
+            def walk(node, depth=0):
+                if depth > 6:
+                    return
+                if isinstance(node, dict):
+                    for k, v in node.items():
+                        if isinstance(v, str) and len(v) > 20:
+                            text_chunks.append(f"[{k}] {v[:600]}")
+                        elif isinstance(v, (dict, list)):
+                            walk(v, depth + 1)
+                elif isinstance(node, list):
+                    for item in node[:10]:
+                        walk(item, depth + 1)
+
+            walk(package)
+            parts.append("## 资产包\n" + "\n".join(text_chunks[:60]))
+        except (json.JSONDecodeError, TypeError):
+            parts.append("## 资产包\n" + str(product.asset_package)[:8000])
+    return "\n\n".join(parts)[:20000]

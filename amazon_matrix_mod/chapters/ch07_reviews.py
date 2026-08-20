@@ -1,15 +1,15 @@
-"""第 7 章：评论痛点与差异化机会 —— 确定性关键词聚类 + 可选 LLM 深化。
+"""第 7 章：评论痛点与差异化机会 —— 确定性关键词聚类 + 可选 LLM 深化（SVG 渲染）。
 
 数据：reviews_raw（分页采集）优先，缺失时用 product 的 top_reviews。
 """
 from __future__ import annotations
 
-import re
 from collections import Counter
 
 import pandas as pd
 
-from amazon_matrix_mod.chapters.common import BRAND_COLORS, fp, save_chart, setup_style
+from amazon_matrix_mod.chapters.common import save_chart
+from amazon_matrix_mod.svgcharts import charts
 
 # 主题词典：关键词 → 主题（痛点/卖点方向）
 _TOPICS = [
@@ -46,9 +46,6 @@ def _classify(body: str) -> list[str]:
 
 
 def analyze(df: pd.DataFrame, reviews_raw: dict, products_raw: dict, out_dir: str) -> dict:
-    setup_style()
-    import matplotlib.pyplot as plt
-
     reviews = _collect_reviews(reviews_raw, products_raw)
     conclusions: list[str] = []
     images: list[str] = []
@@ -73,17 +70,16 @@ def analyze(df: pd.DataFrame, reviews_raw: dict, products_raw: dict, out_dir: st
     total = len(reviews)
     # 主题频次图
     if topic_count:
-        fig, ax = plt.subplots(figsize=(10, 4.4))
-        items = topic_count.most_common(8)
-        ax.barh([t for t, _ in items][::-1], [c for _, c in items][::-1],
-                color=BRAND_COLORS["blue"], alpha=0.85)
-        for i, (_, c) in enumerate(items[::-1]):
-            ax.text(c + total * 0.01, i, str(c), va="center", fontsize=9)
-        ax.set_xlabel("提及次数", fontproperties=fp(10))
-        ax.set_title(f"评论主题分布（N={total}）", fontproperties=fp(12, "bold"))
-        ax.tick_params(labelsize=9)
-        fig.tight_layout()
-        images.append(save_chart(fig, out_dir, "ch07_topics.png"))
+        items_common = topic_count.most_common(8)
+
+        def _draw_topics(root):
+            charts.bar_h(root, 40, 60, 1020, 340,
+                         [{"label": t, "value": c, "display": str(c)}
+                          for t, c in items_common],
+                         title=f"评论主题分布（N={total}，词典口径）",
+                         label_width=140)
+
+        images.append(save_chart(_draw_topics, out_dir, "ch07_topics.svg"))
         top_topic = topic_count.most_common(1)[0]
         conclusions.append(
             f"评论最高频主题：{top_topic[0]}（{top_topic[1]} 次提及，{top_topic[1] / total * 100:.0f}%）")

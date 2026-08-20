@@ -8,7 +8,6 @@ import { cn } from '@/lib/utils'
 
 const STATUS_META: Record<string, { label: string; cls: string }> = {
   queued: { label: '排队中', cls: 'bg-secondary text-muted-foreground' },
-  paused: { label: '已暂停', cls: 'bg-amber-500/10 text-amber-700' },
   running: { label: '生成中', cls: 'bg-[#24415E]/10 text-[#24415E]' },
   completed: { label: '已完成', cls: 'bg-emerald-600/10 text-emerald-700' },
   failed: { label: '失败', cls: 'bg-destructive/10 text-destructive' },
@@ -22,7 +21,7 @@ export function ProjectHeader({ product }: { product: StudioProduct | null }) {
     <div className="flex flex-wrap items-center justify-between gap-4">
       <div className="min-w-0">
         <div className="flex items-center gap-3">
-          <h2 className="font-editorial truncate text-2xl font-semibold tracking-tight">
+          <h2 className="font-serif truncate text-2xl font-semibold tracking-tight">
             {product.idea}
           </h2>
           <span className={cn('shrink-0 rounded-full px-2.5 py-1 text-[11px] font-medium', meta.cls)}>

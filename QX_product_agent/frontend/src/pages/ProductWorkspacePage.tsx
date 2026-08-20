@@ -1,60 +1,531 @@
 /**
- * ProductWorkspacePage —— AI Product Creation Canvas（frontedUI.md Phase 2）
+ * ProductWorkspacePage —— AI Product Creation Canvas
  *
- * 不是 dashboard，是创作画布：
- *   Hero 想法输入 → AI 团队进度（时间线+工具）→ 生成资产 → 知识上下文
+ * 四段式创作画布：
+ *   1. Hero — 双模式输入（对话式 / 快速）
+ *   2. AI Team Progress — 节点时间线 + 工具执行
+ *   3. Generated Assets — 已生成资产（研究/PRD/设计/演示）
+ *   4. New Idea — 紧凑输入 + Knowledge Context（始终跨跨）
+ *
+ * 两个断点：
+ *   - waiting_approval + source_gathering → 资料审核
+ *   - waiting_approval + 其他节点 → 人工确认
  */
 
 import { useEffect, useRef, useState } from 'react'
 import { useLocation } from 'react-router-dom'
-import { AlertCircle, Globe, Loader2, Pause, Play, Square, Upload } from 'lucide-react'
+import {
+  AlertCircle,
+  Globe,
+  Loader2,
+  Pause,
+  Play,
+  Square,
+  Upload,
+  Zap,
+  MessageSquare,
+} from 'lucide-react'
 import { ProjectHeader } from '@/components/workspace/ProjectHeader'
 import { IdeaInput } from '@/components/workspace/IdeaInput'
 import { ClarifyPanel } from '@/components/workspace/ClarifyPanel'
 import { AssetPanel } from '@/components/workspace/AssetPanel'
 import { KnowledgePanel } from '@/components/workspace/KnowledgePanel'
+import {
+  DesignStylePicker,
+  type DesignStyleValue,
+} from '@/components/workspace/DesignStylePicker'
 import { AgentTimeline } from '@/components/ai/AgentTimeline'
 import { ToolExecution } from '@/components/ai/ToolExecution'
 import { StreamingMessage } from '@/components/ai/StreamingMessage'
-import { productApi } from '@/lib/api'
+import { productApi, type PptOptions } from '@/lib/api'
 import type { StudioProduct } from '@/types/studio'
 import { cn } from '@/lib/utils'
+import { Button } from '@/components/common/button'
+import { Input } from '@/components/common/input'
+import { Badge } from '@/components/common/badge'
+import {
+  ProductLandscape,
+  WindowGrid,
+} from '@/components/illustrations/ModernIllustrations'
+import { StatusLED } from '@/components/decor/RetroEffects'
 
+/* ─── 通用 Section 容器（v2：IBM蓝商务版） ──────────── */
 function Section({
   step,
   title,
+  description,
   children,
   className,
 }: {
   step: string
   title: string
+  description?: string
   children: React.ReactNode
   className?: string
 }) {
   return (
-    <section className={cn('rounded-2xl border bg-card px-8 py-8', className)}>
-      <div className="mb-6 flex items-baseline gap-4">
-        <span className="font-editorial text-sm italic text-[#C87E4F]">{step}</span>
-        <h2 className="text-base font-semibold tracking-tight">{title}</h2>
+    <section
+      className={cn(
+        'overflow-hidden rounded-lg border border-border bg-card shadow-elev-sm',
+        className,
+      )}
+    >
+      <div className="flex items-center justify-between gap-3 border-b border-border px-7 py-4">
+        <div>
+          <div className="mb-0.5 flex items-center gap-2 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+            <span className="text-primary">第 {step} 阶段</span>
+          </div>
+          <h2 className="font-display text-[18px] font-semibold tracking-tight text-foreground">
+            {title}
+          </h2>
+          {description && (
+            <p className="mt-0.5 text-[12px] text-muted-foreground">{description}</p>
+          )}
+        </div>
       </div>
-      {children}
+      <div className="px-7 py-6">{children}</div>
     </section>
+  )
+}
+
+/* ─── Hero（无产品时显示） ────────────────────────── */
+function HeroEmpty({
+  inputMode,
+  setInputMode,
+  idea,
+  setIdea,
+  creating,
+  handleGenerate,
+  handleClarifyGenerate,
+  dynamicSuggestions,
+  handleSuggestionInput,
+  pptOptions,
+  designStyle,
+  setDesignStyle,
+}: {
+  inputMode: 'chat' | 'quick'
+  setInputMode: (m: 'chat' | 'quick') => void
+  idea: string
+  setIdea: (v: string) => void
+  creating: boolean
+  handleGenerate: () => void
+  handleClarifyGenerate: (brief: string) => void
+  dynamicSuggestions: string[]
+  handleSuggestionInput: (v: string) => void
+  pptOptions: PptOptions | null
+  designStyle: DesignStyleValue
+  setDesignStyle: (v: DesignStyleValue) => void
+}) {
+  return (
+    <div className="space-y-8">
+      {/* 顶部 Hero：标题 + 装饰图 */}
+      <div className="relative overflow-hidden rounded-xl border border-border bg-card shadow-elev-md">
+        <div className="pointer-events-none absolute inset-0 opacity-[0.07]">
+          <ProductLandscape className="h-full w-full text-primary" />
+        </div>
+        <div className="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-primary to-transparent opacity-60" />
+
+        <div className="relative grid gap-8 px-8 py-10 lg:grid-cols-[1.5fr_1fr] lg:px-12 lg:py-14">
+          <div>
+            <div className="mb-4 inline-flex items-center gap-2 rounded-full border border-primary/30 bg-primary/10 px-3 py-1 text-[12px] font-medium text-primary">
+              <span className="h-1.5 w-1.5 animate-pulse-dot rounded-full bg-primary" />
+              QX Product Studio · v2.0
+            </div>
+            <h1 className="mb-4 font-display text-[34px] font-semibold leading-[1.1] tracking-tight text-foreground lg:text-[44px]">
+              从一句话到<br />
+              <span className="text-primary">完整产品全案</span>
+            </h1>
+            <p className="mb-6 max-w-xl text-[15px] leading-relaxed text-muted-foreground">
+              输入产品想法，AI 团队自动完成市场调研 → 竞品矩阵 → 用户画像 → PRD → 路线图 → 演示文稿。
+              全流程支持断点干预、资产可视化编辑、16:9 PPT 导出。
+            </p>
+            <div className="flex flex-wrap items-center gap-x-5 gap-y-2 text-[12px] text-muted-foreground">
+              <div className="flex items-center gap-2">
+                <StatusLED status="online" size="sm" />
+                <span>7 节点流水线</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <StatusLED status="processing" size="sm" />
+                <span>4 个专业 Agent</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <StatusLED status="busy" size="sm" />
+                <span>RAG 混合检索</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <StatusLED status="warning" size="sm" />
+                <span>16:9 PPT 导出</span>
+              </div>
+            </div>
+          </div>
+
+          {/* 右侧装饰图组 */}
+          <div className="relative hidden lg:block">
+            <div className="relative h-full min-h-[280px] overflow-hidden rounded-lg border border-border bg-background/40 shadow-elev-sm">
+              <div className="absolute inset-0 text-primary opacity-30">
+                <WindowGrid className="h-full w-full" />
+              </div>
+              <div className="absolute right-4 top-4 flex items-center gap-2 rounded-md border border-border bg-card/80 px-2.5 py-1 text-[11px] text-foreground shadow-elev-xs backdrop-blur">
+                <span className="h-1.5 w-1.5 animate-pulse-dot rounded-full bg-success" />
+                <span>Live Pipeline</span>
+              </div>
+              <div className="absolute bottom-4 left-4 right-4 grid grid-cols-3 gap-2">
+                {[
+                  { label: '市场分析', status: 'live' },
+                  { label: '竞品矩阵', status: 'live' },
+                  { label: '路线图', status: 'live' },
+                ].map((s) => (
+                  <div
+                    key={s.label}
+                    className="rounded-md border border-border bg-card/80 p-2 text-center shadow-elev-xs backdrop-blur"
+                  >
+                    <div className="font-mono text-[10px] uppercase text-muted-foreground">
+                      {s.label}
+                    </div>
+                    <div className="mt-0.5 font-mono text-[11px] font-medium text-success">
+                      {s.status}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* 输入区：chat / quick 双 Tab（与上方 Hero 同宽） */}
+      <div className="w-full">
+        <div className="mb-4 inline-flex rounded-lg border border-border bg-card p-1 shadow-elev-xs">
+          {(
+            [
+              { key: 'chat' as const, label: '对话式输入', Icon: MessageSquare, hint: 'AI 追问补充' },
+              { key: 'quick' as const, label: '快速输入', Icon: Zap, hint: '一句话直接生成' },
+            ]
+          ).map((m) => (
+            <button
+              key={m.key}
+              type="button"
+              onClick={() => setInputMode(m.key)}
+              className={cn(
+                'flex items-center gap-2 rounded-md px-4 py-2 text-[13px] font-medium transition-all',
+                inputMode === m.key
+                  ? 'bg-primary text-primary-foreground shadow-elev-sm'
+                  : 'text-muted-foreground hover:bg-secondary hover:text-foreground',
+              )}
+            >
+              <m.Icon className="h-3.5 w-3.5" />
+              {m.label}
+            </button>
+          ))}
+        </div>
+
+        <div className="rounded-lg border border-border bg-card p-6 shadow-elev-sm">
+          {inputMode === 'chat' ? (
+            <ClarifyPanel
+              creating={creating}
+              onGenerate={handleClarifyGenerate}
+              dynamicSuggestions={dynamicSuggestions}
+              onSuggestionDynamic={handleSuggestionInput}
+            />
+          ) : (
+            <IdeaInput
+              value={idea}
+              onChange={setIdea}
+              onSubmit={handleGenerate}
+              creating={creating}
+            />
+          )}
+        </div>
+
+        {/* 设计风格（模板决定权）：主题 9 套预览 + 风格方法论 */}
+        <div className="mt-3">
+          <DesignStylePicker
+            options={pptOptions}
+            value={designStyle}
+            onChange={setDesignStyle}
+          />
+        </div>
+      </div>
+    </div>
+  )
+}
+
+/* ─── 资料审核（source_gathering gate） ───────────── */
+function SourcesGate({
+  product,
+  sources,
+  sourcesLoading,
+  uploadingSource,
+  onUpload,
+  onApprove,
+  onReject,
+  onError,
+}: {
+  product: StudioProduct
+  sources: Array<{
+    title: string
+    url: string
+    content?: string
+    weight?: number
+    weight_label?: string
+    weight_detail?: string
+    selected?: boolean
+    local?: boolean
+  }>
+  sourcesLoading: boolean
+  uploadingSource: boolean
+  onUpload: (file: File) => Promise<void>
+  onApprove: (selectedUrls: string[]) => Promise<void>
+  onReject: () => Promise<void>
+  onError: (msg: string) => void
+}) {
+  return (
+    <Section
+      step="01"
+      title="资料审核"
+      description="AI 已检索资料并标注权重；勾选保留或上传本地资料补充后继续。"
+    >
+      <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+        <div className="flex items-center gap-2">
+          <Globe className="h-4 w-4 text-primary" />
+          <span className="text-sm font-semibold">已检索资料</span>
+          <Badge variant="default">{sources.length} 条</Badge>
+        </div>
+        <label className="inline-flex cursor-pointer items-center gap-1.5 border border-primary/40 bg-primary/10 px-3.5 py-2 text-[12px] font-medium text-primary transition-colors hover:bg-primary/20">
+          <Upload className="h-3.5 w-3.5" />
+          {uploadingSource ? '上传中…' : '上传本地资料'}
+          <input
+            type="file"
+            accept=".pdf,.txt,.md"
+            className="hidden"
+            disabled={uploadingSource}
+            onChange={async (e) => {
+              const file = e.target.files?.[0]
+              e.target.value = ''
+              if (!file) return
+              try {
+                await onUpload(file)
+              } catch (err) {
+                onError(err instanceof Error ? err.message : '上传失败')
+              }
+            }}
+          />
+        </label>
+      </div>
+
+      {sourcesLoading ? (
+        <div className="flex items-center justify-center gap-2 py-10 font-mono text-[11px] uppercase tracking-[0.18em] text-muted-foreground">
+          <Loader2 className="h-4 w-4 animate-spin text-primary" />
+          <span>加载资料</span>
+          <span className="typing-dot" />
+          <span className="typing-dot" />
+          <span className="typing-dot" />
+        </div>
+      ) : (
+        <div className="max-h-80 space-y-2 overflow-y-auto pr-1">
+          {sources.map((src, i) => {
+            const checked = src.selected !== false
+            return (
+              <label
+                key={`${src.url}-${i}`}
+                className="flex cursor-pointer items-start gap-3 border border-border bg-background/60 p-3 transition-colors hover:border-primary/40"
+              >
+                <input
+                  type="checkbox"
+                  className="mt-0.5 h-4 w-4 shrink-0 cursor-pointer accent-primary"
+                  checked={checked}
+                  onChange={(e) => {
+                    sources[i] = { ...src, selected: e.target.checked }
+                    // 通过 onChange 回调：父组件需要 setSources，这里用 read-modify-write 模式
+                    onUpload(new File([], '')).catch(() => {})
+                  }}
+                />
+                <div className="min-w-0 flex-1">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="font-mono text-[10px] text-primary/70">
+                      [{String(i + 1).padStart(3, '0')}]
+                    </span>
+                    <span className="truncate text-[13px] font-medium text-foreground">
+                      {src.title}
+                    </span>
+                    {src.local && (
+                      <span className="border border-accent/50 bg-accent/10 px-1.5 py-px font-mono text-[9px] uppercase tracking-[0.16em] text-accent">
+                        LOCAL
+                      </span>
+                    )}
+                  </div>
+                  <div className="mt-0.5 truncate font-mono text-[11px] text-muted-foreground/80">
+                    {src.url}
+                  </div>
+                  {src.content && (
+                    <div className="mt-1 line-clamp-2 text-[11px] leading-relaxed text-muted-foreground/70">
+                      {src.content}
+                    </div>
+                  )}
+                </div>
+                <Badge
+                  variant={
+                    (src.weight ?? 0.5) >= 0.8
+                      ? 'success'
+                      : (src.weight ?? 0.5) >= 0.6
+                        ? 'info'
+                        : (src.weight ?? 0.5) >= 0.45
+                          ? 'warning'
+                          : 'secondary'
+                  }
+                >
+                  W·{src.weight_label ?? 'MID'}
+                </Badge>
+              </label>
+            )
+          })}
+          {sources.length === 0 && !sourcesLoading && (
+            <div className="border border-dashed border-border py-8 text-center font-mono text-[11px] uppercase tracking-[0.18em] text-muted-foreground">
+              暂无资料 · 上传本地资料后继续
+            </div>
+          )}
+        </div>
+      )}
+
+      <div className="mt-4 flex items-center justify-between gap-3 border-t border-border pt-4">
+        <p className="font-mono text-[11px] uppercase tracking-[0.14em] text-muted-foreground">
+          已选{' '}
+          <span className="text-primary">
+            {sources.filter((s) => s.selected !== false).length}
+          </span>{' '}
+          / {sources.length}
+        </p>
+        <div className="flex gap-2">
+          <Button variant="destructive" size="sm" onClick={onReject}>
+            放弃并终止
+          </Button>
+          <Button
+            size="sm"
+            disabled={sources.filter((s) => s.selected !== false).length === 0}
+            onClick={() =>
+              onApprove(
+                sources.filter((s) => s.selected !== false).map((s) => s.url),
+              )
+            }
+          >
+            确认资料，继续生成 →
+          </Button>
+        </div>
+      </div>
+    </Section>
+  )
+}
+
+/* ─── 人工批准门（其他节点） ─────────────────────── */
+function ApprovalGate({
+  pausedNode,
+  onApprove,
+  onReject,
+}: {
+  pausedNode: string
+  onApprove: () => Promise<void>
+  onReject: () => Promise<void>
+}) {
+  return (
+    <Section step="01" title="人工确认节点" description={`流水线已暂停于「${pausedNode}」节点，请审阅后决定继续或终止。`}>
+      <div className="flex flex-wrap items-center justify-between gap-4">
+        <div className="flex items-center gap-2 text-warning">
+          <AlertCircle className="h-4 w-4" />
+          <span className="text-sm font-semibold">等待人工批准</span>
+        </div>
+        <div className="flex gap-2">
+          <Button variant="destructive" size="sm" onClick={onReject}>
+            拒绝并终止
+          </Button>
+          <Button size="sm" onClick={onApprove}>
+            批准并继续
+          </Button>
+        </div>
+      </div>
+    </Section>
+  )
+}
+
+/* ─── 任务控制面板 ──────────────────────────────────── */
+function TaskControl({
+  product,
+  taskAction,
+  onPause,
+  onResume,
+  onCancel,
+}: {
+  product: StudioProduct
+  taskAction: 'pause' | 'resume' | 'cancel' | null
+  onPause: () => void
+  onResume: () => void
+  onCancel: () => void
+}) {
+  return (
+    <div className="rounded-lg border border-border bg-card p-4 shadow-elev-sm">
+      <div className="mb-2 font-mono text-[10px] uppercase tracking-[0.18em] text-muted-foreground">
+        任务控制
+      </div>
+      <div className="flex flex-wrap gap-2">
+        {product.status === 'paused' ? (
+          <Button size="sm" onClick={onResume} disabled={taskAction !== null}>
+            <Play className="h-3.5 w-3.5" />
+            {taskAction === 'resume' ? '恢复中…' : '继续任务'}
+          </Button>
+        ) : (
+          <Button variant="secondary" size="sm" onClick={onPause} disabled={taskAction !== null}>
+            <Pause className="h-3.5 w-3.5" />
+            {taskAction === 'pause' ? '暂停中…' : '暂停任务'}
+          </Button>
+        )}
+        <Button variant="destructive" size="sm" onClick={onCancel} disabled={taskAction !== null}>
+          <Square className="h-3.5 w-3.5" />
+          {taskAction === 'cancel' ? '结束中…' : '结束任务'}
+        </Button>
+      </div>
+      <p className="mt-3 text-[10px] leading-relaxed text-muted-foreground/70">
+        暂停会保留当前资产；结束任务后不会继续生成。
+      </p>
+    </div>
   )
 }
 
 export function ProductWorkspacePage() {
   const location = useLocation()
   const templateIdea = (location.state as { templateIdea?: string } | null)?.templateIdea
+
+  // ── 输入模式 ──
+  const [inputMode, setInputMode] = useState<'chat' | 'quick'>('quick')
+
+  // ── 基础状态 ──
   const [idea, setIdea] = useState(templateIdea ?? '')
-  // ── 双模式：对话式输入 / 快速输入 ──
-  const [inputMode, setInputMode] = useState<'chat' | 'quick'>('chat')
   const [dynamicSuggestions, setDynamicSuggestions] = useState<string[]>([])
-  const suggestTimer = useRef<number | null>(null)
   const [creating, setCreating] = useState(false)
+  // 模板选择权（设计主题/风格方法论；null = AI 自主决策）
+  const [pptOptions, setPptOptions] = useState<PptOptions | null>(null)
+  const [designStyle, setDesignStyle] = useState<DesignStyleValue>({
+    themeId: null,
+    styleId: null,
+  })
+
+  useEffect(() => {
+    let alive = true
+    productApi
+      .pptOptions()
+      .then((opts) => {
+        if (alive) setPptOptions(opts)
+      })
+      .catch(() => {
+        /* 选项加载失败不阻塞创建（AI 自动匹配兜底） */
+      })
+    return () => {
+      alive = false
+    }
+  }, [])
   const [product, setProduct] = useState<StudioProduct | null>(null)
   const [recent, setRecent] = useState<Array<{ product_id: string; idea: string; status: string }>>([])
   const [loadError, setLoadError] = useState('')
   const [eventLogs, setEventLogs] = useState<Array<{ ts: string; node: string; status: string; detail?: string }>>([])
+
   // ── 资料审核（source_gathering 门） ──
   const [sources, setSources] = useState<Array<{
     title: string
@@ -68,10 +539,19 @@ export function ProductWorkspacePage() {
   }>>([])
   const [sourcesLoading, setSourcesLoading] = useState(false)
   const [uploadingSource, setUploadingSource] = useState(false)
+
+  // ── 任务控制 ──
   const [taskAction, setTaskAction] = useState<'pause' | 'resume' | 'cancel' | null>(null)
   const pollTimer = useRef<number | null>(null)
+  const suggestTimer = useRef<number | null>(null)
 
   const isActive = product !== null && (product.status === 'queued' || product.status === 'running')
+  const pausedNode =
+    product?.status === 'waiting_approval'
+      ? (product.error_message?.replace('等待人工确认节点: ', '') ?? '')
+      : ''
+
+  // ──────────────── 数据加载 ────────────────
 
   const loadRecent = async () => {
     try {
@@ -100,10 +580,7 @@ export function ProductWorkspacePage() {
     loadRecent()
   }, [])
 
-  // 资料审核：进入 waiting_approval 且暂停于 source_gathering 时拉取资料列表
-  const pausedNode = product?.status === 'waiting_approval'
-    ? product.error_message?.replace('等待人工确认节点: ', '') ?? ''
-    : ''
+  // 资料审核：进入 waiting_approval 且暂停于 source_gathering 时拉取
   useEffect(() => {
     if (product?.status !== 'waiting_approval' || pausedNode !== 'source_gathering') return
     let cancelled = false
@@ -113,7 +590,9 @@ export function ProductWorkspacePage() {
       .then((d) => {
         if (!cancelled) setSources(d.sources ?? [])
       })
-      .catch(() => { /* 拉取失败保持空 */ })
+      .catch(() => {
+        /* 拉取失败保持空 */
+      })
       .finally(() => {
         if (!cancelled) setSourcesLoading(false)
       })
@@ -123,6 +602,7 @@ export function ProductWorkspacePage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [product?.product_id, product?.status, pausedNode])
 
+  // 轮询运行中状态
   useEffect(() => {
     if (!product || !isActive) return
     pollTimer.current = window.setInterval(async () => {
@@ -130,29 +610,31 @@ export function ProductWorkspacePage() {
         const fresh = await productApi.get(product.product_id)
         const prevStatus = product.status
         setProduct(fresh)
-        productApi.logs(product.product_id).then((r) => setEventLogs(r.logs)).catch(() => {})
+        productApi
+          .logs(product.product_id)
+          .then((r) => setEventLogs(r.logs))
+          .catch(() => {})
         if (fresh.status === 'completed' || fresh.status === 'failed') {
           if (pollTimer.current) window.clearInterval(pollTimer.current)
           loadRecent()
-          // ── 完成通知（浏览器 Notification，需用户授权） ──
           if (prevStatus !== fresh.status && 'Notification' in window) {
             try {
-              if (Notification.permission === 'granted') {
-                new Notification(
-                  fresh.status === 'completed' ? '✅ 产品资产已生成' : '❌ 产品生成失败',
-                  {
-                    body:
-                      fresh.status === 'completed'
-                        ? `「${fresh.idea}」的研究/PRD/设计/演示资产已就绪`
-                        : `「${fresh.idea}」：${fresh.error_message || '请查看详情'}`,
-                  },
-                )
-              } else if (Notification.permission === 'default') {
-                Notification.requestPermission()
+                if (Notification.permission === 'granted') {
+                  new Notification(
+                    fresh.status === 'completed' ? '产品资产已生成' : '产品生成失败',
+                    {
+                      body:
+                        fresh.status === 'completed'
+                          ? `「${fresh.idea}」的研究/PRD/设计/演示资产已就绪`
+                          : `「${fresh.idea}」：${fresh.error_message || '请查看详情'}`,
+                    },
+                  )
+                } else if (Notification.permission === 'default') {
+                  Notification.requestPermission()
+                }
+              } catch {
+                /* 通知不可用时静默 */
               }
-            } catch {
-              /* 通知不可用时静默 */
-            }
           }
         }
       } catch {
@@ -165,13 +647,18 @@ export function ProductWorkspacePage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [product?.product_id, isActive])
 
+  // ──────────────── 操作回调 ────────────────
+
   const handleGenerate = async () => {
     const trimmed = idea.trim()
     if (!trimmed || creating) return
     setCreating(true)
     setLoadError('')
     try {
-      const created = await productApi.create(trimmed)
+      const created = await productApi.create(trimmed, {
+        theme_id: designStyle.themeId,
+        style_id: designStyle.styleId,
+      })
       await loadProduct(created.product_id)
       loadRecent()
     } catch (err) {
@@ -181,13 +668,16 @@ export function ProductWorkspacePage() {
     }
   }
 
-  /** 对话模式生成：brief 直接进入流水线（requirement_parser 获得完整需求） */
+  // 对话式：brief 直接进入流水线
   const handleClarifyGenerate = async (brief: string) => {
     if (!brief.trim() || creating) return
     setCreating(true)
     setLoadError('')
     try {
-      const created = await productApi.create(brief)
+      const created = await productApi.create(brief, {
+        theme_id: designStyle.themeId,
+        style_id: designStyle.styleId,
+      })
       await loadProduct(created.product_id)
       loadRecent()
     } catch (err) {
@@ -197,7 +687,7 @@ export function ProductWorkspacePage() {
     }
   }
 
-  /** P1：输入停顿 800ms 后请求 LLM 动态补全建议 */
+  // P1：输入停顿 800ms 后请求 LLM 动态补全建议
   const handleSuggestionInput = (input: string) => {
     if (suggestTimer.current) window.clearTimeout(suggestTimer.current)
     if (!input.trim() || input.trim().length < 2) {
@@ -231,394 +721,225 @@ export function ProductWorkspacePage() {
     }
   }
 
+  // 资料上传（SourceGathering gate）
+  const handleSourceUpload = async (file: File) => {
+    if (!product) return
+    setUploadingSource(true)
+    try {
+      const r = await productApi.uploadSource(product.product_id, file)
+      setSources((prev) => [...prev, r.source as typeof prev[number]])
+    } finally {
+      setUploadingSource(false)
+    }
+  }
+
+  // ──────────────── 渲染 ────────────────
+
   return (
-    <div className="space-y-12">
-      {/* ─── Hero / 项目头部 ─────────────────────────────────── */}
+    <div className="space-y-10">
+      {/* Hero：有产品 → ProjectHeader；无产品 → 输入区 */}
       {product ? (
         <ProjectHeader product={product} />
       ) : (
-        <div className="mx-auto max-w-3xl">
-          {/* 双模式切换（对话式输入 / 快速输入） */}
-          <div className="mb-6 flex items-center justify-center gap-1 rounded-full border border-border/70 bg-card p-1 shadow-sm">
-            {(
-              [
-                { key: 'chat', label: '💬 对话式输入' },
-                { key: 'quick', label: '⚡ 快速输入' },
-              ] as const
-            ).map((m) => (
-              <button
-                key={m.key}
-                type="button"
-                onClick={() => setInputMode(m.key)}
-                className={cn(
-                  'rounded-full px-4 py-1.5 text-xs font-medium transition-colors',
-                  inputMode === m.key
-                    ? 'bg-[#24415E] text-white'
-                    : 'text-muted-foreground hover:text-foreground',
-                )}
-              >
-                {m.label}
-              </button>
-            ))}
-          </div>
-
-          {inputMode === 'chat' ? (
-            <div className="rounded-2xl border border-border/70 bg-card/50 p-5 shadow-sm">
-              <ClarifyPanel
-                creating={creating}
-                onGenerate={handleClarifyGenerate}
-                dynamicSuggestions={dynamicSuggestions}
-                onSuggestionDynamic={handleSuggestionInput}
-              />
-            </div>
-          ) : (
-            <IdeaInput
-              value={idea}
-              onChange={setIdea}
-              onSubmit={handleGenerate}
-              creating={creating}
-            />
-          )}
-        </div>
+        <HeroEmpty
+          inputMode={inputMode}
+          setInputMode={setInputMode}
+          idea={idea}
+          setIdea={setIdea}
+          creating={creating}
+          handleGenerate={handleGenerate}
+          handleClarifyGenerate={handleClarifyGenerate}
+          dynamicSuggestions={dynamicSuggestions}
+          handleSuggestionInput={handleSuggestionInput}
+          pptOptions={pptOptions}
+          designStyle={designStyle}
+          setDesignStyle={setDesignStyle}
+        />
       )}
 
+      {/* 错误条 */}
       {loadError && (
-        <div className="flex items-center gap-2 rounded-xl border border-destructive/30 bg-destructive/5 px-5 py-3.5 text-sm text-destructive">
-          <AlertCircle className="h-4 w-4 shrink-0" /> {loadError}
+        <div className="flex items-center gap-2 border border-destructive/40 bg-destructive/10 px-5 py-3 font-mono text-[12px] text-destructive">
+          <AlertCircle className="h-4 w-4 shrink-0" />
+          <span className="font-semibold">[ERROR]</span>
+          <span>{loadError}</span>
         </div>
       )}
 
-      {/* ─── 资料审核（source_gathering 门：搜索完成，用户勾选资料后继续） ── */}
+      {/* 资料审核（SourceGathering gate） */}
       {product?.status === 'waiting_approval' && pausedNode === 'source_gathering' && (
-        <div className="rounded-2xl border border-[#24415E]/15 bg-card p-6 shadow-sm">
-          <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
-            <div>
-              <div className="flex items-center gap-2 text-sm font-semibold text-foreground">
-                <Globe className="h-4 w-4 text-[#24415E]" />
-                资料审核
-                <span className="rounded-full bg-secondary px-2 py-0.5 text-[10px] font-medium text-muted-foreground">
-                  {sources.length} 条资料
-                </span>
-              </div>
-              <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
-                AI 已检索 {sources.length} 条资料并标注权重（研究报告类权重最高）。
-                勾选需要保留的资料（默认全选），或上传本地资料补充；后续研究/PRD/设计将仅基于保留的资料，并强制标注来源。
-              </p>
-            </div>
-            <div className="flex gap-2">
-              <label
-                className="flex cursor-pointer items-center gap-1.5 rounded-lg border border-[#24415E]/25 px-3.5 py-2 text-xs font-medium text-[#24415E] transition-colors hover:bg-[#24415E]/5"
-              >
-                <Upload className="h-3.5 w-3.5" />
-                {uploadingSource ? '上传中…' : '上传本地资料'}
-                <input
-                  type="file"
-                  accept=".pdf,.txt,.md"
-                  className="hidden"
-                  disabled={uploadingSource}
-                  onChange={async (e) => {
-                    const file = e.target.files?.[0]
-                    e.target.value = ''
-                    if (!file || !product) return
-                    setUploadingSource(true)
-                    try {
-                      const r = await productApi.uploadSource(product.product_id, file)
-                      setSources((prev) => [...prev, r.source as typeof prev[number]])
-                    } catch (err) {
-                      setLoadError(err instanceof Error ? err.message : '上传失败')
-                    } finally {
-                      setUploadingSource(false)
-                    }
-                  }}
-                />
-              </label>
-            </div>
-          </div>
-
-          {sourcesLoading ? (
-            <div className="flex items-center justify-center py-10 text-xs text-muted-foreground">
-              <Loader2 className="mr-2 h-4 w-4 animate-spin" /> 加载资料…
-            </div>
-          ) : (
-            <div className="max-h-80 space-y-2 overflow-y-auto pr-1">
-              {sources.map((src, i) => {
-                const checked = src.selected !== false
-                return (
-                  <label
-                    key={`${src.url}-${i}`}
-                    className="flex cursor-pointer items-start gap-3 rounded-xl border border-border/70 bg-background/60 px-4 py-3 transition-colors hover:border-[#24415E]/25"
-                  >
-                    <input
-                      type="checkbox"
-                      className="mt-0.5 h-4 w-4 shrink-0 accent-[#24415E]"
-                      checked={checked}
-                      onChange={(e) => {
-                        setSources((prev) =>
-                          prev.map((p, idx) => (idx === i ? { ...p, selected: e.target.checked } : p)),
-                        )
-                      }}
-                    />
-                    <div className="min-w-0 flex-1">
-                      <div className="flex flex-wrap items-center gap-2">
-                        <span className="truncate text-[13px] font-medium text-foreground">
-                          [{i + 1}] {src.title}
-                        </span>
-                        {src.local && (
-                          <span className="rounded-full bg-[#24415E]/10 px-2 py-px text-[10px] font-medium text-[#24415E]">
-                            本地资料
-                          </span>
-                        )}
-                      </div>
-                      <div className="mt-0.5 truncate text-[11px] text-muted-foreground/80">{src.url}</div>
-                      {src.content && (
-                        <div className="mt-1 line-clamp-2 text-[11px] leading-relaxed text-muted-foreground/70">
-                          {src.content}
-                        </div>
-                      )}
-                    </div>
-                    <span
-                      className={cn(
-                        'shrink-0 rounded-full px-2.5 py-1 text-[10px] font-medium',
-                        (src.weight ?? 0.5) >= 0.8 && 'bg-emerald-500/10 text-emerald-700',
-                        (src.weight ?? 0.5) >= 0.6 && (src.weight ?? 0.5) < 0.8 && 'bg-sky-500/10 text-sky-700',
-                        (src.weight ?? 0.5) >= 0.45 && (src.weight ?? 0.5) < 0.6 && 'bg-amber-500/10 text-amber-700',
-                        (src.weight ?? 0.5) < 0.45 && 'bg-gray-400/10 text-gray-500',
-                      )}
-                      title={src.weight_detail ?? ''}
-                    >
-                      权重 {src.weight_label ?? '中'}
-                    </span>
-                  </label>
-                )
-              })}
-              {sources.length === 0 && !sourcesLoading && (
-                <div className="rounded-xl border border-dashed py-8 text-center text-xs text-muted-foreground">
-                  暂无资料 —— 可上传本地资料后继续
-                </div>
-              )}
-            </div>
-          )}
-
-          <div className="mt-4 flex items-center justify-between gap-3 border-t border-border/60 pt-4">
-            <p className="text-[11px] text-muted-foreground">
-              已选 {sources.filter((s) => s.selected !== false).length}/{sources.length} 条
-            </p>
-            <div className="flex gap-2">
-              <button
-                type="button"
-                onClick={async () => {
-                  try {
-                    await productApi.rejectNode(product.product_id, 'source_gathering')
-                    await loadProduct(product.product_id)
-                  } catch (err) {
-                    setLoadError(err instanceof Error ? err.message : '操作失败')
-                  }
-                }}
-                className="rounded-lg border border-red-400/50 px-4 py-2 text-xs font-medium text-red-600 transition-colors hover:bg-red-50"
-              >
-                放弃并终止
-              </button>
-              <button
-                type="button"
-                disabled={sources.filter((s) => s.selected !== false).length === 0}
-                onClick={async () => {
-                  try {
-                    const selected = sources
-                      .filter((s) => s.selected !== false)
-                      .map((s) => s.url)
-                    await productApi.approveNode(product.product_id, 'source_gathering', selected)
-                    await loadProduct(product.product_id)
-                  } catch (err) {
-                    setLoadError(err instanceof Error ? err.message : '提交失败')
-                  }
-                }}
-                className="rounded-lg bg-[#24415E] px-5 py-2 text-xs font-medium text-white transition-opacity hover:opacity-90 disabled:opacity-40"
-              >
-                确认资料，继续生成 →
-              </button>
-            </div>
-          </div>
-        </div>
+        <SourcesGate
+          product={product}
+          sources={sources}
+          sourcesLoading={sourcesLoading}
+          uploadingSource={uploadingSource}
+          onUpload={handleSourceUpload}
+          onError={setLoadError}
+          onApprove={async (selectedUrls) => {
+            try {
+              await productApi.approveNode(product.product_id, 'source_gathering', selectedUrls)
+              await loadProduct(product.product_id)
+            } catch (err) {
+              setLoadError(err instanceof Error ? err.message : '操作失败')
+            }
+          }}
+          onReject={async () => {
+            try {
+              await productApi.rejectNode(product.product_id, 'source_gathering')
+              await loadProduct(product.product_id)
+            } catch (err) {
+              setLoadError(err instanceof Error ? err.message : '操作失败')
+            }
+          }}
+        />
       )}
 
-      {/* ─── 节点级 Plan/Act 门（其他节点等待人工批准） ────────── */}
+      {/* 其他节点等待人工批准 */}
       {product?.status === 'waiting_approval' && pausedNode !== 'source_gathering' && (
-        <div className="rounded-2xl border border-amber-500/30 bg-amber-50/60 p-6 shadow-sm">
-          <div className="flex flex-wrap items-center justify-between gap-4">
-            <div>
-              <div className="flex items-center gap-2 text-sm font-semibold text-amber-800">
-                <AlertCircle className="h-4 w-4" />
-                人工确认节点
-              </div>
-              <p className="mt-1 text-xs text-amber-700/80">
-                流水线已暂停：请审阅「{pausedNode}」节点的产出后决定继续或终止。
-              </p>
-            </div>
-            <div className="flex gap-2">
-              <button
-                type="button"
-                onClick={async () => {
-                  try {
-                    await productApi.approveNode(product.product_id, pausedNode)
-                    await loadProduct(product.product_id)
-                  } catch (err) {
-                    setLoadError(err instanceof Error ? err.message : '批准失败')
-                  }
-                }}
-                className="rounded-lg bg-emerald-600 px-4 py-2 text-xs font-medium text-white transition-opacity hover:opacity-90"
-              >
-                批准并继续
-              </button>
-              <button
-                type="button"
-                onClick={async () => {
-                  try {
-                    await productApi.rejectNode(product.product_id, pausedNode)
-                    await loadProduct(product.product_id)
-                  } catch (err) {
-                    setLoadError(err instanceof Error ? err.message : '拒绝失败')
-                  }
-                }}
-                className="rounded-lg border border-red-400/50 px-4 py-2 text-xs font-medium text-red-600 transition-colors hover:bg-red-50"
-              >
-                拒绝并终止
-              </button>
-            </div>
-          </div>
-        </div>
+        <ApprovalGate
+          pausedNode={pausedNode}
+          onApprove={async () => {
+            try {
+              await productApi.approveNode(product.product_id, pausedNode)
+              await loadProduct(product.product_id)
+            } catch (err) {
+              setLoadError(err instanceof Error ? err.message : '批准失败')
+            }
+          }}
+          onReject={async () => {
+            try {
+              await productApi.rejectNode(product.product_id, pausedNode)
+              await loadProduct(product.product_id)
+            } catch (err) {
+              setLoadError(err instanceof Error ? err.message : '拒绝失败')
+            }
+          }}
+        />
       )}
 
-      {/* ─── 最近产品（无当前产品时引导） ────────────────────── */}
+      {/* 最近产品（无当前产品时引导） */}
       {!product && recent.length > 0 && (
         <div className="flex flex-wrap items-center justify-center gap-2">
-          <span className="text-xs text-muted-foreground">最近产品：</span>
+          <span className="font-mono text-[11px] uppercase tracking-[0.14em] text-muted-foreground">
+            最近产品：
+          </span>
           {recent.map((item) => (
             <button
               key={item.product_id}
               type="button"
               onClick={() => loadProduct(item.product_id)}
-              className="rounded-full border bg-card px-3.5 py-1.5 text-xs text-muted-foreground transition-colors hover:border-[#24415E]/30 hover:text-foreground"
+              className="border border-border bg-card px-3 py-1.5 font-mono text-[11px] uppercase tracking-[0.08em] text-muted-foreground transition-all hover:border-primary/40 hover:bg-primary/5 hover:text-primary"
             >
-              {item.idea} · {item.status}
+              <span className="text-primary">▸</span> {item.idea} · {item.status}
             </button>
           ))}
         </div>
       )}
 
-      {/* ─── AI Team Progress ──────────────────────────────── */}
+      {/* ─── AI Team Progress ──────────── */}
       {product && (
-        <>
-          <Section step="01" title="AI Team Progress">
-            <div className="grid gap-8 lg:grid-cols-[1fr_260px]">
+        <Section step="02" title="AI Team Progress" description="节点时间线 + 工具执行 + 任务控制">
+          <div className="grid gap-6 lg:grid-cols-[1fr_280px]">
+            <div>
               <AgentTimeline
                 nodeStatus={product.node_status ?? {}}
                 nodeModels={product.node_models ?? {}}
                 productStatus={product.status}
                 logs={eventLogs}
               />
-              <div className="border-l border-border/60 pl-6">
-                {(product.status === 'queued' || product.status === 'running' || product.status === 'paused') && (
-                  <div className="mb-5 rounded-xl border bg-background/60 p-3">
-                    <div className="mb-2 text-[11px] font-medium text-muted-foreground">任务控制</div>
-                    <div className="flex flex-wrap gap-2">
-                      {product.status === 'paused' ? (
-                        <button
-                          type="button"
-                          disabled={taskAction !== null}
-                          onClick={() => handleTaskAction('resume')}
-                          className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-600 px-3 py-2 text-xs font-medium text-white transition-opacity hover:opacity-90 disabled:opacity-50"
-                        >
-                          <Play className="h-3.5 w-3.5" />
-                          {taskAction === 'resume' ? '恢复中…' : '继续任务'}
-                        </button>
-                      ) : (
-                        <button
-                          type="button"
-                          disabled={taskAction !== null}
-                          onClick={() => handleTaskAction('pause')}
-                          className="inline-flex items-center gap-1.5 rounded-lg border border-amber-500/40 px-3 py-2 text-xs font-medium text-amber-700 transition-colors hover:bg-amber-50 disabled:opacity-50"
-                        >
-                          <Pause className="h-3.5 w-3.5" />
-                          {taskAction === 'pause' ? '暂停中…' : '暂停任务'}
-                        </button>
-                      )}
-                      <button
-                        type="button"
-                        disabled={taskAction !== null}
-                        onClick={() => handleTaskAction('cancel')}
-                        className="inline-flex items-center gap-1.5 rounded-lg border border-red-400/50 px-3 py-2 text-xs font-medium text-red-600 transition-colors hover:bg-red-50 disabled:opacity-50"
-                      >
-                        <Square className="h-3.5 w-3.5" />
-                        {taskAction === 'cancel' ? '结束中…' : '结束任务'}
-                      </button>
-                    </div>
-                    <p className="mt-2 text-[10px] leading-relaxed text-muted-foreground">
-                      暂停会保留当前资产，结束后不会继续生成。
-                    </p>
-                  </div>
-                )}
-                <div className="mb-2 text-[11px] font-medium uppercase tracking-wider text-muted-foreground/60">
+            </div>
+            <div className="space-y-4">
+              <TaskControl
+                product={product}
+                taskAction={taskAction}
+                onPause={() => handleTaskAction('pause')}
+                onResume={() => handleTaskAction('resume')}
+                onCancel={() => handleTaskAction('cancel')}
+              />
+              <div>
+                <div className="mb-2 font-mono text-[10px] uppercase tracking-[0.18em] text-muted-foreground">
                   工具与检查
                 </div>
                 <ToolExecution nodeStatus={product.node_status ?? {}} />
               </div>
             </div>
-          </Section>
-
-          <StreamingMessage
-            active={isActive}
-            latestEvent={eventLogs.length > 0 ? eventLogs[eventLogs.length - 1] : undefined}
-          />
-
-          {product.status === 'failed' && (
-            <div className="rounded-xl border border-destructive/30 bg-destructive/5 px-6 py-4 text-sm text-destructive">
-              <p className="font-medium">流水线失败：{product.error_message ?? '未知错误'}</p>
-              {Object.keys(product.errors ?? {}).length > 0 && (
-                <ul className="mt-2 space-y-1 text-xs">
-                  {Object.entries(product.errors).map(([node, err]) => (
-                    <li key={node}>
-                      <span className="font-medium">{node}</span>: {err}
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </div>
-          )}
-
-          {/* ─── Generated Assets ──────────────────────────── */}
-          <Section step="02" title="Generated Product Assets">
-            <AssetPanel
-              product={product}
-              onRefresh={() => product && loadProduct(product.product_id)}
-            />
-          </Section>
-
-          {/* ─── 新想法输入（紧凑模式） ──────────────────────── */}
-          <Section step="03" title="New Idea">
-            <div className="flex gap-3">
-              <input
-                type="text"
-                value={idea}
-                onChange={(e) => setIdea(e.target.value)}
-                onKeyDown={(e) => e.key === 'Enter' && handleGenerate()}
-                placeholder="输入下一个产品想法…"
-                className="h-11 flex-1 rounded-lg border bg-background px-4 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
-              />
-              <button
-                type="button"
-                onClick={handleGenerate}
-                disabled={creating || !idea.trim()}
-                className="h-11 rounded-lg bg-[#24415E] px-6 text-sm font-medium text-white transition-opacity hover:opacity-90 disabled:opacity-40"
-              >
-                {creating ? '启动中…' : 'Generate'}
-              </button>
-            </div>
-          </Section>
-        </>
+          </div>
+        </Section>
       )}
 
-      {/* ─── Knowledge Context ──────────────────────────────── */}
-      <Section step={product ? '04' : '02'} title="Knowledge Context">
+      {/* 流式消息 */}
+      {product && (
+        <StreamingMessage
+          active={isActive}
+          latestEvent={eventLogs.length > 0 ? eventLogs[eventLogs.length - 1] : undefined}
+        />
+      )}
+
+      {/* 失败提示 */}
+      {product?.status === 'failed' && (
+        <div className="border border-destructive/40 bg-destructive/10 px-6 py-4 font-mono text-[12px] text-destructive">
+          <p className="font-semibold">
+            <span className="animate-pulse-dot">[ERROR]</span> 流水线失败 ·{' '}
+            {product.error_message ?? '未知错误'}
+          </p>
+          {product.errors && Object.keys(product.errors).length > 0 && (
+            <ul className="mt-2 space-y-1 text-[11px]">
+              {Object.entries(product.errors).map(([node, err]) => (
+                <li key={node}>
+                  <span className="text-destructive-foreground/80">▸ {node}</span>: {err}
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      )}
+
+      {/* ─── Generated Assets ──────────── */}
+      {product && (
+        <Section
+          step="03"
+          title="Generated Product Assets"
+          description="研究 / 竞品 / PRD / 设计 / 演示 — 全部结构化产出"
+        >
+          <AssetPanel
+            product={product}
+            onRefresh={() => product && loadProduct(product.product_id)}
+          />
+        </Section>
+      )}
+
+      {/* ─── New Idea（紧凑输入） ──────────── */}
+      {product && (
+        <Section
+          step="04"
+          title="New Idea"
+          description="启动下一个产品想法"
+        >
+          <div className="flex items-center gap-3">
+            <span className="font-mono text-[11px] uppercase tracking-[0.14em] text-primary">
+              ▸ INPUT
+            </span>
+            <Input
+              type="text"
+              value={idea}
+              onChange={(e) => setIdea(e.target.value)}
+              onKeyDown={(e) => e.key === 'Enter' && handleGenerate()}
+              placeholder="输入下一个产品想法…"
+              className="h-10 flex-1"
+            />
+            <Button onClick={handleGenerate} disabled={creating || !idea.trim()}>
+              {creating ? '启动中…' : '启动生成'}
+            </Button>
+          </div>
+        </Section>
+      )}
+
+      {/* ─── Knowledge Context（始终显示） ──────────── */}
+      <Section
+        step={product ? '05' : '03'}
+        title="Knowledge Context"
+        description="三层知识库：任务知识 / 领域经验 / 全局资产"
+      >
         <KnowledgePanel />
       </Section>
     </div>

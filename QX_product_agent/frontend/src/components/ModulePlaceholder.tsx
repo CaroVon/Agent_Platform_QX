@@ -38,7 +38,7 @@ export function ModulePlaceholder({
           <div className="animate-breathe flex h-16 w-16 items-center justify-center rounded-2xl border bg-background/70">
             <Icon className="h-7 w-7 text-[#24415E]/70" />
           </div>
-          <h3 className="font-editorial mt-6 text-lg font-semibold tracking-tight">模块建设中</h3>
+          <h3 className="font-serif mt-6 text-lg font-semibold tracking-tight">模块建设中</h3>
           <p className="mt-2.5 max-w-md text-sm leading-relaxed text-muted-foreground">
             {description}
           </p>

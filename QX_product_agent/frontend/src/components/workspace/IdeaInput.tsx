@@ -22,14 +22,15 @@ export function IdeaInput({
         <Sparkles className="h-5 w-5 text-[#24415E]" />
       </div>
 
-      <h1 className="font-editorial max-w-2xl text-3xl font-semibold leading-snug tracking-tight lg:text-4xl">
+      <h1 className="font-serif max-w-2xl text-3xl font-semibold leading-snug tracking-tight lg:text-4xl">
         Describe the product you want to build
       </h1>
       <p className="mt-4 max-w-xl text-sm leading-relaxed text-muted-foreground">
         你的 AI 产品团队（研究 / 产品 / 设计 / 演示）将围绕这个想法展开完整工作流。
       </p>
 
-      <div className="mt-8 flex w-full max-w-2xl gap-3">
+      {/* 输入行：与卡片同宽（不再限宽） */}
+      <div className="mt-8 flex w-full gap-3">
         <input
           type="text"
           value={value}

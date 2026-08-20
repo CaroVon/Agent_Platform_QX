@@ -185,11 +185,11 @@ export function SlideRenderer({
         )}
       </div>
 
-      {/* 16:9 幻灯片画布 */}
-      <div className="relative aspect-video w-full overflow-hidden rounded-lg bg-gradient-to-br from-slate-50 to-indigo-50 shadow-inner">
+      {/* 16:9 幻灯片画布（深色商务风：白字 + 蓝色光晕） */}
+      <div className="relative aspect-video w-full overflow-hidden rounded-xl bg-gradient-to-br from-slate-900 via-primary-950 to-slate-900 shadow-elev-md">
         <div
           className={cn(
-            'flex h-full w-full flex-col px-12 py-9',
+            'flex h-full w-full flex-col px-12 py-9 text-white',
             layout === 'cover' && bodyClass,
             layout === 'closing' && bodyClass,
           )}
@@ -198,14 +198,14 @@ export function SlideRenderer({
             <div className={cn(layout === 'cover' || layout === 'closing' ? 'text-center' : '')}>
               <h2
                 className={cn(
-                  'font-bold tracking-tight text-slate-900',
+                  'font-serif font-bold tracking-tight text-white',
                   layout === 'cover' ? 'text-5xl' : 'text-4xl',
                 )}
               >
                 {slide.title}
               </h2>
               {slide.subtitle && (
-                <p className="mt-3 text-lg text-slate-500">{slide.subtitle}</p>
+                <p className="mt-3 text-lg text-white/80">{slide.subtitle}</p>
               )}
             </div>
           )}
@@ -213,7 +213,7 @@ export function SlideRenderer({
           {layout !== 'cover' &&
             layout !== 'closing' &&
             layout !== 'section_header' && (
-              <h2 className="mb-5 text-2xl font-semibold text-slate-900">{slide.title}</h2>
+              <h2 className="mb-5 text-2xl font-semibold text-white">{slide.title}</h2>
             )}
 
           <div className={cn('flex flex-1 flex-col justify-center gap-5', bodyClass)}>
@@ -223,7 +223,7 @@ export function SlideRenderer({
           </div>
 
           {/* 底部页码 */}
-          <div className="absolute bottom-4 right-6 text-xs text-slate-400">
+          <div className="absolute bottom-4 right-6 text-xs text-white/60">
             {slide.id ?? index + 1}
           </div>
         </div>

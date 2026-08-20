@@ -29,6 +29,14 @@ from agents.research_agent.prompts import (
 )
 
 
+def _state_bool(state: dict, key: str, default: bool) -> bool:
+    """state 布尔读取（缺省/空串/None → default）。"""
+    v = state.get(key)
+    if v is None or v == "":
+        return default
+    return bool(v)
+
+
 class ResearchAgent(BaseAgent):
     """市场研究专家：搜索市场事实 → 结构化市场研究与竞品分析。"""
 
@@ -247,16 +255,20 @@ class ResearchAgent(BaseAgent):
         top_n: int = 50,
         skip_llm: bool = False,
         source: str = "rainforest",
+        full: bool = True,
+        with_visuals: bool = True,
+        theme_id: str | None = None,
         memory: MemoryStore | None = None,
         memory_namespace: str = "default",
     ) -> AgentResult:
         """数据驱动竞品矩阵（MOD）：基于市场研究 → 关键词 → Rainforest 采集 →
-        4 区规则 → LLM 解读 → 双图/CSV/MD 落盘 → PriceCompetitorMatrix。
+        4 区规则 → LLM 解读 → 矩阵图/CSV/MD 落盘 →（full）14 章 + M3 + PPT。
 
         上游：market_research（必填）
         输出：PriceCompetitorMatrix artifact + studio_assets/{product_id}/competitor_matrix/
+              （full 时含 competitor_matrix.pptx / deck_audit.json）
         说明：本节点为确定性数据管道（不经过 LLM 生成循环），LLM 仅做 4 区解读；
-              解读失败即报错（已确认策略，不降级）。
+              解读失败即报错（已确认策略，不降级）。PPT 构建失败降级为 md+SVG。
         """
         keyword = (getattr(market_research, "keyword", None) or idea or "").strip()
         if not keyword:
@@ -275,6 +287,9 @@ class ResearchAgent(BaseAgent):
                 market_context=market_context,
                 skip_llm=skip_llm,
                 source=source,
+                full=full,
+                with_visuals=with_visuals,
+                theme_id=theme_id,
             )
             PriceCompetitorMatrix.model_validate(data)
             return AgentResult(success=True, data=data)
@@ -313,9 +328,14 @@ class ResearchAgent(BaseAgent):
                 research,
                 our_asin=state.get("our_asin"),
                 product_id=state.get("product_id"),
-                top_n=int(state.get("top_n") or 50),
+                # 抓取量默认 20（search 1 + product 20 ≈ 21 credits；
+                # state.top_n / 环境变量 MOD_TOP_N 可覆盖）
+                top_n=int(state.get("top_n") or 20),
                 skip_llm=bool(state.get("skip_llm")),
                 source=str(state.get("source") or "rainforest"),
+                full=_state_bool(state, "mod_full", True),
+                with_visuals=_state_bool(state, "mod_visuals", True),
+                theme_id=state.get("ppt_theme") or None,
                 memory=memory,
                 memory_namespace=memory_namespace,
             )

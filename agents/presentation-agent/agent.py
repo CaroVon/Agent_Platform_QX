@@ -57,6 +57,26 @@ def _presentation_evaluator(presentation: Presentation) -> tuple[bool, str]:
     return True, ""
 
 
+def _load_style_hint(style_id: str) -> str:
+    """ppt-master styles（风格方法论）→ presentation prompt 提示文本。"""
+    import json as _json
+    from pathlib import Path as _Path
+
+    index = (_Path(__file__).resolve().parents[1] / "ppt-design-agent" / "vendor"
+             / "ppt-master" / "templates" / "styles" / "styles_index.json")
+    try:
+        data = _json.loads(index.read_text(encoding="utf-8"))
+        entry = data.get(style_id)
+        if not entry:
+            return ""
+        kws = "、".join((entry.get("keywords") or [])[:6])
+        return (f"\n\n【风格方法论（用户指定，必须遵循）】{style_id}："
+                f"{entry.get('summary', '')}（关键词：{kws}）。"
+                "页面叙事结构、密度与语气按此方法论组织。")
+    except (OSError, ValueError):
+        return ""
+
+
 def _build_system_prompt() -> str:
     """System Prompt = 信息设计角色 + 视觉规范 skill + CyberPPT skill
     + Layout Library + 预置主题。"""
@@ -116,6 +136,7 @@ class PresentationAgent(BaseAgent):
         revise_feedback: str = "",
         evidence_pack: dict | None = None,
         instruction: str = "",
+        style_hint: str = "",
     ) -> AgentResult:
         """构建 Presentation DSL；revise_feedback 用于 Critic 修订循环（P5）。"""
         objective = (
@@ -128,6 +149,8 @@ class PresentationAgent(BaseAgent):
             objective += f"\n\n【上一版评审意见（必须逐条修正）】\n{revise_feedback}"
         if instruction:
             objective += f"\n\n【本次修订要求】{instruction}"
+        if style_hint:
+            objective += style_hint
 
         # ── A3 强化：AgentLoop 内评估器（结构性自检） ──
         # 注：逐字覆盖度由 critic 质量门在确定性注入（enforce/enrich）之后
@@ -194,4 +217,5 @@ class PresentationAgent(BaseAgent):
             revise_feedback=state.get("revision_feedback", ""),
             evidence_pack=build_evidence_pack(document),
             instruction=str(state.get("instruction") or ""),
+            style_hint=_load_style_hint(str(state.get("ppt_style") or "")),
         )

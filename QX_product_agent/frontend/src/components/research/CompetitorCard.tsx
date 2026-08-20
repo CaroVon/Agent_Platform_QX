@@ -22,7 +22,7 @@ export function CompetitorCard({ profile }: { profile: CompetitorProfile }) {
     <div className="flex h-full flex-col rounded-2xl border bg-card px-6 py-5">
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
-          <h4 className="font-editorial truncate text-base font-semibold tracking-tight">
+          <h4 className="font-serif truncate text-base font-semibold tracking-tight">
             {profile.name}
           </h4>
           {profile.positioning && (

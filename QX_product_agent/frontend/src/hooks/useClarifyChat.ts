@@ -1,7 +1,7 @@
 /**
  * useClarifyChat —— 需求澄清对话状态管理
  *
- * - 消息数组 + SSE 流式接收（复用 editor/chat 同款 event: content 解析）
+ * - 消息数组 + SS 流式接收（复用 editor/chat 同款 event: content 解析）
  * - 解析 event: meta 维度覆盖信号 → 决定「生成产品」是否可用
  * - localStorage 持久化（P1：刷新可续聊）
  * - brief 拼装：对话摘要 → productApi.create 的 idea
@@ -22,7 +22,7 @@ export interface DimensionSignal {
   max_rounds: number
 }
 
-const STORAGE_KEY = 'qx-clarify-session'
+const STORAGE_KEY = 'qx-recommend-session'
 
 interface PersistedSession {
   idea: string
@@ -107,11 +107,17 @@ export function useClarifyChat() {
       setIsLoading(true)
       setSignal(null)
 
-      try {
-        const resp = await productApi.clarify({
-          idea,
-          messages: nextMessages,
-          max_rounds: 4,
+try {
+        const resp = await fetch(`/api/v1/product/clarify`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'include',
+          body: JSON.stringify({
+            idea,
+            messages: nextMessages,
+            max_rounds: 4,
+          }),
+          signal: controller.signal,
         })
         if (!resp.ok) {
           let detail = `HTTP ${resp.status}`
@@ -161,7 +167,7 @@ export function useClarifyChat() {
           setMessages((prev) => [...prev, { role: 'assistant', content: full }])
         }
       } catch (err) {
-        if ((err as Error).name !== 'AbortError') {
+        if ((err as Error).name !== 'Abortrror') {
           setError(err instanceof Error ? err.message : '发送失败')
         }
       } finally {

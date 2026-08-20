@@ -22,7 +22,7 @@ import { useGraphData } from '@/components/graph/useGraphData'
 import { productApi, projectsApi, memoryApi } from '@/lib/api'
 import type { MemoryEntityType, ProjectResponse } from '@/types/api'
 
-const TYPE_OPTIONS: { key: MemoryEntityType; label: string }[] = [
+const TYP_PTINS: { key: MemoryEntityType; label: string }[] = [
   { key: 'company', label: '公司' },
   { key: 'product', label: '产品' },
   { key: 'technology', label: '技术' },
@@ -36,16 +36,18 @@ export function MemoryPage() {
   const { filter, patchFilter, data, loading, error, refresh, rebuild, rebuilding } = useGraphData()
   const [projects, setProjects] = useState<ProjectResponse[]>([])
   const [studioProducts, setStudioProducts] = useState<Array<{ product_id: string; idea: string; status: string }>>([])
-  const [selectedEntityId, setSelectedEntityId] = useState<string | null>(null)
+  const [selectedntityId, setSelectedntityId] = useState<string | null>(null)
   const [insights, setInsights] = useState<{ id: string; content: string; source: string }[]>([])
   const [insightsLoading, setInsightsLoading] = useState(false)
 
   useEffect(() => {
-    Promise.all([projectsApi.list(0, 100).catch(() => []), productApi.list(0, 100).catch(() => [])])
-      .then(([legacyProjects, products]) => {
-        setProjects(legacyProjects)
-        setStudioProducts(products)
-      })
+    Promise.all([
+      projectsApi.list(0, 100).catch(() => []),
+      productApi.list(0, 100).catch(() => []),
+    ]).then(([legacyProjects, products]) => {
+      setProjects(legacyProjects)
+      setStudioProducts(products)
+    })
   }, [])
 
   // 项目选择：默认第一个
@@ -88,8 +90,8 @@ export function MemoryPage() {
     patchFilter({ entityTypes: next })
   }
 
-  const handleExportPng = () => {
-    // GraphCanvas 暴露导出需持有实例；此处通过 DOM 触发（简化：提示使用浏览器截图）
+  const handlexportPng = () => {
+    // GraphCanvas 暴露导出需持有实例；此处通过 DM 触发（简化：提示使用浏览器截图）
     const canvas = document.querySelector('#memory-graph-canvas canvas')
     if (canvas instanceof HTMLCanvasElement) {
       const a = document.createElement('a')
@@ -119,9 +121,9 @@ export function MemoryPage() {
       />
 
       {/* ─── 工具栏 ─────────────────────────────────────────── */}
-      <div className="mb-5 flex flex-wrap items-center gap-3 rounded-2xl border bg-card px-5 py-3.5 shadow-sm">
+      <div className="mb-5 flex flex-wrap items-center gap-3 rounded-md border bg-card px-5 py-3.5 shadow-sm">
         {/* scope 切换 */}
-        <div className="flex items-center gap-1 rounded-lg bg-secondary/60 p-1">
+        <div className="flex items-center gap-1 rounded-md bg-secondary/60 p-1">
           {(['global', 'project'] as const).map((scope) => (
             <button
               key={scope}
@@ -145,15 +147,21 @@ export function MemoryPage() {
             onChange={(e) => patchFilter({ projectId: e.target.value })}
             className="h-9 rounded-md border border-input bg-background px-3 text-xs outline-none focus-visible:ring-2 focus-visible:ring-ring"
           >
-             {projects.length === 0 && studioProducts.length === 0 && <option value="">（暂无任务）</option>}
-             {projects.length > 0 && <optgroup label="研究项目">
-               {projects.map((p) => <option key={p.id} value={p.id}>{p.topic}</option>)}
-             </optgroup>}
-             {studioProducts.length > 0 && <optgroup label="Product Studio 任务">
-               {studioProducts.map((p) => (
-                 <option key={p.product_id} value={`studio:${p.product_id}`}>{p.idea}</option>
-               ))}
-             </optgroup>}
+            {projects.length === 0 && studioProducts.length === 0 && <option value="">（暂无任务）</option>}
+            {projects.length > 0 && (
+              <optgroup label="研究项目">
+                {projects.map((p) => <option key={p.id} value={p.id}>{p.topic}</option>)}
+              </optgroup>
+            )}
+            {studioProducts.length > 0 && (
+              <optgroup label="Product Studio 任务">
+                {studioProducts.map((p) => (
+                  <option key={p.product_id} value={`studio:${p.product_id}`}>
+                    {p.idea}
+                  </option>
+                ))}
+              </optgroup>
+            )}
           </select>
         )}
 
@@ -172,13 +180,13 @@ export function MemoryPage() {
         {/* 类型筛选 */}
         <div className="flex items-center gap-1.5">
           <Filter className="h-3.5 w-3.5 text-muted-foreground" />
-          {TYPE_OPTIONS.map((t) => (
+          {TYP_PTINS.map((t) => (
             <button
               key={t.key}
               type="button"
               onClick={() => toggleType(t.key)}
               title={t.label}
-              className={`rounded-md px-2 py-1 text-[11px] transition-colors ${
+              className={`rounded-md px-2 py-1 text-sm transition-colors ${
                 filter.entityTypes.includes(t.key)
                   ? 'bg-primary text-primary-foreground'
                   : 'bg-secondary text-muted-foreground hover:text-foreground'
@@ -213,7 +221,7 @@ export function MemoryPage() {
           </button>
           <button
             type="button"
-            onClick={handleExportPng}
+            onClick={handlexportPng}
             className="flex items-center gap-1.5 rounded-md bg-secondary px-3 py-1.5 text-xs font-medium text-muted-foreground transition-colors hover:text-foreground"
             title="导出 PNG（可放入报告）"
           >
@@ -236,11 +244,11 @@ export function MemoryPage() {
             },
             { label: '覆盖项目', value: stats.projects, icon: '📁' },
           ].map((s) => (
-            <div key={s.label} className="rounded-xl border bg-card px-4 py-3 shadow-sm">
+            <div key={s.label} className="rounded-md border bg-card px-4 py-3 shadow-sm">
               <div className="text-lg font-semibold">
                 {s.icon} {s.value}
               </div>
-              <div className="text-[11px] text-muted-foreground">{s.label}</div>
+              <div className="text-sm text-muted-foreground">{s.label}</div>
             </div>
           ))}
         </div>
@@ -250,22 +258,56 @@ export function MemoryPage() {
       <div className="flex gap-5">
         <div
           id="memory-graph-canvas"
-          className="relative flex-1 overflow-hidden rounded-2xl border bg-[hsl(var(--graph-bg))] shadow-sm"
+          className="relative flex-1 overflow-hidden rounded-md border bg-[hsl(var(--graph-bg))] shadow-sm"
           style={{ minHeight: 560 }}
         >
           {error && <div className="absolute inset-0 z-10 flex items-center justify-center text-sm text-destructive">{error}</div>}
+
+          {/* 空状态引导条：全局空 → 去项目视图；项目空 → 提示抽取 */}
+          {!loading && !error && data && data.nodes.length === 0 && (
+            <div className="absolute right-3 top-3 z-20 flex items-center gap-2 rounded-md border bg-card/95 px-3 py-2 shadow-sm backdrop-blur">
+              {filter.scope === 'global' ? (
+                <>
+                  <span className="text-xs text-muted-foreground">全局记忆为空 —— 先查看项目记忆？</span>
+                  <button
+                    type="button"
+                    onClick={() => patchFilter({ scope: 'project' })}
+                    className="rounded bg-primary px-2.5 py-1 text-xs font-medium text-primary-foreground transition-opacity hover:opacity-90"
+                  >
+                    查看项目记忆
+                  </button>
+                </>
+              ) : (
+                <>
+                  <span className="text-xs text-muted-foreground">该任务还没有记忆 —— 从成果自动抽取？</span>
+                  {filter.projectId && (
+                    <button
+                      type="button"
+                      onClick={() => rebuild(filter.projectId)}
+                      disabled={rebuilding}
+                      className="flex items-center gap-1 rounded bg-primary px-2.5 py-1 text-xs font-medium text-primary-foreground transition-opacity hover:opacity-90 disabled:opacity-50"
+                    >
+                      {rebuilding && <Loader2 className="h-3 w-3 animate-spin" />}
+                      立即抽取
+                    </button>
+                  )}
+                </>
+              )}
+            </div>
+          )}
+
           <GraphCanvas
             data={data}
             loading={loading}
             error={error}
-            onNodeClick={(node) => setSelectedEntityId(node.id)}
-            onBackgroundClick={() => setSelectedEntityId(null)}
+            onNodeClick={(node) => setSelectedntityId(node.id)}
+            onBackgroundClick={() => setSelectedntityId(null)}
           />
           {/* 底部图例 */}
-          <div className="absolute bottom-3 left-3 flex flex-wrap items-center gap-2 rounded-lg border bg-card/90 px-3 py-2 backdrop-blur">
+          <div className="absolute bottom-3 left-3 flex flex-wrap items-center gap-2 rounded-md border bg-card/90 px-3 py-2 backdrop-blur">
             <Network className="h-3.5 w-3.5 text-muted-foreground" />
-            {TYPE_OPTIONS.map((t) => (
-              <span key={t.key} className="flex items-center gap-1 text-[10px] text-muted-foreground">
+            {TYP_PTINS.map((t) => (
+              <span key={t.key} className="flex items-center gap-1 text-sm text-muted-foreground">
                 <span
                   className="h-2 w-2 rounded-full"
                   style={{ background: `hsl(var(--graph-type-${t.key}))` }}
@@ -274,7 +316,7 @@ export function MemoryPage() {
               </span>
             ))}
             {data?.meta.truncated && (
-              <span className="text-[10px] text-amber-600">
+              <span className="text-sm text-secondary">
                 已截断显示（共 {data.meta.entity_count} 实体）
               </span>
             )}
@@ -282,14 +324,14 @@ export function MemoryPage() {
         </div>
 
         <GraphSidebar
-          entityId={selectedEntityId}
-          onClose={() => setSelectedEntityId(null)}
+          entityId={selectedntityId}
+          onClose={() => setSelectedntityId(null)}
           onDeleted={() => refresh()}
         />
       </div>
 
       {/* ─── 洞察面板 ───────────────────────────────────────── */}
-      <section className="mt-5 rounded-2xl border bg-card p-6 shadow-sm">
+      <section className="mt-5 rounded-md border bg-card p-6 shadow-sm">
         <div className="mb-3 flex items-center gap-2">
           <span className="text-sm font-semibold">💡 记忆洞察</span>
           <span className="text-xs text-muted-foreground">
@@ -298,15 +340,15 @@ export function MemoryPage() {
           {insightsLoading && <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" />}
         </div>
         {insights.length === 0 && !insightsLoading ? (
-          <p className="rounded-lg border border-dashed py-6 text-center text-sm text-muted-foreground">
+          <p className="rounded-md border border-dashed py-6 text-center text-sm text-muted-foreground">
             暂无洞察 —— 完成任务后自动从章节/经验/图片分析中提炼
           </p>
         ) : (
           <div className="grid gap-2 md:grid-cols-2">
             {insights.slice(0, 8).map((ins) => (
-              <div key={ins.id} className="rounded-lg border border-primary/10 bg-primary/[0.03] px-4 py-3">
+              <div key={ins.id} className="rounded-md border border-primary/10 bg-primary/[0.03] px-4 py-3">
                 <p className="text-xs leading-relaxed">{ins.content}</p>
-                <p className="mt-1 text-[10px] text-muted-foreground">来源：{ins.source}</p>
+                <p className="mt-1 text-sm text-muted-foreground">来源：{ins.source}</p>
               </div>
             ))}
           </div>

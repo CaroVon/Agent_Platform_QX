@@ -1,10 +1,11 @@
-"""第 3 章：价格带分析 —— 分布直方图/箱线图 + 价格缺口（空档带）检测。"""
+"""第 3 章：价格带分析 —— 分布直方图 + 品牌价格区间 + 价格缺口检测（SVG 渲染）。"""
 from __future__ import annotations
 
 import numpy as np
 import pandas as pd
 
-from amazon_matrix_mod.chapters.common import BRAND_COLORS, fp, save_chart, setup_style
+from amazon_matrix_mod.chapters.common import save_chart, chart_title
+from amazon_matrix_mod.svgcharts import charts
 
 
 def find_price_gaps(prices: list[float], bins: int = 12) -> list[dict]:
@@ -31,9 +32,6 @@ def find_price_gaps(prices: list[float], bins: int = 12) -> list[dict]:
 
 
 def analyze(df: pd.DataFrame, out_dir: str) -> dict:
-    setup_style()
-    import matplotlib.pyplot as plt
-
     prices = df["current_price"].dropna()
     if prices.empty:
         return {"title": "价格带分析", "conclusion": ["无价格数据"], "images": [],
@@ -41,46 +39,32 @@ def analyze(df: pd.DataFrame, out_dir: str) -> dict:
     p25, p50, p75 = prices.quantile([0.25, 0.5, 0.75])
     gaps = find_price_gaps(list(prices))
 
-    # 直方图 + 分位数线
-    fig, ax = plt.subplots(figsize=(10, 4.6))
-    ax.hist(prices, bins=min(16, max(8, len(prices))), color=BRAND_COLORS["light"],
-            edgecolor=BRAND_COLORS["blue"], alpha=0.95)
-    for v, c, label in ((p25, BRAND_COLORS["amber"], "P25"), (p50, BRAND_COLORS["green"], "P50"),
-                        (p75, BRAND_COLORS["red"], "P75")):
-        ax.axvline(v, color=c, linestyle="--", linewidth=1.3)
-        ax.text(v, ax.get_ylim()[1] * 0.94, f"{label} ${v:.2f}", color=c, fontsize=9,
-                fontproperties=fp(9))
-    if gaps:
-        for g in gaps:
-            ax.axvspan(g["low"], g["high"], color=BRAND_COLORS["amber"], alpha=0.18)
-            ax.text((g["low"] + g["high"]) / 2, ax.get_ylim()[1] * 0.5,
-                    f"缺口\n${g['low']:.0f}-{g['high']:.0f}", ha="center", fontsize=9,
-                    color="#8a6d00", fontproperties=fp(9))
-    ax.set_xlabel("价格 $", fontproperties=fp(10))
-    ax.set_title(f"价格分布（N={len(prices)}）｜ P25=${p25:.2f} P50=${p50:.2f} P75=${p75:.2f}"
-                 + (f" ｜ 缺口带 {len(gaps)} 处" if gaps else ""),
-                 fontproperties=fp(12, "bold"))
-    ax.grid(axis="y", linestyle=":", alpha=0.4)
-    ax.tick_params(labelsize=9)
-    fig.tight_layout()
-    img1 = save_chart(fig, out_dir, "ch03_price_hist.png")
+    # 直方图 + 分位数线 + 缺口带
+    def _draw_hist(root):
+        charts.histogram(root, 40, 60, 1020, 340,
+                         [float(v) for v in prices],
+                         bins=min(16, max(8, len(prices))),
+                         quantiles={"P25": p25, "P50": p50, "P75": p75},
+                         gaps=gaps,
+                         title=f"价格分布（N={len(prices)}）｜ "
+                               f"P25=${p25:.2f} P50=${p50:.2f} P75=${p75:.2f}"
+                               + (f" ｜ 缺口带 {len(gaps)} 处" if gaps else ""))
 
-    # 箱线图（按品牌）
-    fig2, ax2 = plt.subplots(figsize=(10, 4.6))
-    brands = df.groupby(df["brand"].fillna("未知"))["current_price"].agg(["count", "median"]) \
-        .sort_values("median", ascending=False).head(8).index
-    data = [df[df["brand"].fillna("未知") == b]["current_price"].dropna().tolist() for b in brands]
-    bp = ax2.boxplot(data, patch_artist=True,
-                     medianprops=dict(color=BRAND_COLORS["navy"]))
-    ax2.set_xticklabels([str(b)[:14] for b in brands], fontsize=8.5)
-    for patch in bp["boxes"]:
-        patch.set_facecolor(BRAND_COLORS["light"])
-        patch.set_edgecolor(BRAND_COLORS["blue"])
-    ax2.set_ylabel("价格 $", fontproperties=fp(10))
-    ax2.set_title("品牌价格区间对比（Top8 品牌）", fontproperties=fp(12, "bold"))
-    ax2.tick_params(labelsize=8.5)
-    fig2.tight_layout()
-    img2 = save_chart(fig2, out_dir, "ch03_price_box.png")
+    img1 = save_chart(_draw_hist, out_dir, "ch03_price_hist.svg")
+
+    # 品牌价格区间（min-max + 中位）
+    brands = df.groupby(df["brand"].fillna("未知"))["current_price"] \
+        .agg(["min", "median", "max", "count"])
+    brands = brands[brands["count"] >= 1].sort_values("median", ascending=False).head(8)
+    items = [{"label": str(b)[:14], "lo": float(r["min"]),
+              "hi": float(r["max"]), "mid": float(r["median"])}
+             for b, r in brands.iterrows()]
+
+    def _draw_brands(root):
+        chart_title(root, "品牌价格区间对比（Top8 品牌，按中位价降序）")
+        charts.interval_bars(root, 40, 90, 1020, 330, items)
+
+    img2 = save_chart(_draw_brands, out_dir, "ch03_price_box.svg")
 
     conclusions = [
         f"价格中位数 ${p50:.2f}，P25-P75 区间 ${p25:.2f}-${p75:.2f}"

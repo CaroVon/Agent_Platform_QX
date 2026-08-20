@@ -6,15 +6,15 @@ import { useLocation } from 'react-router-dom'
 import { Github } from 'lucide-react'
 
 const ROUTE_LABELS: Record<string, string> = {
-  '/workspace': 'Product Workspace',
-  '/research': 'Research Hub',
-  '/prd': 'PRD Studio',
-  '/design': 'Design Studio',
-  '/presentation': 'Presentation',
-  '/project-assets': '项目资产库',
-  '/knowledge': 'Knowledge Base',
-  '/templates': 'Templates',
-  '/settings': 'Settings',
+  '/workspace': '产品工作台',
+  '/research': '调研中心',
+  '/prd': 'PRD 工作室',
+  '/design': '设计工作室',
+  '/presentation': '演示文稿',
+  '/ppt-assets': 'PPT 资产库',
+  '/knowledge': '知识库',
+  '/templates': '模板',
+  '/settings': '设置',
   '/': '控制台',
 }
 
@@ -23,12 +23,12 @@ export function Header() {
   const path = Object.keys(ROUTE_LABELS).find(
     (p) => location.pathname === p || location.pathname.startsWith(`${p}/`),
   )
-  const label = ROUTE_LABELS[path ?? ''] ?? 'Product Studio'
+  const label = ROUTE_LABELS[path ?? ''] ?? '产品工作室'
 
   return (
     <header className="sticky top-0 z-30 flex h-14 items-center justify-between border-b bg-background/85 px-8 backdrop-blur-sm lg:px-12">
       <div className="flex items-center gap-2 text-xs text-muted-foreground">
-        <span className="text-muted-foreground/60">Product Studio</span>
+        <span className="text-muted-foreground/60">产品工作室</span>
         <span className="text-muted-foreground/40">/</span>
         <span className="font-medium text-foreground">{label}</span>
       </div>

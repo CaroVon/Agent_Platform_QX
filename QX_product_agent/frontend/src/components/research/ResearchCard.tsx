@@ -11,7 +11,7 @@ export function ResearchCard({ research }: { research: MarketResearch }) {
     <div className="rounded-2xl border bg-card px-8 py-7">
       <div className="mb-5 flex items-center gap-2.5">
         <BarChart3 className="h-4 w-4 text-[#24415E]" />
-        <h3 className="font-editorial text-base font-semibold tracking-tight">市场研究</h3>
+        <h3 className="font-serif text-base font-semibold tracking-tight">市场研究</h3>
       </div>
 
       <p className="text-sm leading-relaxed text-foreground/85">{ms.summary}</p>
@@ -29,7 +29,7 @@ export function ResearchCard({ research }: { research: MarketResearch }) {
                 <div className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
                   {label}
                 </div>
-                <div className="font-editorial mt-1 text-lg font-semibold text-[#24415E]">
+                <div className="font-serif mt-1 text-lg font-semibold text-[#24415E]">
                   {value}
                 </div>
               </div>

@@ -86,18 +86,10 @@ export function PresentationPage() {
               <SlideRenderer deck={presentation as SlideDeck} productId={product.product_id} />
             )
           }
-           const dsl = presentation as PresentationDSL
-           return (
-             <div className="space-y-6">
-               {!pptDesign?.pptx_relative && product.errors?.ppt_design && (
-                 <div className="rounded-xl border border-amber-500/30 bg-amber-50/70 px-5 py-4 text-sm text-amber-800">
-                   <div className="font-medium">文本演示已完成，但 PPT 导出失败</div>
-                   <div className="mt-1 text-xs leading-relaxed text-amber-700/80">
-                     后端已保留研究与演示内容；PPT 缩略图和下载文件将在 PPT 节点成功后出现。
-                   </div>
-                 </div>
-               )}
-               {/* ── PPT 资产（ppt-master 原生产出，含恢复标记） ── */}
+          const dsl = presentation as PresentationDSL
+          return (
+            <div className="space-y-6">
+              {/* ── PPT 资产（ppt-master 原生产出，含恢复标记） ── */}
               {pptDesign?.pptx_relative && (
                 <div className="flex items-center justify-between rounded-xl border border-emerald-600/20 bg-emerald-50/70 px-6 py-3.5">
                   <div className="flex items-center gap-3">

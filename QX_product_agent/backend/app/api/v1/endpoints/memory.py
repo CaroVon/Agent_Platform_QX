@@ -138,8 +138,12 @@ async def list_memory_insights(
     """记忆洞察列表（high-level 记忆）。"""
     from app.repositories import ProjectRepo
     repo = ProjectRepo()
-    insights = repo.list_insights(scope=scope, project_id=project_id,
-                                  studio_product_id=studio_product_id, limit=200)
+    insights = repo.list_insights(
+        scope=scope,
+        project_id=project_id,
+        studio_product_id=studio_product_id,
+        limit=200,
+    )
     if q:
         insights = [i for i in insights if q.lower() in (i.content or "").lower()]
     return {
@@ -194,19 +198,44 @@ async def rebuild_project_memory(
 
 
 @router.post("/rebuild-studio/{product_id}")
-async def rebuild_studio_memory(product_id: uuid.UUID, db: AsyncSession = Depends(get_db),
-                                user: User = Depends(get_current_user)):
+async def rebuild_studio_memory(
+    product_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
     """手动重建 Product Studio 任务记忆图。"""
     product = await db.get(StudioProduct, product_id)
     if product is None:
         raise HTTPException(status_code=404, detail="Product Studio 任务不存在")
     if product.owner_id is not None and product.owner_id != user.id:
         raise HTTPException(status_code=403, detail="无权访问该任务")
-    from app.tasks.knowledge_tasks import build_studio_memory_graph
-    task = build_studio_memory_graph.delay(str(product_id))
-    return {"product_id": str(product_id),
-            "message": "Product Studio 任务记忆图重建已提交（异步执行）",
-            "celery_task_id": task.id}
+    from app.tasks import knowledge_tasks
+
+    task = knowledge_tasks.build_studio_memory_graph.delay(str(product_id))
+    return {
+        "product_id": str(product_id),
+        "message": "Product Studio 任务记忆图重建已提交（异步执行）",
+        "celery_task_id": task.id,
+    }
+
+
+# ================================================================
+# POST /api/v1/memory/entities/{entity_id}/promote —— 手动提升到全局
+# ================================================================
+
+@router.post("/entities/{entity_id}/promote")
+async def promote_memory_entity(entity_id: uuid.UUID):
+    """手动把项目实体提升为全局记忆（跨任务沉淀通用知识）。"""
+    import asyncio
+
+    from app.rag.memory_extraction import promote_entity_to_global
+
+    result = await asyncio.to_thread(promote_entity_to_global, str(entity_id))
+    if not result.get("promoted"):
+        if result.get("reason") == "实体不存在":
+            raise HTTPException(status_code=404, detail="实体不存在")
+        return {"promoted": False, "detail": result.get("reason", "")}
+    return {"promoted": True, **{k: v for k, v in result.items() if k != "promoted"}}
 
 
 # ================================================================

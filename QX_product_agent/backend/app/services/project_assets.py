@@ -65,6 +65,7 @@ CATEGORY_PPT = "演示文稿"
 CATEGORY_KEYWORDS = "关键词"
 CATEGORY_DESIGN = "设计图片"
 CATEGORY_MATERIAL = "素材"
+CATEGORY_MOD = "竞品矩阵"
 
 _SAFE_RE = re.compile(r"[^\w\u4e00-\u9fff\-]+")
 
@@ -192,9 +193,10 @@ def _md_competitor_matrix(data: dict) -> str:
 
     paths = data.get("artifacts_paths") or {}
     out += ["## 产物文件", ""]
-    out += [f"- 静态 PNG：`{paths.get('png', '—')}`"]
-    out += [f"- 交互 HTML：`{paths.get('html', '—')}`"]
-    out += [f"- 数据 CSV：`{paths.get('csv', '—')}`", ""]
+    out += [f"- 分析 PPT：`{paths.get('pptx', '—')}`"]
+    out += [f"- 核心矩阵图：`{paths.get('matrix_chart_png') or paths.get('matrix_chart', '—')}`"]
+    out += [f"- 数据 CSV：`{paths.get('csv', '—')}`"]
+    out += [f"- 完整报告 MD：`{paths.get('markdown', '—')}`（14 章数据驱动分析）", ""]
 
     rules = data.get("zoning_rules") or {}
     out += ["## 分区阈值", ""]
@@ -788,6 +790,60 @@ def _text_deliverables(product_id: str) -> list[dict]:
     return entries
 
 
+def _mod_matrix_entries(product_id: str) -> list[dict]:
+    """竞品矩阵（MOD）产物资产组：pptx/矩阵图/数据文件/章节图。
+
+    目录契约：studio_assets/{product_id}/competitor_matrix/（run_mod 落盘）。
+    全部走统一 collect_files → 单文件下载（/api/v1/files）+ ZIP 分组打包。
+    """
+    product_id = _canonical_id(product_id)
+    mod_dir = Path(get_settings().OUTPUT_DIR).resolve() / "studio_assets" \
+        / product_id / "competitor_matrix"
+    if not mod_dir.is_dir():
+        return []
+    entries: list[dict] = []
+
+    # 核心交付物（顺序即展示顺序）；pptx 附 svg_final 逐页预览
+    svg_final = mod_dir / "ppt" / "svg_final"
+    pptx_previews: list[str] = []
+    if svg_final.is_dir():
+        pptx_previews = [_files_url(
+            f"studio_assets/{product_id}/competitor_matrix/ppt/svg_final/{f.name}"
+        ) for f in sorted(svg_final.glob("slide_*.svg"))[:20]]
+
+    def _add(fname: str, kind: str, *, preview: bool = False,
+             name: str | None = None, preview_urls: list | None = None):
+        rel = f"studio_assets/{product_id}/competitor_matrix/{fname}"
+        path = mod_dir / fname
+        if not path.is_file():
+            return
+        extra: dict = {}
+        if preview:
+            extra["preview_url"] = _files_url(rel)
+        if name:
+            extra["name"] = name
+        if preview_urls:
+            extra["preview_urls"] = preview_urls
+        entries.append(_entry(rel, kind, CATEGORY_MOD, **extra))
+
+    _add("competitor_matrix.pptx", "ppt", preview_urls=pptx_previews)
+    _add("competitor_matrix.md", "doc")
+    _add("matrix_chart.png", "image", preview=True)
+    _add("matrix_chart.svg", "image", preview=True)
+    _add("data.csv", "data")
+    _add("zoning.json", "data")
+    _add("deck_audit.json", "data")
+    _add("data/manifest.json", "data", name="manifest.json（数据溯源）")
+    _add("data/products.csv", "data", name="products.csv（宽表）")
+    # 章节图表（chapters/*.svg）
+    chapters_dir = mod_dir / "chapters"
+    if chapters_dir.is_dir():
+        for f in sorted(chapters_dir.glob("*.svg")):
+            rel = f"studio_assets/{product_id}/competitor_matrix/chapters/{f.name}"
+            entries.append(_entry(rel, "image", CATEGORY_MOD, preview_url=_files_url(rel)))
+    return entries
+
+
 def collect_files(product_id: str, package: dict | None) -> list[dict]:
     """聚合任务全部资产（文本产出 + PPT + 演示导出 + 设计图 + 上传素材）。"""
     product_id = _canonical_id(product_id)
@@ -819,6 +875,12 @@ def collect_files(product_id: str, package: dict | None) -> list[dict]:
     if keywords and keywords["path"] not in seen:
         entries.append(keywords)
         seen.add(keywords["path"])
+
+    # 竞品矩阵（MOD）产物资产组：PPT/矩阵图/数据/章节图
+    for entry in _mod_matrix_entries(product_id):
+        if entry["path"] not in seen:
+            entries.append(entry)
+            seen.add(entry["path"])
 
     # 设计图资产库 + 上传素材
     for entry in (*_design_studio_images(product_id), *_uploaded_images(product_id)):
