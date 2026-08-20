@@ -68,7 +68,11 @@ async function downloadFile(url: string, filename: string) {
   const headers: Record<string, string> = {}
   if (token) headers.Authorization = `Bearer ${token}`
 
-  const res = await fetch(url.startsWith('http') ? url : `${API_BASE}${url}`, { headers })
+  // 后端资产 URL 已含 /api/v1 前缀（/api/v1/files/...），仅对裸路径补 API_BASE
+  const full = url.startsWith('http') || url.startsWith('/api/')
+    ? url
+    : `${API_BASE}${url}`
+  const res = await fetch(full, { headers })
   if (!res.ok) throw new Error(`下载失败: HTTP ${res.status}`)
   const blob = await res.blob()
   const blobUrl = URL.createObjectURL(blob)
