@@ -427,6 +427,15 @@ class PptDesignAgent(BaseAgent):
             pptx_url=None)
         self._emit("running", f"PPT 制作启动：{total_pages} 页规划")
 
+        # ── 0b) 生图提前发射（耗时优化：manifest 仅依赖 DSL，
+        #     与规范/简报创作并行；authoring 前 join，产物与串行一致） ──
+        img_job = self._prepare_images_job(
+            project_dir, presentation, idea, product_id,
+            theme_name, accent_color, _image_plan)
+        img_proc, img_job = self._launch_images_gen(img_job)
+        if img_proc is not None:
+            self._emit("running", "配图生成已启动（与设计规范创作并行）")
+
         # ── 1) 设计规范 + spec_lock（占位） ─────────────────────
         self._emit("running", "设计规范与 spec_lock 生成")
         spec = self._compose_design_spec(presentation, idea)
@@ -442,19 +451,11 @@ class PptDesignAgent(BaseAgent):
             idea, theme_name, len(presentation.get("pages") or [])
         )
 
-        # ── 3) 生图阶段：完整释放（hero/cover/architecture/design/scene + 每页配图） ──
+        # ── 3) 生图收集（子进程已在后台生成，此处等待+同步 Design Studio） ──
         self._write_progress(project_dir, stage="images")
-        self._emit("running", "配图生成（hero/架构/设计/场景）")
-        images = self._generate_images_v2(
-            project_dir=project_dir,
-            presentation=presentation,
-            idea=idea,
-            product_id=product_id,
-            theme_name=theme_name,
-            accent_color=accent_color,
-            out_dir=out_dir,
-            image_plan_module=_image_plan,
-        )
+        self._emit("running", "配图收集（已与规范创作并行）")
+        images = self._collect_images(
+            img_job, img_proc, out_dir, product_id, _image_plan)
 
         # ── 3b) MOD 章节图表资产同步（B/C 共享数据层 → 项目 images/） ──
         # 确定性图表（品牌环形/矩阵散点/参数矩阵/SKU 结构/hero 主图）以图片
@@ -1038,47 +1039,28 @@ class PptDesignAgent(BaseAgent):
         return _image_plan.select_image_for_page(page, page_index, by_kind)
 
     # ── 生图阶段（v2：聚焦产品架构 + 设计 + Design Studio 入库） ──
-    def _generate_images_v2(
-        self,
-        project_dir: Path,
-        presentation: dict,
-        idea: str,
-        product_id: str,
-        theme_name: str,
-        accent_color: str,
-        out_dir: Path,
-        image_plan_module: Any,
-    ) -> dict:
-        """v2 生图：构建 manifest → image_gen.py 批量生成 → 同步 Design Studio。
+    # 优化：拆为 准备(manifest) / 发射(subprocess) / 收集(等待+同步) 三段，
+    # 供 _run 与 spec/brief 创作并行（manifest 仅依赖 DSL，不依赖规范文本）。
+    _IMAGES_EMPTY = {"hero": None, "pages": {}, "by_kind": {}, "list": [],
+                     "asset_dir": "", "manifest": None}
 
-        与 v1 的核心差异：
-        - 必出图从 1 张（hero）扩展到 5 张（hero/cover/architecture/design/scene）
-        - 按 page.type 分配 asset_kind（product_architecture → architecture；user_persona → scene；feature_priority → feature；等等）
-        - 同步到 outputs/assets/{product_id}/（Design Studio 路径）
-
-        降级：任何失败（无配置/超时/后端错误）→ 返回空 dict，不影响页面生产。
-        """
-        empty = {"hero": None, "pages": {}, "by_kind": {}, "list": [], "asset_dir": "",
-                  "manifest": None}
+    def _prepare_images_job(
+        self, project_dir: Path, presentation: dict, idea: str, product_id: str,
+        theme_name: str, accent_color: str, image_plan_module: Any,
+    ) -> dict | None:
+        """生图准备：manifest 构建 + 落盘 + 缓存判定（无网络/无子进程）。失败返回 None。"""
         image_dir = project_dir / "images"
         image_dir.mkdir(exist_ok=True)
-
-        # ── a) 构建 manifest（强调 architecture + design） ──
         try:
             manifest = image_plan_module.build_image_manifest(
-                presentation=presentation,
-                idea=idea,
-                product_id=product_id,
-                theme_name=theme_name,
-                accent_color=accent_color,
-                max_pages=10,
+                presentation=presentation, idea=idea, product_id=product_id,
+                theme_name=theme_name, accent_color=accent_color, max_pages=10,
             )
             items = manifest.get("items") or []
         except Exception as exc:  # noqa: BLE001
             logger.warning("生图 manifest 构建失败: %s", exc)
-            return empty
+            return None
 
-        # ── b) 写 manifest ──
         manifest_path = image_dir / "image_prompts.json"
         fingerprint = hashlib.sha256(
             json.dumps(manifest, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
@@ -1097,58 +1079,83 @@ class PptDesignAgent(BaseAgent):
             pass
 
         manifest_path.write_text(
-            json.dumps(manifest, ensure_ascii=False, indent=1),
-            encoding="utf-8",
-        )
-        # 同时生成可读的 sidecar（image_gen.py 支持）
+            json.dumps(manifest, ensure_ascii=False, indent=1), encoding="utf-8")
         try:
-            sidecar = []
-            for it in items:
-                sidecar.append(f"- **{it['filename']}** ({it.get('asset_kind', '?')}): {it['prompt']}")
+            sidecar = [f"- **{it['filename']}** ({it.get('asset_kind', '?')}): {it['prompt']}"
+                       for it in items]
             (image_dir / "image_prompts.md").write_text(
                 f"# {idea} 图片 Prompt 清单\n\n" + "\n".join(sidecar) + "\n",
-                encoding="utf-8",
-            )
+                encoding="utf-8")
         except Exception:  # noqa: BLE001
             pass
+        return {"image_dir": image_dir, "manifest": manifest, "items": items,
+                "fingerprint": fingerprint, "cache_hit": cache_hit,
+                "manifest_path": manifest_path, "cache_path": cache_path,
+                "launched_at": None}
 
-        # ── c) 调 image_gen.py 批量生成 ──
-        if cache_hit:
-            logger.info("生图缓存命中，跳过 image_gen.py | product=%s", product_id)
-        else:
+    @staticmethod
+    def _launch_images_gen(job: dict | None) -> tuple:
+        """发射 image_gen.py 子进程（缓存命中/无 job → proc=None）。返回 (proc, job)。"""
+        import time as _time
+
+        if not job:
+            return None, None
+        if job.get("cache_hit"):
+            logger.info("生图缓存命中，跳过 image_gen.py | fingerprint=%s",
+                        str(job.get("fingerprint"))[:12])
+            return None, job
+        try:
+            # cwd 继承工作目录（backend）：image_gen 需读取 backend/.env 的
+            # IMAGE_BACKEND/MINIMAX_API_KEY（vendor scripts 目录无 .env）
+            proc = subprocess.Popen(
+                [sys.executable, str(_SCRIPTS_DIR / "image_gen.py"),
+                 "--manifest", str(job["manifest_path"]), "-o", str(job["image_dir"])],
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+            )
+            job["launched_at"] = _time.monotonic()
+            return proc, job
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("生图发射异常: %s", exc)
+            return None, job
+
+    def _collect_images(self, job: dict | None, proc, out_dir: Path,
+                        product_id: str, image_plan_module: Any) -> dict:
+        """收集生图结果：等待子进程（预算自发射起 900s）→ 写缓存 → 同步 Design Studio。"""
+        empty = dict(self._IMAGES_EMPTY)
+        if not job:
+            return empty
+        items = job.get("items") or []
+        image_dir = job["image_dir"]
+        if proc is not None:
+            import time as _time
+            elapsed = _time.monotonic() - (job.get("launched_at") or _time.monotonic())
+            budget = max(60.0, 900.0 - elapsed)
             try:
-                proc = subprocess.run(
-                    [sys.executable, str(_SCRIPTS_DIR / "image_gen.py"),
-                     "--manifest", str(manifest_path), "-o", str(image_dir)],
-                    capture_output=True, text=True, timeout=900,
-                    # cwd 继承工作目录（backend）：image_gen 需读取 backend/.env 的
-                    # IMAGE_BACKEND/MINIMAX_API_KEY（vendor scripts 目录无 .env）
-                )
+                _out, err = proc.communicate(timeout=budget)
                 if proc.returncode != 0:
                     logger.warning("生图失败（降级跳过，部分 SVG 无图）: %s",
-                                    (proc.stderr or proc.stdout)[-300:])
+                                   ((err or _out) or "")[-300:])
                 elif all((image_dir / str(item.get("filename"))).is_file() for item in items):
-                    cache_path.write_text(
-                        json.dumps({"fingerprint": fingerprint, "files": [item.get("filename") for item in items]},
-                                   ensure_ascii=False),
-                        encoding="utf-8",
-                    )
+                    job["cache_path"].write_text(
+                        json.dumps({"fingerprint": job["fingerprint"],
+                                    "files": [item.get("filename") for item in items]},
+                                   ensure_ascii=False), encoding="utf-8")
+            except subprocess.TimeoutExpired:
+                proc.kill()
+                proc.communicate()
+                logger.warning("生图超时（%.0fs，降级跳过）", budget)
             except Exception as exc:  # noqa: BLE001
-                logger.warning("生图调用异常: %s", exc)
+                logger.warning("生图收集异常: %s", exc)
 
-        # ── d) 同步到 Design Studio（outputs/assets/{product_id}/） ──
         try:
             synced = image_plan_module.sync_to_design_studio(
-                image_dir=image_dir,
-                output_dir=out_dir,
-                product_id=product_id,
-                items=items,
+                image_dir=image_dir, output_dir=out_dir,
+                product_id=product_id, items=items,
             )
         except Exception as exc:  # noqa: BLE001
             logger.warning("同步到 design studio 失败: %s", exc)
             synced = {"assets": [], "asset_dir": "", "hero": None, "by_kind": {}}
 
-        # ── e) 构建 page_map（page_NN.png → svg_ref） ──
         page_map: dict[str, str] = {}
         for asset in synced.get("assets", []):
             m = re.match(r"page_(\d+)(?:_\w+)?\.png", asset.get("name", ""))
@@ -1161,8 +1168,36 @@ class PptDesignAgent(BaseAgent):
             "by_kind": synced.get("by_kind") or {},
             "list": synced.get("assets") or [],
             "asset_dir": synced.get("asset_dir") or "",
-            "manifest": manifest,
+            "manifest": job.get("manifest"),
         }
+
+    def _generate_images_v2(
+        self,
+        project_dir: Path,
+        presentation: dict,
+        idea: str,
+        product_id: str,
+        theme_name: str,
+        accent_color: str,
+        out_dir: Path,
+        image_plan_module: Any,
+    ) -> dict:
+        """v2 生图：构建 manifest → image_gen.py 批量生成 → 同步 Design Studio。
+
+        与 v1 的核心差异：
+        - 必出图从 1 张（hero）扩展到 5 张（hero/cover/architecture/design/scene）
+        - 按 page.type 分配 asset_kind（product_architecture → architecture 等）
+        - 同步到 outputs/assets/{product_id}/（Design Studio 路径）
+
+        降级：任何失败（无配置/超时/后端错误）→ 返回空 dict，不影响页面生产。
+        （兼容包装：_run 已改为 发射→并行创作→收集 的高效编排，此方法保留给
+        独立调用与测试。）
+        """
+        job = self._prepare_images_job(
+            project_dir, presentation, idea, product_id,
+            theme_name, accent_color, image_plan_module)
+        proc, job = self._launch_images_gen(job)
+        return self._collect_images(job, proc, out_dir, product_id, image_plan_module)
 
 
 def get_ppt_design_agent() -> PptDesignAgent:

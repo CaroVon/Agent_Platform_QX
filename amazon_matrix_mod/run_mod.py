@@ -602,61 +602,86 @@ def _enhance_full(out_dir: str, df: pd.DataFrame, products_raw: dict,
     chapters_dir = os.path.join(out_dir, "chapters")
     visuals_dir = os.path.join(out_dir, "visuals")
 
-    # 1. 章节引擎（14 章，SVG 图表）
-    chapters = render_all(df, products_raw, search_raw, reviews_raw,
-                          chapters_dir, interpretation, rules)
-    print(f"[章节] {len(chapters)} 章渲染完成（SVG）")
+    # ── 耗时优化：并行组（四路互不依赖，产物与串行一致） ──
+    #   A. visuals 生图（仅依赖 keyword，子进程 ~2-3min，最重）
+    #   B. chapters 渲染（确定性）
+    #   C. M3 图审（依赖 matrix_png，已在入参就绪）
+    #   D. M3 评论聚类（依赖 reviews）
+    from concurrent.futures import ThreadPoolExecutor
 
-    # 2. image-01 视觉（增强层，失败降级；已有产物直接复用避免重复耗额度）
-    visuals = {"background": None, "cover": None, "zones": {}}
-    if with_visuals:
+    def _do_visuals() -> dict:
+        visuals = {"background": None, "cover": None, "zones": {}}
+        if not with_visuals:
+            return visuals
         reused = _reuse_visuals(visuals_dir)
         if reused:
-            visuals = reused
-            print(f"[视觉] 复用已有 visuals/（background={'✓' if visuals['background'] else '✗'} "
-                  f"cover={'✓' if visuals['cover'] else '✗'} "
-                  f"zones={sum(1 for v in visuals['zones'].values() if v)}/4）")
-        else:
-            try:
-                visuals = generate_visuals(keyword, visuals_dir)
-                print(f"[视觉] background={'✓' if visuals['background'] else '✗'} "
-                      f"cover={'✓' if visuals['cover'] else '✗'} "
-                      f"zones={sum(1 for v in visuals['zones'].values() if v)}/4")
-            except Exception as exc:  # noqa: BLE001
-                print(f"[视觉] 生成失败（降级）: {str(exc)[:100]}")
+            print(f"[视觉] 复用已有 visuals/（background={'✓' if reused['background'] else '✗'} "
+                  f"cover={'✓' if reused['cover'] else '✗'} "
+                  f"zones={sum(1 for v in reused['zones'].values() if v)}/4）")
+            return reused
+        try:
+            vis = generate_visuals(keyword, visuals_dir)
+            print(f"[视觉] background={'✓' if vis['background'] else '✗'} "
+                  f"cover={'✓' if vis['cover'] else '✗'} "
+                  f"zones={sum(1 for v in vis['zones'].values() if v)}/4")
+            return vis
+        except Exception as exc:  # noqa: BLE001
+            print(f"[视觉] 生成失败（降级）: {str(exc)[:100]}")
+            return visuals
 
-    # 3. M3 图审（核心矩阵图 PNG；无 PNG 时跳过）
-    m3_insights = {"assess": "", "insights": [], "improvements": []}
-    audit_target = matrix_png or _rasterize_best_effort(matrix_svg)
-    if audit_target:
+    def _do_audit() -> dict:
+        m3 = {"assess": "", "insights": [], "improvements": []}
+        audit_target = matrix_png or _rasterize_best_effort(matrix_svg)
+        if not audit_target:
+            return m3
         data_summary = (f"keyword={keyword}, N={len(df)}, "
                         f"价格范围 ${df['current_price'].min():.2f}-${df['current_price'].max():.2f}, "
                         f"zone分布={zoning.zone_summary(df)}")
         try:
-            m3_insights = m3_client.audit_chart(audit_target, data_summary)
-            if m3_insights.get("insights"):
-                print(f"[M3] 图审 {len(m3_insights['insights'])} 条洞察")
+            m3 = m3_client.audit_chart(audit_target, data_summary)
+            if m3.get("insights"):
+                print(f"[M3] 图审 {len(m3['insights'])} 条洞察")
         except Exception as exc:  # noqa: BLE001
             print(f"[M3] 图审失败（降级）: {str(exc)[:100]}")
+        return m3
 
-    # 4. M3 评论聚类深化（覆盖第 7 章结论）
-    all_reviews = [r for rv in reviews_raw.values() for r in rv]
-    if all_reviews:
+    def _do_cluster():
+        all_reviews = [r for rv in reviews_raw.values() for r in rv]
+        if not all_reviews:
+            return {}
         try:
             clustered = m3_client.cluster_reviews(all_reviews)
             if clustered:
-                ch7 = next((c for c in chapters if c["num"] == 7), None)
-                if ch7:
-                    extra = []
-                    for k, label in (("pain_points", "痛点"), ("opportunities", "机会"),
-                                     ("strengths", "优势")):
-                        for item in (clustered.get(k) or [])[:3]:
-                            extra.append(f"{label}：{item}")
-                    ch7["conclusion"].extend(extra)
-                    ch7["md"] += "\n### M3 深化聚类\n" + "\n".join(f"- {e}" for e in extra) + "\n"
                 print(f"[M3] 评论聚类 {len(clustered.get('topics', []))} 主题")
+            return clustered
         except Exception as exc:  # noqa: BLE001
             print(f"[M3] 评论聚类失败（降级）: {str(exc)[:100]}")
+            return {}
+
+    with ThreadPoolExecutor(max_workers=4, thread_name_prefix="mod-full") as ex:
+        fut_visuals = ex.submit(_do_visuals)
+        fut_chapters = ex.submit(
+            render_all, df, products_raw, search_raw, reviews_raw,
+            chapters_dir, interpretation, rules)
+        fut_audit = ex.submit(_do_audit)
+        fut_cluster = ex.submit(_do_cluster)
+        visuals = fut_visuals.result()
+        chapters = fut_chapters.result()
+        m3_insights = fut_audit.result()
+        clustered = fut_cluster.result()
+    print(f"[章节] {len(chapters)} 章渲染完成（SVG，与视觉/图审/聚类并行）")
+
+    # 4. M3 评论聚类深化（覆盖第 7 章结论；依赖 chapters+clustered，组后执行）
+    if clustered:
+        ch7 = next((c for c in chapters if c["num"] == 7), None)
+        if ch7:
+            extra = []
+            for k, label in (("pain_points", "痛点"), ("opportunities", "机会"),
+                             ("strengths", "优势")):
+                for item in (clustered.get(k) or [])[:3]:
+                    extra.append(f"{label}：{item}")
+            ch7["conclusion"].extend(extra)
+            ch7["md"] += "\n### M3 深化聚类\n" + "\n".join(f"- {e}" for e in extra) + "\n"
 
     # 5. 执行摘要（M3 优先，失败降级为确定性汇总）
     exec_summary = ""

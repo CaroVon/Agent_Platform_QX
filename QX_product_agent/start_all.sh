@@ -115,11 +115,17 @@ echo ""
 # prefork 使 task_time_limit 硬超时真正生效（threads 池无法强杀线程）
 info "启动 Celery Worker..."
 cd "$PROJECT_ROOT/backend"
+
+# PPT 逐页创作并发（耗时优化，默认 4；内存富余的独立部署机可升 6，
+# 上限 AGENT_PLATFORM_PPT_DESIGN_CONCURRENCY_MAX=6；429 限流自动降并发兜底。
+# 内存紧张（<2G 余量）或共享开发机建议降为 2）
+export AGENT_PLATFORM_PPT_DESIGN_CONCURRENCY="${AGENT_PLATFORM_PPT_DESIGN_CONCURRENCY:-4}"
+
 nohup "$PROJECT_ROOT/venv/bin/python" -m celery -A app.core.celery_app.celery_app worker \
     --loglevel=info --concurrency=4 --pool=prefork \
     > "$RUNTIME_DIR/celery.log" 2>&1 &
 CELERY_PID=$!
-ok "Celery Worker 已启动 (PID: $CELERY_PID, pool: prefork)"
+ok "Celery Worker 已启动 (PID: $CELERY_PID, pool: prefork, PPT并发=$AGENT_PLATFORM_PPT_DESIGN_CONCURRENCY)"
 echo "   日志: backend/runtime/celery.log"
 echo ""
 

@@ -64,6 +64,19 @@ def test_validate_native_contract_rejects_group_filter():
     assert "<g>" in issue
 
 
+def test_validate_native_contract_rejects_degenerate_gradient_line():
+    svg = (
+        '<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="720">'
+        '<defs><linearGradient id="arrowGrad"><stop offset="0" stop-color="#123456" />'
+        '<stop offset="1" stop-color="#654321" /></linearGradient></defs>'
+        '<line x1="10" y1="20" x2="100" y2="20" stroke="url(#arrowGrad)" />'
+        '</svg>'
+    )
+    ok, issue = sa.validate_native_contract(svg)
+    assert not ok
+    assert "gradient" in issue.lower()
+
+
 def test_image_manifest_handles_competitor_matrix_theme():
     from agents.ppt_design_agent import image_plan
 
@@ -92,12 +105,23 @@ def test_image_generation_cache_skips_second_generation(tmp_path, monkeypatch):
 
     calls = []
 
-    def fake_run(command, **_kwargs):
-        calls.append(command)
-        Path(command[-1]).joinpath("hero.png").write_bytes(b"image")
-        return SimpleNamespace(returncode=0, stderr="", stdout="")
+    class _FakeProc:
+        """模拟 image_gen.py 子进程：communicate 时落图，returncode=0。"""
 
-    monkeypatch.setattr(agent_module.subprocess, "run", fake_run)
+        returncode = 0
+
+        def __init__(self, command, **_kwargs):
+            self._command = command
+            calls.append(command)
+
+        def communicate(self, timeout=None):
+            Path(self._command[-1]).joinpath("hero.png").write_bytes(b"image")
+            return "", ""
+
+        def kill(self):
+            pass
+
+    monkeypatch.setattr(agent_module.subprocess, "Popen", _FakeProc)
     agent = object.__new__(PptDesignAgent)
     kwargs = dict(
         project_dir=tmp_path / "project",

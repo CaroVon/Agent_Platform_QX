@@ -78,10 +78,14 @@ if ps aux | grep -v grep | grep -q "celery -A app.core.celery_app"; then
   ok "Celery Worker 已在运行"
 else
   cd "$BACKEND_DIR"
+  # PPT 逐页创作并发（默认 4；共享开发机内存紧张时可降 2）
+  export AGENT_PLATFORM_PPT_DESIGN_CONCURRENCY="${AGENT_PLATFORM_PPT_DESIGN_CONCURRENCY:-4}"
+  # prefork（与 start_all 一致）：硬超时可强杀；threads 池在内存高压下有
+  # GIL/锁滞留风险（详见稳定性加固记录）
   nohup "$PY" -m celery -A app.core.celery_app.celery_app worker \
-    --loglevel=info --concurrency=4 --pool=threads \
+    --loglevel=info --concurrency=4 --pool=prefork \
     > "$RUNTIME_DIR/celery.log" 2>&1 &
-  ok "Celery 启动中 (PID $!，日志 $RUNTIME_DIR/celery.log)"
+  ok "Celery 启动中 (PID $!，PPT并发=$AGENT_PLATFORM_PPT_DESIGN_CONCURRENCY，日志 $RUNTIME_DIR/celery.log)"
   cd "$PROJECT_ROOT"
 fi
 
