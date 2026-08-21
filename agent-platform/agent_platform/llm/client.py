@@ -18,8 +18,9 @@ import json
 import logging
 import re
 import threading
+import time
 from functools import lru_cache
-from typing import Any
+from typing import Any, ClassVar
 
 import httpx
 
@@ -143,9 +144,60 @@ class LLMClient:
         }
 
     # ─── 文本补全 ────────────────────────────────────────────
+    # 硬超时余量：sync httpx 的 timeout 不覆盖 DNS 解析（getaddrinfo），
+    # fork 子进程/内存高压下会无限挂起（E2E 实测：所有线程 futex 等待）。
+    # 三层防御：
+    #   1) 域名钉扎：父进程侧有界解析 → 按 IP 直连 + SNI/Host 保真（绕开
+    #      fork 子进程的 getaddrinfo 挂死，证书校验不受影响）
+    #   2) 硬超时：守护线程 + future 超时兜底（挂起转化为 LLMError）
+    #   3) 既有降级：LLMError 由各调用点的回退/重试路径承接
+    _HARD_TIMEOUT_MARGIN = 30.0
+    _DNS_PIN_TTL = 600.0
+    _DNS_PIN: ClassVar[dict[str, tuple[str, float]]] = {}
+
+    @classmethod
+    def _resolve_bounded(cls, host: str, timeout: float = 5.0) -> str | None:
+        """有界域名解析（守护线程，5s 超时；失败/超时返回 None 走原 URL）。"""
+        import socket
+        from concurrent.futures import ThreadPoolExecutor
+        from concurrent.futures import TimeoutError as _FutTimeout
+
+        cached = cls._DNS_PIN.get(host)
+        now = time.monotonic()
+        if cached and cached[1] > now:
+            return cached[0]
+        ex = ThreadPoolExecutor(max_workers=1, thread_name_prefix="llm-dns")
+        try:
+            infos = ex.submit(
+                socket.getaddrinfo, host, 443, socket.AF_INET, socket.SOCK_STREAM
+            ).result(timeout=timeout)
+            ip = infos[0][4][0] if infos else None
+            if ip:
+                cls._DNS_PIN[host] = (ip, now + cls._DNS_PIN_TTL)
+            return ip
+        except (_FutTimeout, Exception):  # noqa: BLE001 —— 解析失败回退原 URL
+            return None
+        finally:
+            ex.shutdown(wait=False)
+
+    @staticmethod
+    def _post_with_hard_timeout(fn, timeout_s: float):
+        from concurrent.futures import ThreadPoolExecutor
+        from concurrent.futures import TimeoutError as _FutTimeout
+
+        ex = ThreadPoolExecutor(max_workers=1, thread_name_prefix="llm-post")
+        try:
+            return ex.submit(fn).result(timeout=timeout_s)
+        except _FutTimeout:
+            raise LLMError(
+                f"LLM 请求硬超时（>{timeout_s:.0f}s，疑似 DNS/连接挂起），已中止等待")
+        finally:
+            # wait=False：挂起线程不阻塞调用方（泄漏线程数=挂起次数，可观测）
+            ex.shutdown(wait=False)
+
     def complete(
         self,
-        messages: list[dict[str, str]],
+        messages: list[dict, str],
         temperature: float | None = None,
         max_tokens: int | None = None,
     ) -> str:
@@ -169,12 +221,30 @@ class LLMClient:
             "Authorization": f"Bearer {self.api_key}",
             "Content-Type": "application/json",
         }
+
+        # 域名钉扎：有界解析 → IP 直连（SNI/Host 保真，绕开 fork 子进程
+        # 的 getaddrinfo 挂死；解析失败回退原 URL，硬超时兜底）
+        from urllib.parse import urlparse
+
+        host = urlparse(self.base_url).hostname or ""
+        ip = self._resolve_bounded(host) if host else None
+        url = f"{self.base_url}/chat/completions"
+        if ip and ip != host:
+            url = f"{self.base_url.replace(host, ip, 1)}/chat/completions"
+            headers["Host"] = host
+
+        def _do_post():
+            with httpx.Client(trust_env=False, timeout=self.timeout) as client:
+                req = client.build_request("POST", url, json=payload, headers=headers)
+                if ip and ip != host:
+                    # TLS SNI 与证书校验仍按真实域名进行
+                    req.extensions["sni_hostname"] = host
+                return client.send(req)
+
         try:
-            resp = httpx.post(
-                f"{self.base_url}/chat/completions",
-                json=payload,
-                headers=headers,
-                timeout=self.timeout,
+            resp = self._post_with_hard_timeout(
+                _do_post,
+                self.timeout + self._HARD_TIMEOUT_MARGIN,
             )
         except httpx.HTTPError as exc:
             raise LLMError(f"LLM 请求失败: {exc}") from exc

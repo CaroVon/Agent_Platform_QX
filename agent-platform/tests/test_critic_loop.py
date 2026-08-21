@@ -7,6 +7,7 @@ from agent_platform.harness.quality_gate import run_quality_gate
 from tests.test_workflow_graph import (
     _Agent,
     _competitor_analysis,
+    _competitor_matrix,
     _deck,
     _design,
     _full_deck,
@@ -126,7 +127,8 @@ def _build(research, product, design, pres, critic, **kwargs):
 
 def _agents(pres_script: list):
     research = _Agent(
-        {"market_research": [_market_research()], "competitor_analysis": [_competitor_analysis()]}
+        {"market_research": [_market_research()], "competitor_matrix": [_competitor_matrix()],
+         "competitor_analysis": [_competitor_analysis()]}
     )
     product = _Agent({"strategy": [_strategy()]})
     design = _Agent({"ux_design": [_design()]})

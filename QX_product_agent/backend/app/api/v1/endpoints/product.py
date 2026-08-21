@@ -689,15 +689,31 @@ async def export_product_pptx(
     pptx_path = out_dir / f"{product_id}.pptx"
 
     # P6: 优先返回 ppt-master（PptDesignAgent）产出的原生可编辑 PPTX
+    # 始终取项目 exports/ 目录最新 mtime 的导出（DB 里的 pptx_relative 可能
+    # 指向被外科修复/重导出取代的旧文件），DB 记录仅作目录定位线索
+    import re as _re_mod
+
     ppt_design = package.get("ppt_design") or {}
     pptx_relative = ppt_design.get("pptx_relative")
-    if pptx_relative and Path(settings.OUTPUT_DIR).resolve().joinpath(pptx_relative).is_file():
-        from pathlib import Path as _Path
-
-        _p = _Path(settings.OUTPUT_DIR).resolve().joinpath(pptx_relative)
+    candidates: list[Path] = []
+    if pptx_relative:
+        rel_dir = Path(settings.OUTPUT_DIR).resolve().joinpath(pptx_relative).parent
+        if rel_dir.is_dir():
+            candidates += [p for p in rel_dir.glob("*.pptx") if p.is_file()]
+            candidates += [p for p in rel_dir.parent.glob("*.pptx") if p.is_file()]
+    # 兜底：按产品定位项目目录扫 exports/
+    if not candidates:
+        key = _re_mod.sub(r"[^A-Za-z0-9._-]+", "_", str(product_id)).strip("._")[:80]
+        base = Path(settings.OUTPUT_DIR).resolve() / "studio_assets" / "ppt_projects"
+        for d in filter(lambda x: x.is_dir(), [base / key, *base.glob(f"{key}*")]):
+            candidates += [p for p in d.glob("exports/*.pptx") if p.is_file()]
+            candidates += [p for p in d.glob("*.pptx") if p.is_file()]
+    latest = max(candidates, key=lambda p: p.stat().st_mtime) if candidates else None
+    if latest is not None:
+        rel_latest = str(latest.relative_to(Path(settings.OUTPUT_DIR).resolve()))
         return ExportPdfResponse(
             product_id=str(product_id),
-            pdf_url=f"/api/v1/files/{pptx_relative.replace(os.sep, '/')}",
+            pdf_url=f"/api/v1/files/{rel_latest.replace(os.sep, '/')}",
             message=(
                 f"PPTX 导出成功（ppt-master 原生）| 页数 {ppt_design.get('pages', len(presentation['pages']))}"
                 f" | 模型 {ppt_design.get('model', '')}"
@@ -889,6 +905,8 @@ async def regenerate_product_asset(
         package = {}
 
     old_data = package.get(asset)
+    import asyncio  # 局部导入：模块级未引入（to_thread 需要）
+
     ok, result = await asyncio.to_thread(regenerate_asset, product, asset, instruction)
     if not ok:
         raise HTTPException(status_code=422, detail=str(result))
@@ -1072,6 +1090,83 @@ async def reject_product_node(
 # 资料审核（source_gathering 门）—— 读取 / 提交 / 上传本地资料
 # ================================================================
 
+@router.get("/{product_id}/ppt-progress")
+async def get_product_ppt_progress(
+    product_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """PPT 制作过程可视化（P5）：progress.json + svg_output 实时页清单。
+
+    返回 {stage, total, done_pages, per_page, critic_score, revision_round,
+    pages: [{index, file, url, size}], pptx_url}；无项目目录时 active=False。
+    """
+    import re as _re
+    from urllib.parse import quote as _quote
+
+    product = await db.get(StudioProduct, product_id)
+    if product is None:
+        raise HTTPException(status_code=404, detail="产品不存在")
+    if product.owner_id is not None and product.owner_id != user.id:
+        raise HTTPException(status_code=403, detail="无权访问该产品")
+    settings = get_settings()
+    out_root = Path(settings.OUTPUT_DIR).resolve()
+
+    def _files_url(relative: str) -> str:
+        parts = [_quote(p, safe="") for p in relative.split("/") if p]
+        return "/api/v1/files/" + "/".join(parts)
+
+    # 定位项目目录（与 PptDesignAgent._get_reusable_project_dir 同规则）
+    key = _re.sub(r"[^A-Za-z0-9._-]+", "_", str(product_id)).strip("._")[:80]
+    base = out_root / "studio_assets" / "ppt_projects"
+    project_dir = None
+    if (base / key).is_dir():
+        project_dir = base / key
+    else:
+        legacy = [p for p in base.glob(f"{key}_*") if p.is_dir()]
+        if legacy:
+            project_dir = max(legacy, key=lambda p: p.stat().st_mtime)
+    if project_dir is None:
+        return {"product_id": str(product.id), "active": False, "stage": None,
+                "total": 0, "done_pages": 0, "per_page": {}, "pages": []}
+
+    progress: dict = {}
+    try:
+        progress = json.loads((project_dir / "progress.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        progress = {}
+    pages: list[dict] = []
+    svg_dir = project_dir / "svg_output"
+    if svg_dir.is_dir():
+        for f in sorted(svg_dir.glob("slide_*.svg")):
+            m = _re.search(r"slide_(\d+)", f.name)
+            pages.append({
+                "index": int(m.group(1)) if m else 0,
+                "file": f.name,
+                "url": _files_url(str(f.relative_to(out_root))),
+                "size": f.stat().st_size,
+            })
+    pptx_url = progress.get("pptx_url")
+    if pptx_url and Path(pptx_url).is_absolute():
+        try:
+            pptx_url = _files_url(str(Path(pptx_url).relative_to(out_root)))
+        except ValueError:
+            pptx_url = None
+    return {
+        "product_id": str(product.id),
+        "active": progress.get("stage") not in (None, "done"),
+        "stage": progress.get("stage"),
+        "total": progress.get("total"),
+        "done_pages": progress.get("done_pages"),
+        "per_page": progress.get("per_page") or {},
+        "critic_score": progress.get("critic_score"),
+        "revision_round": progress.get("revision_round"),
+        "pages": pages,
+        "pptx_url": pptx_url,
+        "updated_at": progress.get("updated_at"),
+    }
+
+
 @router.get("/{product_id}/sources")
 async def get_product_sources(
     product_id: uuid.UUID,
@@ -1089,10 +1184,17 @@ async def get_product_sources(
     except json.JSONDecodeError:
         package = {}
     sources = package.get("_sources_review") or []
+    # 统一采集层：亚马逊只读摘要（gate 展示用，不参与勾选）
+    amazon = package.get("source_gathering_meta", {}).get("amazon") or \
+        package.get("amazon_collection") or None
+    if isinstance(amazon, dict):
+        amazon.pop("data_dir", None)
+        amazon.pop("out_dir", None)
     return {
         "product_id": str(product.id),
         "status": product.status.value,
         "sources": sources,
+        "amazon": amazon,
         "paused_node": package.get("_paused_node"),
     }
 

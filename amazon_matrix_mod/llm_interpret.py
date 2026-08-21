@@ -27,6 +27,29 @@ _SYSTEM = """你是亚马逊市场策略顾问。基于结构化市场数据，�
   不要输出任何其他内容或 markdown 围栏。"""
 
 
+def _system_prompt() -> str:
+    """system prompt + 亚马逊竞品分析 skill（P3 注入，nexscope MIT）。
+
+    skill 作为方法论参考前置；输出约束（≤25 字/只输出 JSON）置于最后，
+    压制 skill 中可能干扰输出格式的表述。skill 缺失时静默回退。
+    """
+    try:
+        from pathlib import Path
+
+        base = Path(__file__).resolve().parents[1] / "agent-platform" / "agent_platform" / "skills"
+        if not base.is_dir():
+            return _SYSTEM
+        from agent_platform.skills.loader import SkillLoader
+
+        skill = SkillLoader(base_dir=base).load("amazon-competitor-analysis", max_chars=4000)
+        if not skill:
+            return _SYSTEM
+        return (f"{_SYSTEM}\n\n【竞品分析 Skill（四区解读的方法论参考；以下输出约束优先级最高）】\n"
+                f"{skill}\n\n【再次强调】每区解读 ≤25 字；verdict ≤30 字；只输出规定结构的 JSON。")
+    except Exception:  # noqa: BLE001 —— skill 加载失败不阻塞
+        return _SYSTEM
+
+
 def _build_user(zoning_rules: dict, zone_samples: dict, keyword: str,
                 marketplace: str, our_asin: str | None, market_context: str) -> str:
     lines = [
@@ -73,7 +96,7 @@ def interpret_zones(zoning_rules: dict, zone_samples: dict, keyword: str = "",
                 json={
                     "model": client["model"],
                     "messages": [
-                        {"role": "system", "content": _SYSTEM},
+                        {"role": "system", "content": _system_prompt()},
                         {"role": "user", "content": user},
                     ],
                     "temperature": 0.4 if attempt == 0 else 0.2,

@@ -65,6 +65,10 @@ class ProductStudioState(TypedDict, total=False):
     _sources_review: list[dict]
     _approved_sources: list[dict]
     source_gathering_meta: dict
+    # 统一采集层：亚马逊数据摘要（B/C 共享；含 data_dir 供矩阵节点 0-credit 回放）
+    amazon_collection: dict[str, Any] | None
+    # 采集关键词（矩阵/演示引用保持数据口径一致）
+    mod_keyword: str
 
     # ─── Critic 修订信号（避免低分无文案时修订循环无法终止） ──
     _revise_requested: bool

@@ -12,6 +12,7 @@ export function AssetCard({
   title,
   description,
   status = 'ready',
+  badge,
   onClick,
   action,
 }: {
@@ -19,6 +20,8 @@ export function AssetCard({
   title: string
   description: string
   status?: 'ready' | 'empty' | 'running'
+  /** 渐进交付徽标：new=新增（高亮）/ soft=已交付 */
+  badge?: { text: string; tone: 'new' | 'soft' }
   onClick?: () => void
   /** 右侧操作区（如"重新生成"），有值时替代 Chevron */
   action?: ReactNode
@@ -46,6 +49,16 @@ export function AssetCard({
           {status === 'running' && (
             <span className="rounded-full bg-yellow-500/10 px-2 py-0.5 text-[10px] text-yellow-600">
               生成中
+            </span>
+          )}
+          {badge?.tone === 'new' && (
+            <span className="animate-step-in rounded-full bg-emerald-500/15 px-2 py-0.5 text-[10px] font-medium text-emerald-600">
+              {badge.text}
+            </span>
+          )}
+          {badge?.tone === 'soft' && (
+            <span className="rounded-full bg-primary/8 px-2 py-0.5 text-[10px] text-primary">
+              {badge.text}
             </span>
           )}
         </div>

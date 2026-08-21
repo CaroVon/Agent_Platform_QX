@@ -38,15 +38,29 @@ from agents.ppt_design_agent.agent import PptDesignAgent
 # ─────────────────────────────────────────────────────────────
 
 def _svg_for_prompt(prompt: str) -> str:
-    """从 prompt 中提取页面 title/insight，构造能通过全部校验的合法 SVG。"""
+    """从 prompt 中提取页面 title/insight，构造能通过全部校验（含 QA 门禁）的合法 SVG。"""
     m_title = re.search(r'"title":\s*"([^"]*)"', prompt)
     m_ins = re.search(r'"insight":\s*"([^"]*)"', prompt)
     title = m_title.group(1) if m_title else "产品核心价值"
     insight = m_ins.group(1) if m_ins else "市场规模持续增长"
+    # QA 门禁要求：≥8 text、≥4 rect、有 defs/渐变、色板内颜色、mod 页带溯源标记
+    rows = "\n".join(
+        f'  <text x="60" y="{y}" font-size="14" fill="#111111">数据行 {i} · [A{i}] B0TEST{i:02d}</text>'
+        for i, y in enumerate(range(200, 560, 40))
+    )
+    cards = "\n".join(
+        f'  <rect x="{x}" y="580" width="120" height="60" fill="#FFFFFF" stroke="#3D6491"/>'
+        for x in range(60, 900, 150)
+    )
     return f'''<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="720" viewBox="0 0 1280 720">
+  <defs><linearGradient id="g"><stop offset="0" stop-color="#3D6491"/><stop offset="1" stop-color="#F7F6F0"/></linearGradient></defs>
   <rect x="0" y="0" width="1280" height="720" fill="#F7F6F0"/>
+  <rect x="60" y="80" width="4" height="80" fill="#3D6491"/>
   <text x="60" y="100" font-size="44" fill="#111111">{title}</text>
   <text x="60" y="160" font-size="18" fill="#3D6491">{insight}</text>
+{rows}
+{cards}
+  <text x="60" y="700" font-size="10" fill="#6F7275">*Rainforest data · B0TEST</text>
 </svg>'''
 
 

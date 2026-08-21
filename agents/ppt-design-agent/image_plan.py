@@ -428,6 +428,13 @@ def select_image_for_page(page: dict, page_index: int, by_kind: dict[str, str]) 
         ("competitor_matrix", "page_concept"),
         ("feature_priority", "feature"),
         ("conclusion", "hero"),
+        # ── MOD 章节（B/C 合并）：确定性图表资产按页型对位 ──
+        ("mod_overview", "mod_overview"),
+        ("mod_matrix", "mod_matrix"),
+        ("mod_hero_teardown", "mod_hero"),
+        ("mod_spec_comparison", "mod_spec_comparison"),
+        ("mod_sku_analysis", "mod_sku_analysis"),
+        ("mod_actions", "mod_overview"),
     ]
     for ptype, kind in type_to_kind:
         if page_type == ptype and kind in by_kind:
@@ -438,5 +445,7 @@ def select_image_for_page(page: dict, page_index: int, by_kind: dict[str, str]) 
         if kind.startswith(f"page_{page_no:02d}"):
             return ref
 
-    # 再次兜底：hero
+    # 再次兜底：hero（MOD 页不再兜底到 hero，避免风格漂移）
+    if str(page_type).startswith("mod_"):
+        return None
     return by_kind.get("hero") or by_kind.get("cover_decorative")

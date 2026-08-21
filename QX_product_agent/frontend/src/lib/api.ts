@@ -460,6 +460,46 @@ export function connectDraftStream(projectId: string): EventSource {
 
 // ─── AI Product Studio API ────────────────────────────────────
 
+/** 亚马逊统一采集摘要（gate 只读展示） */
+export interface AmazonCollectionSummary {
+  keyword?: string
+  n_products?: number
+  credits?: number
+  fetched_at?: string
+  source?: string
+  rating_avg?: number | null
+  reviews_count?: number
+  price_range?: { min?: number | null; max?: number | null; avg?: number | null }
+  zone_counts?: Record<string, number>
+  top_asins?: Array<{
+    asin?: string
+    title?: string
+    brand?: string | null
+    current_price?: number | null
+    rating?: number | null
+    review_count?: number | null
+    est_monthly_sales?: number | null
+    zone?: string
+    main_image_url?: string | null
+  }>
+  error?: string
+}
+
+/** PPT 制作过程可视化（GET /product/{id}/ppt-progress） */
+export interface PptProgress {
+  product_id: string
+  active: boolean
+  stage?: string | null
+  total?: number | null
+  done_pages?: number | null
+  per_page?: Record<string, string>
+  critic_score?: number | null
+  revision_round?: number | null
+  pages: Array<{ index: number; file: string; url: string; size: number }>
+  pptx_url?: string | null
+  updated_at?: string | null
+}
+
 /** 模板选择器数据源（GET /product/ppt-options） */
 export interface PptThemeOption {
   id: string
@@ -532,7 +572,7 @@ export const productApi = {
     })
   },
 
-  /** 待审核资料列表（含权重） */
+  /** 待审核资料列表（含权重 + 亚马逊采集只读摘要） */
   getSources(productId: string): Promise<{
     product_id: string
     status: string
@@ -546,9 +586,15 @@ export const productApi = {
       selected?: boolean
       local?: boolean
     }>
+    amazon?: AmazonCollectionSummary | null
     paused_node?: string | null
   }> {
     return request(`/product/${productId}/sources`)
+  },
+
+  /** PPT 制作过程可视化（progress.json + 实时页清单） */
+  pptProgress(productId: string): Promise<PptProgress> {
+    return request(`/product/${productId}/ppt-progress`)
   },
 
   /** 上传本地资料（作为最高权重补充来源） */

@@ -85,6 +85,13 @@ class GatePause(Exception):
         super().__init__(f"等待人工确认节点: {node}")
 
 
+# 节点 → 资产键（渐进式交付：节点完成即产出该文本资产，P4）
+_ARTIFACT_KEYS = (
+    "requirement", "research", "competitor_matrix", "competitor_analysis",
+    "strategy", "design", "presentation",
+)
+
+
 def _with_retry(
     node_fn: Callable[[dict], dict | None],
     node_name: str,
@@ -120,7 +127,15 @@ def _with_retry(
             try:
                 updates = node_fn(state) or {}
                 status[node_name] = "completed"
-                _emit("completed")
+                # 渐进式交付（P4）：节点产物随 completed 事件下发，
+                # 任务层即时渲染该节点文本资产（artifact 不入进度日志）
+                artifact_key = next(
+                    (k for k in _ARTIFACT_KEYS if k in updates), None)
+                if artifact_key is not None:
+                    _emit("completed", artifact_key=artifact_key,
+                          artifact=updates[artifact_key])
+                else:
+                    _emit("completed")
 
                 # Plan/Act 门（可配置 GATE_NODES）：节点完成后暂停等待人工确认
                 gate_nodes = set(state.get("_gate_nodes") or [])
@@ -265,20 +280,50 @@ class ProductResearchGraph:
         return {field: result.data}
 
     def _gather_sources(self, state: dict) -> dict:
-        """资料搜集节点：真实检索 + 权重标注 → 暂停等待用户审核（Plan/Act 门）。"""
+        """统一采集节点（B/C 共享数据层）：Tavily 网络检索 + Rainforest 亚马逊抓取
+        → 暂停等待用户审核（Plan/Act 门；网络源可勾选，亚马逊数据只读展示）。"""
         idea = state.get("idea", "")
         gather_fn = getattr(self.research_agent, "gather_sources", None)
         if gather_fn is None:
             # 防御：测试桩/旧实现无 gather_sources 时降级为空资料（research 自行搜索）
-            return {"_sources_review": [], "source_gathering_meta": {"total": 0, "selected": 0}}
-        gathered = gather_fn(idea)
-        return {
-            "_sources_review": gathered.get("sources", []),
-            "source_gathering_meta": {
-                "total": gathered.get("total", 0),
-                "selected": gathered.get("selected", 0),
-            },
+            gathered = {"sources": [], "total": 0, "selected": 0}
+        else:
+            gathered = gather_fn(idea)
+
+        meta = {
+            "total": gathered.get("total", 0),
+            "selected": gathered.get("selected", 0),
         }
+        updates: dict = {
+            "_sources_review": gathered.get("sources", []),
+            "source_gathering_meta": meta,
+        }
+
+        # 双源采集：亚马逊数据与网络资料同阶段归档到共享数据层（studio_assets/{id}/）
+        collect_fn = getattr(self.research_agent, "collect_amazon_sources", None)
+        if collect_fn is not None:
+            requirement = state.get("requirement") or {}
+            keyword = str(requirement.get("idea") or idea or "").strip()
+            if keyword:
+                try:
+                    amazon = collect_fn(
+                        keyword,
+                        product_id=state.get("product_id"),
+                        top_n=int(state.get("top_n") or 20),
+                        source=str(state.get("source") or "rainforest"),
+                    )
+                    updates["amazon_collection"] = amazon
+                    updates["mod_keyword"] = str(amazon.get("keyword") or keyword)
+                    meta["amazon"] = {
+                        k: amazon.get(k) for k in
+                        ("keyword", "n_products", "credits", "price_range", "rating_avg",
+                         "reviews_count", "zone_counts", "top_asins", "fetched_at", "source")
+                        if k in amazon
+                    }
+                except Exception as exc:  # noqa: BLE001 —— 采集失败降级纯网络源，矩阵节点回退自采
+                    logger.warning("[source_gathering] 亚马逊采集失败（矩阵节点将回退自采）: %s", exc)
+                    meta["amazon"] = {"error": str(exc)[:200]}
+        return updates
 
     @staticmethod
     def _approved_sources(state: dict) -> list[dict]:
@@ -348,12 +393,16 @@ class ProductResearchGraph:
         from agent_platform.harness.enforce_coverage import (
             enrich_coverage,
             enforce_coverage,
+            enforce_mod_pages,
         )
+        from agent_platform.harness.evidence_pack import build_mod_data_pack
 
         document = self._build_document(state)
         presentation = enforce_coverage(presentation, document)
         # 内容充实层：确定性补全描述/细节（不依赖 LLM 波动）
         presentation = enrich_coverage(presentation, document)
+        # MOD 章节保底：有真实矩阵数据而 LLM 页面不足时按蓝图确定性追加
+        presentation = enforce_mod_pages(presentation, build_mod_data_pack(state))
         # CyberPPT 风格锁定：未显式选主题时确定性分配 8 套咨询风之一
         from agent_platform.harness.enforce_coverage import ensure_consulting_theme
 

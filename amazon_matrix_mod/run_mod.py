@@ -54,10 +54,12 @@ def _load_reuse(paths: list[str]) -> tuple[list[dict], dict]:
        search_raw.json + reviews/{ASIN}.json 全套复用（0 credit 回放）
     2. 单文件（P1 存档 JSON 的 parsed 数组，兼容旧行为）
 
-    返回 (rows, extra)，extra={products_raw, search_raw, reviews_raw}。
+    返回 (rows, extra)，extra={products_raw, search_raw, reviews_raw, pre_derived}。
+    pre_derived=True 表示 rows 来自统一采集层的 rows.json（已派生指标，可直接进分区）。
     """
     rows: list[dict] = []
-    extra: dict = {"products_raw": {}, "search_raw": None, "reviews_raw": {}}
+    extra: dict = {"products_raw": {}, "search_raw": None, "reviews_raw": {},
+                   "pre_derived": False}
     for pattern in paths:
         for path in (glob.glob(pattern) if "*" in pattern else [pattern]):
             if os.path.isdir(path):
@@ -78,11 +80,156 @@ def _load_reuse(paths: list[str]) -> tuple[list[dict], dict]:
                     if rv.get("reviews"):
                         extra["reviews_raw"][rv.get("asin") or
                                              os.path.basename(rf)[:-5]] = rv["reviews"]
+                # 归一化行存档优先（统一采集层 rows.json：mock 等无 raw 源也可 0-credit 回放）
+                saved_rows = storage.load_rows(path)
+                if saved_rows:
+                    rows = saved_rows
+                    extra["pre_derived"] = True
             else:
                 with open(path, encoding="utf-8") as f:
                     saved = json.load(f)
                 rows.extend(saved.get("parsed") or [])
     return rows, extra
+
+
+def _read_archived_meta(data_dir: str) -> dict:
+    """读取归档 manifest（回放/续跑时还原真实 fetched_at 与 credits，保数据溯源）。"""
+    mf = os.path.join(data_dir, "manifest.json")
+    if os.path.isfile(mf):
+        try:
+            with open(mf, encoding="utf-8") as f:
+                return json.load(f)
+        except Exception:  # noqa: BLE001 —— manifest 损坏不影响主流程
+            return {}
+    return {}
+
+
+def collect_amazon_data(keyword: str, top_n: int = 20, marketplace: str = "amazon.com",
+                        source: str = "rainforest", out_dir: str | None = None,
+                        product_id: str | None = None, sort_by: str | None = None,
+                        exclude_sponsored: bool = True, reviews_top_n: int = 3,
+                        reviews_pages: int = 2, progress=None) -> tuple[dict, dict]:
+    """统一采集入口（B/C 共享数据层）：fetch + 评论分页 + data/ 全量归档。
+
+    供 Studio source_gathering 节点调用（与 Tavily 网络检索同阶段完成亚马逊采集）；
+    后续 run_pipeline(reuse=[data_dir]) 以 0 credit 回放本函数归档的数据，
+    两条分支（市场研究 / 竞品矩阵）共用同一份原始数据。
+
+    Returns:
+        (summary, payload)
+        summary —— 轻量摘要（gate 展示 / state["amazon_collection"]）：
+            keyword/marketplace/source/n_products/credits/fetched_at/price_range/
+            rating_avg/reviews_count/zone_counts/top_asins/data_dir
+        payload —— run_pipeline 直接消费的重负载（rows 已派生指标）：
+            rows/products_raw/search_raw/reviews_raw/credits/fetched_at/out_dir
+    """
+    fetched_at = _utcnow()
+    products_raw: dict[str, dict] = {}
+    reviews_raw: dict[str, list[dict]] = {}
+    search_raw = None
+
+    if out_dir is None:
+        if product_id:
+            out_dir = os.path.join(OUT_DIR_DEFAULT, "studio_assets",
+                                   product_id, "competitor_matrix")
+        else:
+            ts = time.strftime("%Y%m%d_%H%M%S")
+            out_dir = os.path.join(OUT_DIR_DEFAULT, f"mod_{keyword.replace(' ', '_')}_{ts}")
+    os.makedirs(out_dir, exist_ok=True)
+    data_dir = storage.task_data_dir(out_dir)
+
+    # 1. fetch（search_raw 在采集内捕获，不重复请求）
+    if source == "rainforest":
+        rows: list[dict] = []
+        fetch_meta: dict = {}
+        for row, raw in _iter_products(keyword, top_n, sort_by, exclude_sponsored,
+                                       None, progress, meta=fetch_meta):
+            rows.append(row)
+            products_raw[row["asin"]] = raw
+        search_raw = fetch_meta.get("search_raw") or None
+        credits = 1 + len(rows)  # search 1 + product N（实测口径）
+    else:
+        fetcher = get_fetcher(source)
+        rows = fetcher(keyword, limit=top_n, sort_by=sort_by,
+                       exclude_sponsored=exclude_sponsored, progress=progress)
+        credits = 1 + len(rows)
+    if not rows:
+        raise RuntimeError(f"未获取到任何竞品数据（keyword={keyword}, source={source}）")
+    print(f"[采集] {source} 获取 {len(rows)} 个竞品（credits≈{credits}）")
+
+    # 2. 派生指标（评论选择与摘要需要月销/分区；run_pipeline 回放时不再重复派生）
+    metric_rows = [derive_metrics(r) for r in rows]
+
+    # 3. 评论分页（Top 销量 ASIN；rainforest 限定）
+    if source == "rainforest" and reviews_pages > 0:
+        top_asins = [r["asin"] for r in
+                     sorted(metric_rows, key=lambda r: -(r.get("est_monthly_sales") or 0))[:reviews_top_n]]
+        for asin in top_asins:
+            try:
+                rv = fetch_reviews(asin, pages=reviews_pages)
+                if rv:
+                    reviews_raw[asin] = rv
+                    print(f"[评论] {asin} {len(rv)} 条（{reviews_pages} 页）")
+            except Exception as exc:  # noqa: BLE001
+                print(f"[评论] {asin} 失败: {str(exc)[:80]}")
+
+    # 4. 归档（manifest/search_raw/products/reviews/主图缓存；宽表由 run_pipeline 补齐）
+    storage.save_manifest(data_dir, {
+        "keyword": keyword, "marketplace": marketplace, "our_asin": None,
+        "source": source, "top_n": len(rows), "credits": credits,
+        "fetched_at": fetched_at, "reviews_top_n": reviews_top_n,
+        "reviews_pages": reviews_pages, "reuse": False,
+    })
+    storage.save_search_raw(data_dir, search_raw)
+    for row in rows:
+        if row["asin"] in products_raw:
+            storage.save_product_raw(data_dir, row["asin"], products_raw[row["asin"]])
+        storage.cache_image(data_dir, row["asin"], row.get("main_image_url"))
+    for asin, rv in reviews_raw.items():
+        storage.save_reviews_raw(data_dir, asin, rv)
+    storage.save_rows(data_dir, _to_native(metric_rows))
+    # 5. 摘要（分区仅用于展示统计；run_pipeline 会正式重算并落盘 zoning.json）
+    zone_counts: dict = {}
+    try:
+        sdf = zoning.classify_zones(pd.DataFrame(metric_rows))
+        zone_counts = {str(k): int(v) for k, v in sdf["zone"].value_counts().items()}
+    except Exception:  # noqa: BLE001 —— 分区失败不影响采集归档
+        pass
+
+    def _num(v):
+        if v is None or (isinstance(v, float) and v != v):
+            return None
+        return round(float(v), 2) if isinstance(v, float) else v
+
+    prices = [r.get("current_price") for r in metric_rows if r.get("current_price")]
+    ratings = [r.get("rating") for r in metric_rows if r.get("rating")]
+    top_rows = sorted(metric_rows, key=lambda r: -(r.get("est_monthly_sales") or 0))[:8]
+    top_asins_summary = [{
+        "asin": r.get("asin"), "title": (r.get("title") or "")[:80],
+        "brand": r.get("brand"), "current_price": _num(r.get("current_price")),
+        "rating": _num(r.get("rating")), "review_count": r.get("review_count"),
+        "est_monthly_sales": r.get("est_monthly_sales"), "bsr": r.get("bsr"),
+        "is_fba": bool(r.get("is_fba")), "seller_type": r.get("seller_type"),
+        "zone": r.get("zone") or "neutral", "main_image_url": r.get("main_image_url"),
+    } for r in top_rows]
+    summary = _to_native({
+        "keyword": keyword, "marketplace": marketplace, "source": source,
+        "n_products": len(rows), "credits": credits, "fetched_at": fetched_at,
+        "price_range": {"min": _num(min(prices)) if prices else None,
+                         "max": _num(max(prices)) if prices else None,
+                         "avg": _num(sum(prices) / len(prices)) if prices else None},
+        "rating_avg": _num(sum(ratings) / len(ratings)) if ratings else None,
+        "reviews_count": sum(len(rv) for rv in reviews_raw.values()),
+        "zone_counts": zone_counts,
+        "top_asins": top_asins_summary,
+        "data_dir": data_dir, "out_dir": out_dir,
+    })
+    payload = {"rows": metric_rows, "products_raw": products_raw, "search_raw": search_raw,
+               "reviews_raw": reviews_raw, "credits": credits,
+               "fetched_at": fetched_at, "out_dir": out_dir}
+    print(f"[采集] 统一采集完成：{len(rows)} 竞品 / {summary['reviews_count']} 条评论 "
+          f"/ credits={credits} → {data_dir}")
+    return summary, payload
 
 
 def run_pipeline(keyword: str, top_n: int = 50, our_asin: str | None = None,
@@ -105,37 +252,55 @@ def run_pipeline(keyword: str, top_n: int = 50, our_asin: str | None = None,
     products_raw: dict[str, dict] = {}
     reviews_raw: dict[str, list[dict]] = {}
 
-    # 1. 采集（全量原始数据落盘；search_raw 在采集内捕获，不重复请求）
+    # 0. 输出目录（统一采集与回放共用同一目录解析）
+    if out_dir is None:
+        if product_id:
+            out_dir = os.path.join(OUT_DIR_DEFAULT, "studio_assets",
+                                   product_id, "competitor_matrix")
+        else:
+            ts = time.strftime("%Y%m%d_%H%M%S")
+            out_dir = os.path.join(OUT_DIR_DEFAULT, f"mod_{keyword.replace(' ', '_')}_{ts}")
+    os.makedirs(out_dir, exist_ok=True)
+    data_dir = storage.task_data_dir(out_dir)
+
+    # 1. 采集：统一入口 collect_amazon_data（B/C 共享数据层）或存档回放（0 credit）
+    from_collect = False
+    rows_pre_derived = False
     if reuse:
         rows, reuse_extra = _load_reuse(reuse)
         products_raw.update(reuse_extra["products_raw"])
         search_raw = reuse_extra["search_raw"]
         reviews_raw.update(reuse_extra["reviews_raw"])
+        rows_pre_derived = bool(reuse_extra.get("pre_derived"))
         credits = None
         print(f"[采集] 复用存档 {len(rows)} 行（products={len(products_raw)} "
-              f"reviews={len(reviews_raw)} search_raw={'✓' if search_raw else '✗'}）")
+              f"reviews={len(reviews_raw)} search_raw={'✓' if search_raw else '✗'}"
+              f"{' ·rows.json' if rows_pre_derived else ''}）")
     else:
-        fetcher = get_fetcher(source)
-        if source == "rainforest":
-            candidates, rows = [], []
-            fetch_meta: dict = {}
-            for row, raw in _iter_products(keyword, top_n, sort_by, exclude_sponsored,
-                                           None, progress, meta=fetch_meta):
-                rows.append(row)
-                products_raw[row["asin"]] = raw
-            search_raw = fetch_meta.get("search_raw") or None
-            credits = 1 + len(rows)  # search 1 + product N（实测口径）
-            print(f"[采集] {source} 获取 {len(rows)} 个竞品（credits≈{credits}）")
-        else:
-            rows = fetcher(keyword, limit=top_n, sort_by=sort_by,
-                           exclude_sponsored=exclude_sponsored, progress=progress)
-            credits = 1 + len(rows)
-            print(f"[采集] {source} 获取 {len(rows)} 个竞品（credits≈{credits}）")
+        _summary, payload = collect_amazon_data(
+            keyword=keyword, top_n=top_n, marketplace=marketplace, source=source,
+            out_dir=out_dir, sort_by=sort_by, exclude_sponsored=exclude_sponsored,
+            reviews_top_n=reviews_top_n, reviews_pages=reviews_pages, progress=progress)
+        rows = payload["rows"]
+        products_raw = payload["products_raw"]
+        search_raw = payload["search_raw"]
+        reviews_raw = payload["reviews_raw"]
+        credits = payload["credits"]
+        fetched_at = payload["fetched_at"]
+        from_collect = True
     if not rows:
         raise RuntimeError("未获取到任何竞品数据")
 
-    # 2. 派生指标
-    rows = [derive_metrics(r) for r in rows]
+    # 回放/续跑溯源：归档 manifest 还原真实采集时间与 credits（引用口径一致）
+    archived = _read_archived_meta(data_dir)
+    if archived:
+        fetched_at = archived.get("fetched_at") or fetched_at
+        if credits is None:
+            credits = archived.get("credits")
+
+    # 2. 派生指标（collect 路径与 rows.json 回放均已派生）
+    if not from_collect and not rows_pre_derived:
+        rows = [derive_metrics(r) for r in rows]
 
     # 3. 分区
     df = pd.DataFrame(rows)
@@ -144,8 +309,8 @@ def run_pipeline(keyword: str, top_n: int = 50, our_asin: str | None = None,
     summary = zoning.zone_summary(df)
     print(f"[分区] {summary}")
 
-    # 4. 评论分页（第 7 章素材，默认 Top3 × 2 页 = 6 credits 控制）
-    if source == "rainforest" and not reuse and reviews_pages > 0:
+    # 4. 评论分页（第 7 章素材，默认 Top3 × 2 页 = 6 credits 控制；collect 已采则跳过）
+    if source == "rainforest" and not reuse and not from_collect and reviews_pages > 0:
         top_asins = [r["asin"] for r in
                      sorted(rows, key=lambda r: -(r.get("est_monthly_sales") or 0))[:reviews_top_n]]
         for asin in top_asins:
@@ -157,29 +322,21 @@ def run_pipeline(keyword: str, top_n: int = 50, our_asin: str | None = None,
             except Exception as exc:  # noqa: BLE001
                 print(f"[评论] {asin} 失败: {str(exc)[:80]}")
 
-    # 4b. 数据资产化落盘（data/）
-    if out_dir is None:
-        if product_id:
-            out_dir = os.path.join(OUT_DIR_DEFAULT, "studio_assets",
-                                   product_id, "competitor_matrix")
-        else:
-            ts = time.strftime("%Y%m%d_%H%M%S")
-            out_dir = os.path.join(OUT_DIR_DEFAULT, f"mod_{keyword.replace(' ', '_')}_{ts}")
-    os.makedirs(out_dir, exist_ok=True)
-    data_dir = storage.task_data_dir(out_dir)
+    # 4b. 数据资产化落盘（data/；collect 已归档原始层，此处补 manifest/宽表）
     storage.save_manifest(data_dir, {
         "keyword": keyword, "marketplace": marketplace, "our_asin": our_asin,
         "source": source, "top_n": len(rows), "credits": credits,
         "fetched_at": fetched_at, "reviews_top_n": reviews_top_n,
         "reviews_pages": reviews_pages, "reuse": bool(reuse),
     })
-    storage.save_search_raw(data_dir, search_raw)
-    for row in rows:
-        if row["asin"] in products_raw:
-            storage.save_product_raw(data_dir, row["asin"], products_raw[row["asin"]])
-        storage.cache_image(data_dir, row["asin"], row.get("main_image_url"))
-    for asin, rv in reviews_raw.items():
-        storage.save_reviews_raw(data_dir, asin, rv)
+    if not from_collect:
+        storage.save_search_raw(data_dir, search_raw)
+        for row in rows:
+            if row["asin"] in products_raw:
+                storage.save_product_raw(data_dir, row["asin"], products_raw[row["asin"]])
+            storage.cache_image(data_dir, row["asin"], row.get("main_image_url"))
+        for asin, rv in reviews_raw.items():
+            storage.save_reviews_raw(data_dir, asin, rv)
     parquet_path, csv_path = storage.save_wide_table(data_dir, df)
     print(f"[存储] data/ 已落盘（{len(rows)} ASIN 全量原始 + 宽表 + 主图缓存）")
 
@@ -199,6 +356,21 @@ def run_pipeline(keyword: str, top_n: int = 50, our_asin: str | None = None,
                                       image_cache_dir=data_dir)
     matrix_png = _rasterize_best_effort(matrix_svg)
     print(f"[产物] {matrix_svg}" + (f"\n[产物] {matrix_png}" if matrix_png else ""))
+
+    # 6b. MOD 组件库（主 deck 竞品矩阵章节的确定性图表资产，B/C 共享）
+    mod_charts: dict = {}
+    try:
+        from amazon_matrix_mod.svgcharts.mod_components import render_mod_charts
+        theme = None
+        if theme_id:
+            from amazon_matrix_mod.deck.themes import Theme as _DeckTheme
+            theme = _DeckTheme(theme_id)
+        mod_charts = render_mod_charts(
+            out_dir, df, keyword=keyword, marketplace=marketplace,
+            fetched_at=fetched_at, our_asin=our_asin, theme=theme,
+            interpretation=interpretation, rules=rules)
+    except Exception as exc:  # noqa: BLE001 —— 组件失败不阻塞主管线
+        print(f"[charts] MOD 组件库渲染失败（跳过）: {str(exc)[:120]}")
 
     # 7. CSV / MD / JSON
     csv_path = os.path.join(out_dir, "data.csv")
@@ -253,6 +425,8 @@ def run_pipeline(keyword: str, top_n: int = 50, our_asin: str | None = None,
         "matrix_chart": _rel(base_rel, out_dir, matrix_svg),
         "zoning": _rel(base_rel, out_dir, os.path.join(out_dir, "zoning.json")),
     }
+    if mod_charts:
+        artifacts["charts"] = _rel(base_rel, out_dir, os.path.join(out_dir, "charts"))
     if matrix_png:
         artifacts["matrix_chart_png"] = _rel(base_rel, out_dir, matrix_png)
     result = {
@@ -262,6 +436,7 @@ def run_pipeline(keyword: str, top_n: int = 50, our_asin: str | None = None,
         "products": products,
         "zoning_rules": rules,
         "llm_interpretation": interpretation,
+        "mod_charts": mod_charts,
         "artifacts_paths": artifacts,
         "fetched_at": fetched_at,
         "cost_estimate": {
@@ -387,47 +562,6 @@ def _to_markdown(df, interpretation, rules, keyword, marketplace,
     return "\n".join(out).strip() + "\n"
 
 
-def _persist_deck_ctx(out_dir: str, ctx: dict, deck_result: dict) -> None:
-    """持久化 deck 渲染输入（双管线合并时 PptDesignAgent 用主 deck 主题重渲染）。
-
-    df/products_raw/search_raw 全量入 JSON（真实数据，不压缩），visuals 存
-    相对 out_dir 路径，image_cache_dir 同理；合并侧用绝对路径还原。
-    """
-    import json as _json
-
-    rel = lambda p: (os.path.relpath(p, out_dir) if p and os.path.isabs(p) else p)
-
-    payload = {
-        "df": ctx["df"].to_dict("records"),
-        "interpretation": ctx.get("interpretation") or {},
-        "rules": {k: (dict(v) if isinstance(v, dict) else v)
-                  for k, v in (ctx.get("rules") or {}).items()},
-        "chapters": [{"num": c.get("num"), "title": c.get("title"),
-                      "conclusion": c.get("conclusion") or []}
-                     for c in (ctx.get("chapters") or [])],
-        "exec_summary": ctx.get("exec_summary") or "",
-        "m3_insights": ctx.get("m3_insights") or {},
-        "visuals": {
-            "background": rel((ctx.get("visuals") or {}).get("background")),
-            "cover": rel((ctx.get("visuals") or {}).get("cover")),
-            "zones": {k: rel(v) for k, v in
-                      ((ctx.get("visuals") or {}).get("zones") or {}).items()},
-        },
-        "keyword": ctx.get("keyword"), "marketplace": ctx.get("marketplace"),
-        "fetched_at": ctx.get("fetched_at"), "credits": ctx.get("credits"),
-        "our_asin": ctx.get("our_asin"),
-        "image_cache_dir": rel(ctx.get("image_cache_dir")),
-        "search_raw": ctx.get("search_raw"),
-        "products_raw": ctx.get("products_raw") or {},
-        "theme_id": (ctx.get("theme").id if ctx.get("theme") else None),
-        "pages": deck_result.get("pages") or [],
-    }
-    path = os.path.join(out_dir, "ppt", "deck_ctx.json")
-    os.makedirs(os.path.dirname(path), exist_ok=True)
-    with open(path, "w", encoding="utf-8") as f:
-        _json.dump(payload, f, ensure_ascii=False, default=str)
-
-
 def _reuse_visuals(visuals_dir: str) -> dict | None:
     """visuals/ 已有完整产物（background+cover）时复用，避免重复消耗生图额度。"""
     import glob as _glob
@@ -456,11 +590,13 @@ def _enhance_full(out_dir: str, df: pd.DataFrame, products_raw: dict,
                   credits: int | None, with_visuals: bool,
                   matrix_svg: str, matrix_png: str | None,
                   theme_id: str | None = None) -> dict:
-    """完整 MOD 增强（--full）：14 章 + M3 洞察 + image-01 视觉 + PPT 构建。"""
+    """完整 MOD 增强（--full）：14 章 + M3 洞察 + image-01 视觉。
+
+    PPT 构建已退役（主 deck MOD 章节 + 独立 pptx 由 ppt_design 单一制作双产出）。
+    """
     from amazon_matrix_mod import m3_client
     from amazon_matrix_mod.chapters import render_all, render_full_md
     from amazon_matrix_mod.gen_visual import generate_visuals
-    from amazon_matrix_mod.deck.themes import Theme
 
     data_dir = storage.task_data_dir(out_dir)
     chapters_dir = os.path.join(out_dir, "chapters")
@@ -538,29 +674,11 @@ def _enhance_full(out_dir: str, df: pd.DataFrame, products_raw: dict,
             ch1["md"] = "## 1. 执行摘要\n\n" + exec_summary + "\n"
         print("[摘要] 执行摘要生成")
 
-    # 6. PPT 构建（ppt-master svg_to_pptx + M3 审图回环；失败降级 md+SVG）
+    # 6. PPT 构建：已退役薄渲染路径（deck/pages.py）——
+    # 主 deck 的 MOD 章节由 ppt_design 同源制作，独立 competitor_matrix.pptx
+    # 由 PptDesignAgent._export_mod_standalone 双产出导出（单一制作，风格一致）。
     deck_result: dict = {}
     pptx_path: str | None = None
-    try:
-        from amazon_matrix_mod.deck import build as deck_build
-        from amazon_matrix_mod.deck import audit as deck_audit
-        ctx = {
-            "df": df, "interpretation": interpretation, "rules": rules,
-            "chapters": chapters, "exec_summary": exec_summary,
-            "m3_insights": m3_insights, "visuals": visuals,
-            "keyword": keyword, "marketplace": marketplace,
-            "fetched_at": fetched_at, "credits": credits, "our_asin": our_asin,
-            "image_cache_dir": data_dir, "search_raw": search_raw,
-            "products_raw": products_raw,
-            "theme": Theme(theme_id) if theme_id else Theme("cyber-ivory-navy"),
-        }
-        deck_result = deck_build.build_deck(
-            out_dir, ctx, audit_hook=deck_audit.audit_deck)
-        pptx_path = deck_result.get("pptx")
-        print(f"[PPT] {len(deck_result.get('pages') or [])} 页 → {pptx_path}")
-        _persist_deck_ctx(out_dir, ctx, deck_result)
-    except Exception as exc:  # noqa: BLE001 —— PPT 失败降级：md + SVG 仍完整
-        print(f"[PPT] 构建失败（降级为 md+SVG）: {str(exc)[:160]}")
 
     # 7. 完整 14 章 md
     full_md = render_full_md(chapters, keyword, marketplace, fetched_at)

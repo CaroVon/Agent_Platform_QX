@@ -41,6 +41,8 @@ class Competitor(BaseModel):
 class MarketResearch(BaseModel):
     """Research Agent 的市场研究输出。"""
 
+    # 主关键词（默认回填统一采集层的关键词，供竞品矩阵/PPT 引用保持一致）
+    keyword: str = Field(default="", description="主关键词（与亚马逊采集口径一致）")
     market_size: MarketSize
     competitors: list[Competitor] = Field(default_factory=list)
     customer_pain_points: list[str] = Field(default_factory=list, description="用户痛点")
@@ -118,5 +120,7 @@ class PriceCompetitorMatrix(BaseModel):
     zoning_rules: dict[str, dict[str, Any]] = Field(default_factory=dict)
     llm_interpretation: dict[str, str] = Field(default_factory=dict)
     artifacts_paths: dict[str, str] = Field(default_factory=dict)
+    # MOD 确定性图表索引（B/C 合并：ppt_design 图表资产同步用；无则为空）
+    mod_charts: dict[str, dict[str, Any]] = Field(default_factory=dict)
     fetched_at: str = ""
     cost_estimate: dict[str, Any] = Field(default_factory=dict)

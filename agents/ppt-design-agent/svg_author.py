@@ -25,6 +25,8 @@ _SKILL_RULES = """## 硬性规则（必须遵守）
 - 页面设计闭合：页面上所有可见内容（标题/结论/数字/清单/图表/装饰）都必须出现在 SVG 内
 - 禁止使用：<style>、class 属性、外部 CSS、<foreignObject>、<textPath>、@font-face、<animate*>/<set>/<script>、<iframe>、mask
 - 文字必须使用给出的字体栈；中文文本必须手动换行（每行 ≤ 约 40 个全角字符）
+- **insight/标题全文必须完整出现在同一个 <text> 元素内**（禁止拆分到多个 <tspan>，
+  否则校验按连续子串匹配失败将触发重试）
 - <text>/<tspan> 只允许属性：x/y/fill/font-family/font-size/font-weight/font-style/letter-spacing/text-anchor/transform/opacity；**禁止 dx、dy、style、dominant-baseline、text-align、line-height 等任何其他属性**（导出转换会拒绝）
 - 所有元素必须位于画布内（y+高度 ≤ 700，x+宽度 ≤ 1280），禁止溢出
 - 颜色只能使用给出的 palette 六色（可加 10-15% 透明度的同色变体）
@@ -32,6 +34,63 @@ _SKILL_RULES = """## 硬性规则（必须遵守）
 - 矩阵/象限图：**纯 SVG 散点**（竞争者为浅灰色 #94A3B8 圆点，本产品为主色圆点）+ 虚线中轴 + 轴名；**禁止为象限/散点使用 data-pptx-replace-with 原生标记**（转换器不支持 scatter 数据标签）
 - 柱/折线/饼图的原生标记中 data_labels 必须为 true 之外不要加 label 相关配置
 - filter 只能直接用于 rect/circle/image/path/text；禁止在 <g> 或 style 中使用 filter"""
+
+
+# ─────────────────────────────────────────────────────────────────
+# MOD 章节页型提示（视觉质量对齐 svg_final 基线 + ppt temp 技法入题自适应）
+# 技法来源：swiss_grid（细线网格/大字排版/mono 元数据）、glassmorphism（玻璃卡）、
+# global_ai_capital（货币级数字 KPI）、sugar_rush_memphis（编号卡片阵列）、
+# pritzker（图片带+安静题注）；色板纪律始终遵循主 deck 锁定主题。
+# ─────────────────────────────────────────────────────────────────
+_MOD_PAGE_HINTS: dict[str, str] = {
+    "mod_overview": (
+        "\n## 视觉强调：本页是 **MOD 市场总览**（真实亚马逊数据）——\n"
+        "- 页面必须有一个**大字排版锚点**（40-80px：均价 ASP 或样本量数字，"
+        "主色加粗，配 20px tspan 单位），如货币报告的巨型数字\n"
+        "- KPI 用货币级数字卡阵列（3px accent 顶条 + 大数值 + 小标签 ls=2）\n"
+        "- 环形份额图/价格带图表以配图呈现时，左侧放 KPI 列、右侧放大图\n"
+        "- 0.5px 瑞士细线分隔（muted 30% 透明度）+ mono 风格元数据标签\n"
+        "- 底部必带引用脚注：*Rainforest data…（10px muted）\n"
+    ),
+    "mod_matrix": (
+        "\n## 视觉强调：本页是 **MOD 价格×月销矩阵**（真实数据）——\n"
+        "- 配图（带竞品主图缩略图的价格×月销矩阵图）大尺寸呈现（≥900px 宽），"
+        "缩略图=竞品主图、边框色=分区、尺寸∝评论数；旁边一列分区图例卡："
+        "分区名 + 计数 + 一句话解读（玻璃卡：fill 白 18% 透明 + 细描边）\n"
+        "- P25-P75 主流价格带用 accent 色带 + 大号数字标注（$xx–$xx）\n"
+        "- 头部竞品以 [A1][A2] 编号徽标列表（编号圆片 + 名称 + $价格 + 月销）\n"
+        "- 每个数字可溯源（ASIN/脚注）；底部引用脚注必带\n"
+    ),
+    "mod_hero_teardown": (
+        "\n## 视觉强调：本页是 **MOD 单品拆解**（解剖式，参考产品提案 deck）——\n"
+        "- 左侧：hero 产品区（主图缩略 or 大标题 + ASIN 徽标 + 品类 mono 标签）\n"
+        "- 右侧：**解剖式特性清单**——按维度分组（核心参数/卖点/配送/评论信号），"
+        "每组一个玻璃卡 + 维度名眉标（11px ls=2 uppercase）\n"
+        "- 商业块（价格/评分/销量/BSR）用 2×2 货币级数字格\n"
+        "- 评论原文引用用引号卡（accent 左边条 + 斜体引文）\n"
+        "- 底部引用脚注必带\n"
+    ),
+    "mod_spec_comparison": (
+        "\n## 视觉强调：本页是 **MOD 参数对比矩阵**（真实数据表）——\n"
+        "- 表格：主色表头白字 + 斑马纹行 + 0.5px 细线；**优势格高亮**"
+        "（primary 10% 底 + 主色加粗数字）\n"
+        "- 列头可带品牌名 + ASIN mono 小字；行分组眉标（价格/口碑/销量/渠道）\n"
+        "- 最优价格与最优评分两行整行高亮 + 图例说明\n"
+        "- 底部引用脚注 + 「优势高亮=最优价格/评分」说明\n"
+    ),
+    "mod_sku_analysis": (
+        "\n## 视觉强调：本页是 **MOD SKU 与渠道结构**（真实数据）——\n"
+        "- 左：FBA/自发货比例条（大号百分比数字锚点）+ 卖家类型分布横条\n"
+        "- 右：分区×渠道交叉卡片阵列（编号卡片 01-04：分区名 + 计数 + 均价/月销中位）\n"
+        "- 0.5px 细线网格 + mono 元数据；底部引用脚注必带\n"
+    ),
+    "mod_actions": (
+        "\n## 视觉强调：本页是 **MOD 行动建议**（owner 制）——\n"
+        "- 编号行动卡阵列（01-04 Memphis 风：编号大字 + owner 标签胶囊 + 一句话行动）\n"
+        "- 每卡 accent 左边条；数据依据（[A编号]）以小字内嵌\n"
+        "- 顶部 verdict 大字锚点（四区解读总定位）\n"
+    ),
+}
 
 
 def _trim_data(data: dict, max_text: int = 180, max_items: int = 8) -> dict:
@@ -135,6 +194,8 @@ def build_page_prompt(
         page_kind_hint = (
             "\n## 视觉强调：本页是**功能优先级**页——核心功能卡片 + feature.png 特写\n"
         )
+    elif page_type.startswith("mod_"):
+        page_kind_hint = _MOD_PAGE_HINTS.get(page_type, "")
 
     return f"""你是资深咨询风演示 SVG 设计师（ppt-master Executor）。根据页面数据与视觉体系，逐页手写高质量 SVG 页面。
 
@@ -401,6 +462,33 @@ _IMAGE_LAYOUTS: dict[str, list[dict]] = {
          "preserveAspectRatio": "xMidYMid slice",
          "name": "competitor-visual", "role": "decoration"},
     ],
+    # ── MOD 章节：确定性图表大图呈现（真实数据页，图表即主角） ──
+    "mod_matrix": [
+        {"x": 60, "y": 150, "w": 1160, "h": 470, "opacity": 0.96,
+         "preserveAspectRatio": "xMidYMid meet",
+         "name": "mod-chart", "role": "background"},
+    ],
+    "mod_spec_comparison": [
+        {"x": 60, "y": 150, "w": 1160, "h": 470, "opacity": 0.96,
+         "preserveAspectRatio": "xMidYMid meet",
+         "name": "mod-chart", "role": "background"},
+    ],
+    "mod_sku_analysis": [
+        {"x": 60, "y": 160, "w": 560, "h": 440, "opacity": 0.95,
+         "preserveAspectRatio": "xMidYMid meet",
+         "name": "mod-chart", "role": "background"},
+    ],
+    "mod_overview": [
+        {"x": 640, "y": 150, "w": 580, "h": 440, "opacity": 0.95,
+         "preserveAspectRatio": "xMidYMid meet",
+         "name": "mod-chart", "role": "background"},
+    ],
+    "mod_hero_teardown": [
+        {"x": 60, "y": 150, "w": 360, "h": 460, "opacity": 0.92,
+         "preserveAspectRatio": "xMidYMid slice",
+         "name": "mod-hero", "role": "decoration"},
+    ],
+    "mod_actions": [],
     # 结论页：下半部分图
     "conclusion": [
         {"x": 940, "y": 320, "w": 300, "h": 200, "opacity": 0.85,

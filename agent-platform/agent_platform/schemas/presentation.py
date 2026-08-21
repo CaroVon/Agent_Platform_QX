@@ -45,6 +45,13 @@ PageType = Literal[
     "product_architecture",
     "roadmap",
     "conclusion",
+    # ── MOD 章节（亚马逊真实数据页，并入主 deck 计划）──
+    "mod_overview",        # 市场总览：品牌份额/ASP/KPI/价格带/四分区
+    "mod_matrix",          # 价格×月销矩阵散点
+    "mod_hero_teardown",   # 单品拆解（Top ASIN 解剖式：特性/评论/商业块）
+    "mod_spec_comparison", # 参数对比矩阵（hero 先列+优势高亮）
+    "mod_sku_analysis",    # SKU/变体与渠道结构
+    "mod_actions",         # 行动建议（owner 行动项）
 ]
 
 LayoutId = Literal[
@@ -174,13 +181,13 @@ LAYOUT_LIBRARY: dict[str, dict] = {
     },
     "market": {
         "name": "市场概览",
-        "page_types": ["market_overview"],
+        "page_types": ["market_overview", "mod_overview"],
         "grid": "标题 / insight / 左侧要点列表 + 右侧 chart 或 metric",
         "components": ["chart", "metric", "text", "table"],
     },
     "matrix": {
         "name": "竞品矩阵",
-        "page_types": ["competitor_matrix"],
+        "page_types": ["competitor_matrix", "mod_matrix", "mod_spec_comparison"],
         "grid": "标题 / 一句话结论 / 象限图 + 关键洞察双栏 / 底部来源",
         "components": ["matrix", "chart", "table", "card"],
     },
@@ -198,7 +205,7 @@ LAYOUT_LIBRARY: dict[str, dict] = {
     },
     "features": {
         "name": "功能优先级",
-        "page_types": ["feature_priority"],
+        "page_types": ["feature_priority", "mod_hero_teardown", "mod_sku_analysis", "mod_actions"],
         "grid": "标题 / P0-P2 分组矩阵（名称/说明/优先级）",
         "components": ["table", "card", "matrix"],
     },

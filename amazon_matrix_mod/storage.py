@@ -66,6 +66,27 @@ def save_reviews_raw(data_dir: str, asin: str, reviews: list[dict]) -> str | Non
     return path
 
 
+def save_rows(data_dir: str, rows: list[dict]) -> str:
+    """归一化行存档（统一采集回放层）：mock 等无 raw 的数据源也能 0-credit 回放。"""
+    path = os.path.join(data_dir, "rows.json")
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(rows, f, ensure_ascii=False, indent=1)
+    return path
+
+
+def load_rows(data_dir: str) -> list[dict] | None:
+    """读取归一化行存档（缺失返回 None，调用方回退 products/*.json 回放）。"""
+    path = os.path.join(data_dir, "rows.json")
+    if not os.path.isfile(path):
+        return None
+    try:
+        with open(path, encoding="utf-8") as f:
+            rows = json.load(f)
+        return rows if isinstance(rows, list) and rows else None
+    except (OSError, json.JSONDecodeError):
+        return None
+
+
 def save_wide_table(data_dir: str, df: pd.DataFrame) -> tuple[str | None, str]:
     """归一化宽表 → parquet（无引擎时跳过）+ csv。"""
     parquet_path = os.path.join(data_dir, "products.parquet")

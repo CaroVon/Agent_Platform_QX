@@ -230,3 +230,146 @@ def render_evidence_pack(pack: dict[str, Any]) -> str:
         "；".join(f"{k}:{lo}-{hi}" for k, (lo, hi) in budget.items())
     )
     return "\n".join(lines)
+
+
+# ══════════════════════════════════════════════════════════
+# MOD 数据包（B/C 合并：竞品矩阵真实数据 → 主 deck MOD 章节）
+# ══════════════════════════════════════════════════════════
+
+_MOD_PAGE_TYPES = (
+    "mod_overview", "mod_matrix", "mod_hero_teardown",
+    "mod_spec_comparison", "mod_sku_analysis", "mod_actions",
+)
+
+
+def _clip_block(text: str | None, limit: int) -> str:
+    s = (text or "").strip().replace("\n", " ")
+    return s if len(s) <= limit else s[: limit - 1] + "…"
+
+
+def _extract_review_quotes(md_text: str, limit: int = 6) -> list[str]:
+    """从 MOD 完整报告 md 中抽取评论原文引用（M3 聚类节，尽力而为）。"""
+    quotes: list[str] = []
+    for section in md_text.split("## "):
+        if "评论" not in section[:20] and "聚类" not in section[:30]:
+            continue
+        for line in section.splitlines():
+            line = line.strip().lstrip("-• ").strip()
+            if 12 <= len(line) <= 120 and ("\"" in line or "」" in line
+                                           or line.startswith(("痛点", "机会", "优势"))):
+                quotes.append(line[:120])
+                if len(quotes) >= limit:
+                    return quotes
+    return quotes
+
+
+def build_mod_data_pack(state: dict[str, Any]) -> dict[str, Any] | None:
+    """从工作流 state 构建 MOD 数据包（presentation 节点消费）。
+
+    数据源：state.competitor_matrix（MOD 节点产物）+ state.amazon_collection
+    （统一采集层摘要）。两者皆无 → None（无 MOD 章节）。
+    全部为真实采集数据；引用口径 footnote 统一携带。
+    """
+    import os
+
+    matrix = state.get("competitor_matrix") or {}
+    amazon = state.get("amazon_collection") or {}
+    products = matrix.get("products") or []
+    if not products and not amazon.get("n_products"):
+        return None
+
+    zone_counts: dict[str, int] = {}
+    for p in products:
+        z = str(p.get("zone") or "neutral")
+        zone_counts[z] = zone_counts.get(z, 0) + 1
+    full = matrix.get("full") or {}
+    charts = matrix.get("mod_charts") or {}
+    arts = matrix.get("artifacts_paths") or {}
+
+    # 图表资产 → OUTPUT_DIR 相对路径（ppt_design 复制进项目 images/）
+    base_dir = os.path.dirname(arts.get("markdown") or "") if arts.get("markdown") else ""
+    chart_assets = {}
+    for name, c in charts.items():
+        rel = c.get("png") or c.get("svg")
+        if rel:
+            chart_assets[name] = {
+                "title": c.get("title"),
+                "kind": c.get("kind"),
+                "path": os.path.join(base_dir, rel) if base_dir and not os.path.isabs(rel) else rel,
+            }
+
+    # 评论原文（尽力而为：读完整报告 md 的 M3 聚类节）
+    review_quotes: list[str] = []
+    md_path = arts.get("markdown")
+    if md_path and not os.path.isabs(md_path):
+        # studio 模式相对 OUTPUT_DIR；读取失败静默跳过
+        out_root = os.environ.get("OUTPUT_DIR") or os.environ.get("QX_OUTPUT_DIR") or "outputs"
+        md_path = os.path.join(out_root, md_path)
+    if md_path:
+        try:
+            with open(md_path, encoding="utf-8") as f:
+                review_quotes = _extract_review_quotes(f.read())
+        except OSError:
+            review_quotes = []
+
+    pr = amazon.get("price_range") or {}
+    top_products = sorted(products, key=lambda p: -(p.get("est_monthly_sales") or 0))[:8]
+    return {
+        "available": True,
+        "keyword": matrix.get("keyword") or amazon.get("keyword") or "",
+        "marketplace": matrix.get("marketplace") or amazon.get("marketplace") or "amazon.com",
+        "fetched_at": matrix.get("fetched_at") or amazon.get("fetched_at") or "",
+        "n_products": len(products) or amazon.get("n_products") or 0,
+        "credits": amazon.get("credits"),
+        "price_range": pr or {},
+        "rating_avg": amazon.get("rating_avg"),
+        "zoning_rules": matrix.get("zoning_rules") or {},
+        "interpretation": matrix.get("llm_interpretation") or {},
+        "zone_counts": zone_counts or amazon.get("zone_counts") or {},
+        "top_products": top_products,
+        "executive_summary": _clip_block(full.get("executive_summary"), 400),
+        "insights": (full.get("m3_insights") or {}).get("insights") or [],
+        "review_quotes": review_quotes,
+        "charts": chart_assets,
+        "citation": f"*Rainforest data, {matrix.get('marketplace') or amazon.get('marketplace') or 'amazon.com'}, "
+                    f"fetched {matrix.get('fetched_at') or amazon.get('fetched_at') or '—'}",
+    }
+
+
+def render_mod_data_pack(pack: dict[str, Any] | None) -> str:
+    """MOD 数据包 → 紧凑文本（注入 presentation prompt）。"""
+    if not pack or not pack.get("available"):
+        return ""
+    pr = pack.get("price_range") or {}
+    lines = [
+        f"【MOD 亚马逊真实数据包】主关键词：{pack.get('keyword')} ｜ 站点 {pack.get('marketplace')}"
+        f" ｜ 样本 {pack.get('n_products')} ASIN ｜ 抓取 {pack.get('fetched_at')}",
+        f"价格带：${pr.get('min')} – ${pr.get('max')}（均价 ${pr.get('avg')}）"
+        f" ｜ 平均评分 {pack.get('rating_avg')}",
+        f"分区分布：{pack.get('zone_counts')}",
+    ]
+    interp = pack.get("interpretation") or {}
+    if interp:
+        lines.append("四区解读：" + "；".join(
+            f"{k}={v}" for k, v in interp.items() if v))
+    if pack.get("executive_summary"):
+        lines.append(f"执行摘要：{pack['executive_summary']}")
+    if pack.get("insights"):
+        lines.append("M3 洞察：" + "；".join(str(i) for i in pack["insights"][:5]))
+    if pack.get("review_quotes"):
+        lines.append("评论原文（可直接引用）：")
+        lines.extend(f"- {q}" for q in pack["review_quotes"][:6])
+    lines.append("Top 竞品（引用标注 [A编号]）：")
+    for i, p in enumerate(pack.get("top_products") or [], 1):
+        lines.append(
+            f"[A{i}] {p.get('brand') or '—'} | {str(p.get('title') or '')[:52]} | "
+            f"${p.get('current_price')} | 评分 {p.get('rating')} | 评论 {p.get('review_count')} | "
+            f"月销≈{p.get('est_monthly_sales')} | BSR {p.get('bsr')} | "
+            f"{'FBA' if p.get('is_fba') else '自发货'} | {p.get('seller_type') or '—'} | "
+            f"分区 {p.get('zone')}"
+        )
+    if pack.get("charts"):
+        lines.append("确定性图表资产（kind → 已渲染，页面以图片组件呈现）：")
+        lines.extend(f"- {k}: {v.get('title')}（{v.get('kind')}）" for k, v in pack["charts"].items())
+    lines.append(f"引用脚注（每页数据必带）：{pack.get('citation')}")
+    return "\n".join(lines)

@@ -298,6 +298,40 @@ def _backfill_spec_lock(spec_lock_path: Path, svg_dir: Path, images_meta: dict |
 
 
 # ─────────────────────────────────────────────────────────────────
+# MOD 独立 deck 封面（确定性，主 deck 主题色板）
+# ─────────────────────────────────────────────────────────────────
+def _mod_standalone_cover_svg(keyword: str, marketplace: str, fetched_at: str,
+                              n_products: int, colors: dict) -> str:
+    """MOD 独立 PPTX 封面：与主 deck 同主题的确定性咨询风封面。"""
+    import html as _html
+
+    def esc(s: str) -> str:
+        return _html.escape(str(s or ""), quote=True)
+
+    bg = colors.get("bg", "#F7F6F0")
+    primary = colors.get("primary", "#12355B")
+    accent = colors.get("accent", "#3D6491")
+    text_c = colors.get("text", "#101820")
+    muted = colors.get("muted", "#6F7275")
+    return f"""<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="720" viewBox="0 0 1280 720">
+  <rect width="1280" height="720" fill="{bg}"/>
+  <rect x="0" y="0" width="1280" height="6" fill="{primary}"/>
+  <rect x="90" y="150" width="64" height="6" fill="{accent}"/>
+  <text x="90" y="130" font-size="13" letter-spacing="4" fill="{muted}" font-family="{_FONT}">AMAZON COMPETITOR MATRIX · MOD</text>
+  <text x="90" y="240" font-size="52" font-weight="bold" fill="{text_c}" font-family="{_FONT}">竞品矩阵（MOD）</text>
+  <text x="90" y="300" font-size="30" fill="{primary}" font-family="{_FONT}">{esc(keyword[:40])}</text>
+  <rect x="90" y="360" width="1100" height="1" fill="{accent}" opacity="0.4"/>
+  <text x="90" y="420" font-size="16" fill="{text_c}" font-family="{_FONT}">站点 {esc(marketplace)} ｜ 样本 {n_products} ASIN ｜ 抓取 {esc(fetched_at[:10])}</text>
+  <text x="90" y="450" font-size="13" fill="{muted}" font-family="{_FONT}">价格带 × 月销 四区分析 · 参数对比 · SKU 渠道 · 评论洞察</text>
+  <g data-pptx-bounds="90 600 1100 40">
+    <rect x="90" y="600" width="1100" height="1" fill="{muted}" opacity="0.35"/>
+    <text x="90" y="640" font-size="11" letter-spacing="2" fill="{muted}" font-family="{_FONT}">*Rainforest data · {esc(marketplace)}</text>
+    <text x="1190" y="640" font-size="11" letter-spacing="2" fill="{muted}" text-anchor="end" font-family="{_FONT}">QX Product Studio</text>
+  </g>
+</svg>"""
+
+
+# ─────────────────────────────────────────────────────────────────
 # 主 Agent 类
 # ─────────────────────────────────────────────────────────────────
 
@@ -307,6 +341,39 @@ class PptDesignAgent(BaseAgent):
     name = "ppt_design_agent"
     description = "PPT 设计制作（ppt-master 工作流：设计规范 → 多维生图 → 逐页 SVG → svg_to_pptx）"
     output_schema = None  # 输出为 dict（不绑定 Pydantic Schema）
+
+    def __init__(self, progress_callback=None):
+        """progress_callback（P5）：接收 {node, status, detail} 进度事件；
+        项目目录同步维护 progress.json 供前端 PPT 制作可视化面板轮询。"""
+        super().__init__()
+        self._progress_cb = progress_callback
+
+    def _emit(self, status: str, detail: str = "", **extra) -> None:
+        if self._progress_cb is None:
+            return
+        try:
+            self._progress_cb({"node": "ppt_design", "status": status,
+                               "detail": detail, **extra})
+        except Exception:  # noqa: BLE001 —— 进度事件失败不影响制作
+            pass
+
+    @staticmethod
+    def _write_progress(project_dir: Path, **fields) -> None:
+        """合并更新项目目录 progress.json（PPT 制作可视化数据源）。"""
+        import json as _json
+
+        path = project_dir / "progress.json"
+        data: dict = {}
+        try:
+            data = _json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            data = {}
+        data.update(fields)
+        data["updated_at"] = datetime.now(timezone.utc).isoformat()
+        try:
+            path.write_text(_json.dumps(data, ensure_ascii=False), encoding="utf-8")
+        except OSError:
+            pass
 
     def execute(
         self,
@@ -335,8 +402,10 @@ class PptDesignAgent(BaseAgent):
         idea = str(state.get("idea", ""))
         product_id = str(state.get("product_id") or idea)[:40]
 
-        # 输出目录：优先环境变量（backend .env 的 OUTPUT_DIR），缺省 ./outputs（worker cwd）
-        out_dir = Path(os.environ.get("OUTPUT_DIR", "./outputs")).resolve()
+        # 输出目录：OUTPUT_DIR > QX_OUTPUT_DIR（任务层桥接）> ./outputs（worker cwd）
+        out_dir = Path(os.environ.get("OUTPUT_DIR")
+                       or os.environ.get("QX_OUTPUT_DIR")
+                       or "./outputs").resolve()
         base = out_dir / "studio_assets" / "ppt_projects"
         ts = datetime.now().strftime("%Y%m%d_%H%M%S")
         project_dir = _get_reusable_project_dir(base, product_id)
@@ -349,7 +418,17 @@ class PptDesignAgent(BaseAgent):
         theme_name = str(theme.get("name", "咨询风"))
         accent_color = str((theme.get("palette") or {}).get("accent") or "#3D6491")
 
+        # ── 0) 制作进度初始化（P5：progress.json + 事件流） ──
+        total_pages = len(presentation.get("pages") or [])
+        self._write_progress(
+            project_dir, stage="spec", total=total_pages, done_pages=0,
+            per_page={}, critic_score=state.get("critic_score"),
+            revision_round=int(state.get("revision_count") or 0) + 1,
+            pptx_url=None)
+        self._emit("running", f"PPT 制作启动：{total_pages} 页规划")
+
         # ── 1) 设计规范 + spec_lock（占位） ─────────────────────
+        self._emit("running", "设计规范与 spec_lock 生成")
         spec = self._compose_design_spec(presentation, idea)
         lock = _build_spec_lock(presentation, idea)
         (project_dir / "设计规范与内容大纲.md").write_text(spec, encoding="utf-8")
@@ -364,6 +443,8 @@ class PptDesignAgent(BaseAgent):
         )
 
         # ── 3) 生图阶段：完整释放（hero/cover/architecture/design/scene + 每页配图） ──
+        self._write_progress(project_dir, stage="images")
+        self._emit("running", "配图生成（hero/架构/设计/场景）")
         images = self._generate_images_v2(
             project_dir=project_dir,
             presentation=presentation,
@@ -375,7 +456,16 @@ class PptDesignAgent(BaseAgent):
             image_plan_module=_image_plan,
         )
 
+        # ── 3b) MOD 章节图表资产同步（B/C 共享数据层 → 项目 images/） ──
+        # 确定性图表（品牌环形/矩阵散点/参数矩阵/SKU 结构/hero 主图）以图片
+        # 组件参与页面排版（_pick_page_image 按 mod_* 页型对位注入）
+        mod_assets = self._sync_mod_chart_assets(
+            project_dir=project_dir, state=state, out_dir=out_dir, images=images,
+        )
+
         # ── 4) 逐页 SVG（MiniMax 按 skill 创作 + 程序化注入图片/页脚/根属性） ──
+        self._write_progress(project_dir, stage="authoring")
+        self._emit("running", f"逐页 SVG 创作（{total_pages} 页，含质量门禁返工）")
         identity = _cross_page.DeckIdentity(
             product_name=idea[:32] or product_id[:32],
             product_code=ts[:6].replace("_", "."),  # YYYYMM
@@ -407,16 +497,9 @@ class PptDesignAgent(BaseAgent):
             logger.warning("spec_lock 反推失败: %s", exc)
             backfill = {"error": str(exc)}
 
-        # ── 5b) MOD 附录合并：主 deck 主题重渲染竞品矩阵页并续接页码 ──
-        mod_merge = self._merge_mod_appendix(
-            project_dir=project_dir,
-            state=state,
-            out_dir=out_dir,
-            main_files=files,
-            theme_id=str(theme.get("id") or ""),
-        )
-
         # ── 6) finalize + svg_to_pptx ───────────────────────────
+        self._write_progress(project_dir, stage="finalizing")
+        self._emit("running", "finalize + 转换 PPTX")
         python = sys.executable
         for script, args in (
             ("finalize_svg.py", [str(project_dir)]),
@@ -441,11 +524,22 @@ class PptDesignAgent(BaseAgent):
         if pptx_path is None:
             raise RuntimeError("svg_to_pptx 未产出 PPTX 文件")
 
+        # ── 6b) MOD 独立 PPTX 双产出：MOD 章节页 + 专用封面 → 独立导出 ──
+        # 单一制作双产出（与主 deck 同源数据/同主题/同 authoring 质量）
+        self._write_progress(project_dir, stage="mod_export")
+        self._emit("running", "MOD 独立 PPTX 导出")
+        mod_standalone = self._export_mod_standalone(
+            project_dir=project_dir, state=state, out_dir=out_dir, theme=theme,
+        )
+
         # ── 7) 模型记录 ────────────────────────────────────────
         try:
             model = get_presentation_llm_client().model if get_presentation_llm_client() else get_llm_client().model
         except Exception:
             model = "deterministic"
+
+        self._write_progress(project_dir, stage="done", pptx_url=str(pptx_path))
+        self._emit("completed", f"PPT 制作完成：{len(files)} 页 → {pptx_path.name}")
 
         return {
             "project_dir": str(project_dir),
@@ -463,93 +557,199 @@ class PptDesignAgent(BaseAgent):
             # ── 元信息 ──
             "svg_stats": svg_stats,
             "spec_lock_backfill": backfill,
-            "mod_appendix": mod_merge,
+            "mod_chart_assets": mod_assets,
+            "mod_standalone": mod_standalone,
             "created_at": datetime.now(timezone.utc).isoformat(),
         }
 
-    # ── MOD 附录合并（双管线链接：主 PPT 在前，MOD 分析页续后） ──
+    # ── MOD 章节图表资产同步（共享数据层 → 项目 images/） ──
     @staticmethod
-    def _merge_mod_appendix(project_dir: Path, state: dict, out_dir: Path,
-                            main_files: list, theme_id: str) -> dict:
-        """把竞品矩阵（MOD）页面用主 deck 主题重渲染并追加进 svg_output。
+    def _sync_mod_chart_assets(project_dir: Path, state: dict, out_dir: Path,
+                               images: dict) -> dict:
+        """把 MOD 确定性图表（charts/）与 hero 主图复制进项目 images/，
+        并注册到 images.by_kind 供 _pick_page_image 按 mod_* 页型对位注入。
 
-        - 输入：studio_assets/{product_id}/competitor_matrix/ppt/deck_ctx.json
-          （MOD 节点持久化的确定性渲染输入）
-        - 页码：主页面 NN/MM 的 MM 总数同步改为合并后总数（页脚/根属性一致）
-        - 降级：任何失败仅产出主 PPT，不阻塞主管线
+        - 来源：studio_assets/{product_id}/competitor_matrix/{charts/,matrix_chart.*,data/image_cache}
+        - kind 对位：mod_overview←market_donut · mod_matrix←matrix_scatter ·
+          mod_spec_comparison←spec_matrix · mod_sku_analysis←sku_channels ·
+          mod_hero←Top1 ASIN 主图缓存
+        任何失败仅跳过（增强层，不阻塞页面生产）。
         """
+        import shutil
+
+        synced: dict[str, str] = {}
+        try:
+            matrix = state.get("competitor_matrix") or {}
+            if not matrix:
+                return synced
+            arts = matrix.get("artifacts_paths") or {}
+            mod_rel = arts.get("charts") or ""
+            if not mod_rel:
+                return synced
+            charts_root = Path(mod_rel)
+            if not charts_root.is_absolute():
+                charts_root = out_dir / mod_rel
+            if not charts_root.is_dir():
+                return synced
+            image_dir = project_dir / "images"
+            image_dir.mkdir(exist_ok=True)
+            # mod_matrix 首选真·产品矩阵图（MOD 根目录 matrix_chart.png：竞品主图
+            # 缩略图 + 防重叠引擎 + P25-P75 带，参考 deck 的核心视觉）；
+            # charts/matrix_scatter（无主图简化版）仅作其缺失时的次选
+            priority = {
+                "mod_matrix": ("__root_matrix_chart__", "matrix_scatter"),
+                "mod_overview": ("market_donut", "zone_grid", "price_bands", "demand_bars"),
+                "mod_spec_comparison": ("spec_matrix",),
+                "mod_sku_analysis": ("sku_channels",),
+            }
+            index = matrix.get("mod_charts") or {}
+            for kind, names in priority.items():
+                for name in names:
+                    if name == "__root_matrix_chart__":
+                        root_png = charts_root.parent / "matrix_chart.png"
+                        if not root_png.is_file():
+                            continue
+                        dst = image_dir / "mod_chart_matrix.png"
+                        shutil.copyfile(root_png, dst)
+                        synced[kind] = f"images/{dst.name}"
+                        break
+                    entry = index.get(name) or {}
+                    rel = entry.get("png") or entry.get("svg")
+                    if not rel:
+                        continue
+                    src = charts_root / Path(rel).name
+                    if not src.is_file():
+                        continue
+                    ext = src.suffix.lower()
+                    dst = image_dir / f"mod_chart_{name}{ext}"
+                    shutil.copyfile(src, dst)
+                    synced[kind] = f"images/{dst.name}"
+                    break
+            # mod_matrix 兜底：核心矩阵图（旧逻辑保留，双保险）
+            if "mod_matrix" not in synced:
+                mm = charts_root.parent / "matrix_chart.png"
+                if mm.is_file():
+                    dst = image_dir / "mod_chart_matrix.png"
+                    shutil.copyfile(mm, dst)
+                    synced["mod_matrix"] = f"images/{dst.name}"
+            # mod_hero：Top1 销量 ASIN 主图缓存
+            products = matrix.get("products") or []
+            hero = sorted(products, key=lambda p: -(p.get("est_monthly_sales") or 0))
+            data_dir = charts_root.parent / "data" / "image_cache"
+            for p in hero[:3]:
+                cand = data_dir / f"{p.get('asin')}.jpg"
+                if cand.is_file():
+                    dst = image_dir / "mod_hero.jpg"
+                    shutil.copyfile(cand, dst)
+                    synced["mod_hero"] = f"images/{dst.name}"
+                    break
+            if synced:
+                images.setdefault("by_kind", {}).update(synced)
+                logger.info("[ppt_design] MOD 图表资产同步 %s", list(synced))
+        except Exception as exc:  # noqa: BLE001 —— 同步失败不阻塞
+            logger.warning("[ppt_design] MOD 图表资产同步失败（跳过）: %s", str(exc)[:200])
+        return synced
+
+    # ── MOD 独立 PPTX 双产出（MOD 章节页 + 专用封面 → 独立导出） ──
+    @staticmethod
+    def _export_mod_standalone(project_dir: Path, state: dict, out_dir: Path,
+                               theme: dict) -> dict:
+        """主 deck 的 MOD 章节页复制 + 专用封面 → 独立 competitor_matrix.pptx。
+
+        - 与主 deck 同源数据/同主题/同 authoring 质量（单一制作双产出）
+        - 页脚重编号（NN/独立总数），根属性同步
+        - 失败降级：返回原因，不影响主 PPTX
+        """
+        import shutil
+
+        empty = {"exported": False, "pages": 0}
         product_id = str(state.get("product_id") or "")
-        empty = {"merged": False, "pages": 0}
         if not product_id or not state.get("competitor_matrix"):
             return empty
+        svg_dir = project_dir / "svg_output"
+        mod_files = sorted(
+            [f for f in svg_dir.glob("slide_*.svg")
+             if re.search(r"slide_\d+_mod_", f.name)],
+            key=lambda f: int(re.search(r"slide_(\d+)", f.name).group(1)),
+        )
+        if not mod_files:
+            return {**empty, "reason": "主 deck 无 MOD 章节页"}
         try:
-            import pandas as _pd
-            from amazon_matrix_mod.deck import build as _mod_build
-            from amazon_matrix_mod.deck.plan import plan_pages as _mod_plan
-            from amazon_matrix_mod.deck.themes import Theme as _ModTheme
-
+            python = sys.executable
             mod_out = out_dir / "studio_assets" / product_id / "competitor_matrix"
-            ctx = _mod_build.load_deck_ctx(str(mod_out))
-            if not ctx:
-                return {**empty, "reason": "deck_ctx.json 缺失（MOD 未跑 full）"}
-            # 相对路径还原为绝对路径（deck_ctx 持久化时转为相对 out_dir）
-            abs_of = lambda p: (str(mod_out / p) if p and not os.path.isabs(p) else p)
-            ctx["df"] = _pd.DataFrame(ctx.get("df") or [])
-            ctx["image_cache_dir"] = abs_of(ctx.get("image_cache_dir"))
-            vis = ctx.get("visuals") or {}
-            ctx["visuals"] = {
-                "background": abs_of(vis.get("background")),
-                "cover": abs_of(vis.get("cover")),
-                "zones": {k: abs_of(v) for k, v in (vis.get("zones") or {}).items()},
-            }
-            ctx["theme"] = _ModTheme(theme_id) if theme_id else _ModTheme(
-                ctx.get("theme_id") or "cyber-ivory-navy")
+            standalone = mod_out / "ppt_standalone"
+            st_svg = standalone / "svg_output"
+            st_svg.mkdir(parents=True, exist_ok=True)
+            lock_src = project_dir / "spec_lock.md"
+            if lock_src.is_file():
+                shutil.copyfile(lock_src, standalone / "spec_lock.md")
 
-            n_main = len(main_files)
-            n_mod = len(_mod_plan(ctx))
-            total = n_main + n_mod
-            svg_dir = project_dir / "svg_output"
-            written = _mod_build.render_mod_pages(
-                str(svg_dir), ctx, start_index=n_main + 1, total_after_merge=total)
+            matrix = state.get("competitor_matrix") or {}
+            palette = (theme or {}).get("palette") or {}
+            colors = {"bg": "#F7F6F0", "surface": "#FFFFFF", "primary": "#12355B",
+                      "accent": "#3D6491", "text": "#101820", "muted": "#6F7275"}
+            colors.update({k: v for k, v in palette.items() if v})
+            cover = _mod_standalone_cover_svg(
+                keyword=str(matrix.get("keyword") or state.get("idea") or ""),
+                marketplace=str(matrix.get("marketplace") or "amazon.com"),
+                fetched_at=str(matrix.get("fetched_at") or ""),
+                n_products=len(matrix.get("products") or []),
+                colors=colors,
+            )
+            (st_svg / "slide_00_cover.svg").write_text(cover, encoding="utf-8")
 
-            # 主页面页脚 — NN / MM — 与根属性 page-total 同步为合并总数
-            for f in main_files:
-                p = Path(f) if not isinstance(f, Path) else f
-                if not p.is_absolute():
-                    p = svg_dir / p.name
-                try:
-                    text_content = p.read_text(encoding="utf-8")
-                    patched = re.sub(r"— (\d{2}) / \d{2} —",
-                                     rf"— \1 / {total:02d} —", text_content)
-                    patched = patched.replace(
-                        f'data-pptx-page-total="{n_main}"',
-                        f'data-pptx-page-total="{total}"')
-                    if patched != text_content:
-                        p.write_text(patched, encoding="utf-8")
-                except OSError:
-                    continue
+            # 主项目 images/ 一并复制（页面 SVG 以相对路径引用
+            # images/mod_chart_* 等，finalize 需在同目录结构下解析）
+            src_images = project_dir / "images"
+            if src_images.is_dir():
+                shutil.copytree(src_images, standalone / "images",
+                                dirs_exist_ok=True)
 
-            # spec_lock page_rhythm 追加 MOD 附录条目
-            lock_path = project_dir / "spec_lock.md"
-            try:
-                lock = lock_path.read_text(encoding="utf-8")
-                extra = "\n".join(f"- P{i:02d}: dense"
-                                  for i in range(n_main + 1, total + 1))
-                if "## page_rhythm" in lock:
-                    head, _, rest = lock.partition("## page_rhythm")
-                    section, sep, tail = rest.partition("\n## ")
-                    lock = (head + "## page_rhythm" + section.rstrip()
-                            + "\n" + extra + ("\n## " + tail if sep else ""))
-                    lock_path.write_text(lock, encoding="utf-8")
-            except OSError:
-                pass
+            total = len(mod_files) + 1  # 封面 + MOD 页
+            for i, src in enumerate(mod_files, start=1):
+                text_content = src.read_text(encoding="utf-8")
+                # 页脚/根属性重编号：主 deck 的 NN/MM → 独立 deck 的 i/total
+                text_content = re.sub(r"— \d{2} / \d{2} —", f"— {i:02d} / {total:02d} —",
+                                      text_content)
+                text_content = re.sub(
+                    r'data-pptx-page-index="\d+"', f'data-pptx-page-index="{i}"',
+                    text_content)
+                text_content = re.sub(
+                    r'data-pptx-page-total="\d+"', f'data-pptx-page-total="{total}"',
+                    text_content)
+                dst = st_svg / f"slide_{i:02d}_{src.name.split('_', 2)[2]}"
+                dst.write_text(text_content, encoding="utf-8")
 
-            logger.info("[ppt_design] MOD 附录合并 %d 页（主题 %s，总页数 %d）",
-                        len(written), ctx["theme"].id, total)
-            return {"merged": True, "pages": len(written),
-                    "theme": ctx["theme"].id, "total_pages": total}
-        except Exception as exc:  # noqa: BLE001 —— 合并失败降级为主 PPT
-            logger.warning("[ppt_design] MOD 附录合并失败（降级）: %s", str(exc)[:200])
+            for script, args in (
+                ("finalize_svg.py", [str(standalone)]),
+                ("svg_to_pptx.py", [str(standalone), "-s", "final",
+                                    "-o", str(mod_out / "compet_matrix_tmp.pptx")]),
+            ):
+                proc = subprocess.run(
+                    [python, str(_SCRIPTS_DIR / script), *args],
+                    capture_output=True, text=True, timeout=600,
+                    cwd=str(_SCRIPTS_DIR),
+                )
+                if proc.returncode != 0:
+                    raise RuntimeError(
+                        f"{script} 失败: {(proc.stderr or proc.stdout)[-300:]}")
+            final_pptx = mod_out / "competitor_matrix.pptx"
+            if (mod_out / "compet_matrix_tmp.pptx").is_file():
+                shutil.move(str(mod_out / "compet_matrix_tmp.pptx"), str(final_pptx))
+            elif (standalone / "exports").is_dir():
+                cands = list((standalone / "exports").glob("*.pptx"))
+                if cands:
+                    shutil.move(str(max(cands, key=lambda p: p.stat().st_mtime)),
+                                str(final_pptx))
+            if not final_pptx.is_file():
+                raise RuntimeError("独立导出未产出 PPTX")
+
+            logger.info("[ppt_design] MOD 独立 PPTX 导出 %d+%d 封面 → %s",
+                        len(mod_files), 1, final_pptx)
+            return {"exported": True, "pages": len(mod_files) + 1,
+                    "pptx": str(final_pptx)}
+        except Exception as exc:  # noqa: BLE001 —— 独立导出失败不影响主 PPT
+            logger.warning("[ppt_design] MOD 独立 PPTX 导出失败（降级）: %s", str(exc)[:200])
             return {**empty, "reason": str(exc)[:200]}
 
     # ── 设计规范（MiniMax 自由创作；确定性兜底） ──────────────
@@ -604,6 +804,7 @@ class PptDesignAgent(BaseAgent):
         cross_page_module: Any,
     ) -> tuple[list[str], dict]:
         from agents.ppt_design_agent import svg_author
+        from agents.ppt_design_agent import svg_qa
 
         svg_dir = project_dir / "svg_output"
         svg_dir.mkdir(exist_ok=True)
@@ -612,7 +813,8 @@ class PptDesignAgent(BaseAgent):
         files: list[str] = []
         stats: dict = {"retries": 0, "fallbacks": 0, "per_page": {},
                         "images_injected": 0, "footers_injected": 0,
-                        "root_metadata_injected": 0, "font_sizes_snapped": 0}
+                        "root_metadata_injected": 0, "font_sizes_snapped": 0,
+                        "qa_reworks": 0, "qa_warnings": {}}
         total = len(pages)
         if total == 0:
             return files, stats
@@ -627,6 +829,8 @@ class PptDesignAgent(BaseAgent):
         current = initial
         rate_limit_attempts: dict[int, int] = {}
         page_retries: dict[int, int] = {}
+        qa_attempts: dict[int, int] = {}
+        qa_feedback: dict[int, str] = {}
 
         def _page_img_assets(page: dict, page_index: int) -> dict:
             return {
@@ -653,6 +857,9 @@ class PptDesignAgent(BaseAgent):
                     prompt = svg_author.build_page_prompt(page, theme, design_spec, idx, img_assets)
                     if contract_feedback:
                         prompt += f"\n\n上一次 SVG 转换契约失败，请修正：{contract_feedback}"
+                    if idx in qa_feedback:
+                        prompt += (f"\n\n上一版未通过确定性质量门禁（对照高质量参考基线），"
+                                   f"必须逐条修正后再输出：{qa_feedback[idx]}")
                     try:
                         raw = llm.complete(
                             [{"role": "system", "content": "你是资深咨询风演示 SVG 设计师。只输出 SVG。"},
@@ -695,8 +902,13 @@ class PptDesignAgent(BaseAgent):
                 return None, "fallback_needed", retries, img_assets
             return svg, "llm", retries, img_assets
 
-        def _finalize(idx: int, svg: str | None, status: str, img_assets: dict) -> None:
-            """主线程：程序化后处理 + 写盘 + stats 聚合（确定性、无锁）。"""
+        def _finalize(idx: int, svg: str | None, status: str, img_assets: dict) -> tuple[bool, list[str]]:
+            """主线程：程序化后处理 + 质量门禁 + 写盘 + stats 聚合（确定性、无锁）。
+
+            Returns: (written, qa_issues)
+              written=False 表示 QA 不达标且重做预算可用——不落盘，
+              由主循环重排队带反馈重渲染（硬门禁+返工一次）。
+            """
             page = pages[idx]
             page_no = idx + 1
             name = f"slide_{page_no:02d}_{page.get('type', 'page')}.svg"
@@ -722,14 +934,44 @@ class PptDesignAgent(BaseAgent):
             svg, snap_info = cross_page_module.snap_font_sizes(svg)
             stats["font_sizes_snapped"] += len(snap_info["snapped"])
 
+            # ── e) 确定性质量门禁（对照 svg_final 参考基线） ──
+            qa_issues: list[str] = []
+            if status == "llm":
+                qa_issues = svg_qa.qa_page(svg, page, theme, page_image)
+                if qa_issues and qa_attempts.get(idx, 0) < 1:
+                    qa_attempts[idx] = qa_attempts.get(idx, 0) + 1
+                    stats["qa_reworks"] += 1
+                    return False, qa_issues  # 重排队（带反馈）
+
             (svg_dir / name).write_text(svg, encoding="utf-8")
             files.append(name)
+            qa_feedback.pop(idx, None)  # 重做成功，清除反馈
+            if qa_issues:
+                stats["qa_warnings"][page_no] = qa_issues
             stats["per_page"][page_no] = {
                 "status": status,
                 "page_image": page_image,
                 "font_sizes": snap_info["kept_unique"],
                 "snap_count": len(snap_info["snapped"]),
+                "qa_issues": qa_issues,
             }
+            # P5：逐页进度（progress.json + 事件流，前端缩略图流式填充）
+            try:
+                progress_state = {}
+                import json as _json
+                _pp = project_dir / "progress.json"
+                try:
+                    progress_state = _json.loads(_pp.read_text(encoding="utf-8"))
+                except (OSError, ValueError):
+                    progress_state = {}
+                per_page = dict(progress_state.get("per_page") or {})
+                per_page[str(page_no)] = status
+                self._write_progress(project_dir, done_pages=len(files),
+                                     per_page=per_page)
+                self._emit("running", f"P{page_no:02d}/{total} 完成（{status}）")
+            except Exception:  # noqa: BLE001 —— 进度更新失败不影响制作
+                pass
+            return True, qa_issues
 
         # ── batch 自适应并发主循环（参照 image_gen._run_manifest） ──
         _tn = threading.current_thread().name
@@ -763,7 +1005,13 @@ class PptDesignAgent(BaseAgent):
                     elif status == "fallback_needed":
                         _finalize(idx, None, "fallback", img_assets)
                     else:
-                        _finalize(idx, svg, "llm", img_assets)
+                        written, issues = _finalize(idx, svg, "llm", img_assets)
+                        if not written:
+                            # 质量门禁未达标：带反馈重排队（硬门禁+返工一次）
+                            qa_feedback[idx] = svg_qa.qa_feedback_text(issues)
+                            queue.append(idx)
+                            logger.warning("[%s] P%d 质量门禁未达标，重排队：%s",
+                                           _tn, page_no, qa_feedback[idx][:120])
 
             if rate_limited and current > 1 and queue:
                 new_current = max(1, current // 2)

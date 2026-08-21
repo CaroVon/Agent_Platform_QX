@@ -40,8 +40,8 @@ def _presentation_evaluator(presentation: Presentation) -> tuple[bool, str]:
     """Presentation 专用评估器：页数、组件密度与布局多样性。"""
     issues: list[str] = []
     pages = presentation.pages
-    if not (10 <= len(pages) <= 16):
-        issues.append(f"页数 {len(pages)} 不在 8-14 区间")
+    if not (10 <= len(pages) <= 24):
+        issues.append(f"页数 {len(pages)} 不在 10-24 区间")
     layouts = {p.layout for p in pages}
     if len(layouts) < 5:
         issues.append(f"布局多样性不足（{len(layouts)}/5）")
@@ -137,14 +137,52 @@ class PresentationAgent(BaseAgent):
         evidence_pack: dict | None = None,
         instruction: str = "",
         style_hint: str = "",
+        mod_data_pack: dict | None = None,
     ) -> AgentResult:
-        """构建 Presentation DSL；revise_feedback 用于 Critic 修订循环（P5）。"""
+        """构建 Presentation DSL；revise_feedback 用于 Critic 修订循环（P5）。
+
+        mod_data_pack 为亚马逊真实数据包（B/C 合并）时，必须规划 MOD 章节。
+        """
         objective = (
-            f"为产品「{idea}」构建 10-16 页演示（Presentation DSL）。"
+            f"为产品「{idea}」构建 10-24 页演示（Presentation DSL）。"
             "严格按视觉规范 skill：one slide = one message；"
             "每页选择布局枚举 + 2-8 个组件；数据必须来自上游产品文档，禁止编造；"
             "专有名词（功能/竞品/画像/阶段名）必须原文引用，禁止改写。"
         )
+        if mod_data_pack and mod_data_pack.get("available"):
+            # P3 skill 注入：单品拆解（listing 方法论）+ 参数对比（A+ 对比模块方法论）
+            from agent_platform.skills.loader import SkillLoader
+
+            _loader = SkillLoader()
+            listing_skill = _loader.load("amazon-listing-optimization", max_chars=3500)
+            aplus_skill = _loader.load("amazon-a-plus-content", max_chars=3500)
+            skill_block = ""
+            if listing_skill:
+                skill_block += f"\n\n【Listing 拆解 Skill（单品拆解页方法论）】\n{listing_skill}"
+            if aplus_skill:
+                skill_block += f"\n\n【A+ 内容 Skill（参数对比/图表叙事方法论）】\n{aplus_skill}"
+            objective += (
+                "\n\n【MOD 竞品矩阵章节（必须规划 6-12 页，置于主叙事之后、作为附录章节）】"
+                "产品提供了「亚马逊真实数据包」——必须按以下蓝图规划 MOD 章节页面"
+                "（页型枚举：mod_overview / mod_matrix / mod_hero_teardown / "
+                "mod_spec_comparison / mod_sku_analysis / mod_actions）：\n"
+                "1. mod_overview 市场总览：品牌份额/ASP 价格锚点/KPI（样本/均价/评分/价格带）"
+                "/价格带分布/四分区格局（配 market_donut 图表资产）\n"
+                "2. mod_matrix 价格×月销矩阵：对数散点（配 matrix_scatter 图表资产），"
+                "标注 P25-P75 主流带与头部竞品 [A编号]\n"
+                "3. mod_hero_teardown 单品拆解：选月销 Top1 ASIN 解剖式呈现——"
+                "商业块（价格/评分/销量/BSR/配送/卖家）+ 维度化特性清单（从标题/参数/评论提炼）"
+                "+ 评论原文引用\n"
+                "4. mod_spec_comparison 参数对比矩阵：Top5-7 竞品 × 价格/评分/评论/月销/BSR/"
+                "配送/分区（配 spec_matrix 图表资产，优势格高亮）\n"
+                "5. mod_sku_analysis SKU 与渠道：FBA/自发货结构、卖家类型分布、分区交叉"
+                "（配 sku_channels 图表资产）\n"
+                "6. mod_actions 行动建议：owner 制行动项（定价/选品/运营/listing）\n"
+                "数据纪律：MOD 章节所有数字**只能**引用「MOD 亚马逊真实数据包」（[A编号]），"
+                "每个数据页必须带引用脚注（*Rainforest data…）；组件中带 chart_ref 的图表已确定性渲染，"
+                "规划时保留引用即可。缺数据处标 TBD，禁止编造、禁止'解读缺失'式空占位。"
+                + skill_block
+            )
         if revise_feedback:
             objective += f"\n\n【上一版评审意见（必须逐条修正）】\n{revise_feedback}"
         if instruction:
@@ -165,6 +203,11 @@ class PresentationAgent(BaseAgent):
             from agent_platform.harness.evidence_pack import render_evidence_pack
 
             artifacts["cyberppt_evidence_pack"] = render_evidence_pack(evidence_pack)
+        if mod_data_pack and mod_data_pack.get("available"):
+            from agent_platform.harness.evidence_pack import render_mod_data_pack
+
+            artifacts["mod_data_pack（亚马逊真实数据，MOD 章节数据唯一来源）"] = \
+                render_mod_data_pack(mod_data_pack)
 
         result = self.loop.run(
             agent_name=self.name,
@@ -207,7 +250,7 @@ class PresentationAgent(BaseAgent):
                 strategy=_v(ProductStrategy, state.get("strategy")),
                 design=_v(UXDesign, state.get("design")),
             )
-        from agent_platform.harness.evidence_pack import build_evidence_pack
+        from agent_platform.harness.evidence_pack import build_evidence_pack, build_mod_data_pack
 
         return self.build_deck(
             state.get("idea", ""),
@@ -218,4 +261,5 @@ class PresentationAgent(BaseAgent):
             evidence_pack=build_evidence_pack(document),
             instruction=str(state.get("instruction") or ""),
             style_hint=_load_style_hint(str(state.get("ppt_style") or "")),
+            mod_data_pack=build_mod_data_pack(state),
         )

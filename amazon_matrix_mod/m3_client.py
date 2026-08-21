@@ -12,6 +12,7 @@ import base64
 import json
 import logging
 import os
+from pathlib import Path
 
 import requests
 
@@ -52,6 +53,24 @@ def _strip_think(text: str) -> str:
     return text.strip()
 
 
+def _post_bounded(url: str, *, headers: dict, payload: dict,
+                  timeout: int = 120) -> "requests.Response":
+    """有界 POST（防挂）：requests 的 timeout 不覆盖 DNS 解析，fork 子进程/
+    内存高压下会无限挂起——守护线程 + 硬超时（timeout+30s）兜底。"""
+    from concurrent.futures import ThreadPoolExecutor
+    from concurrent.futures import TimeoutError as _FutTimeout
+
+    ex = ThreadPoolExecutor(max_workers=1, thread_name_prefix="m3-post")
+    try:
+        return ex.submit(
+            requests.post, url, headers=headers, json=payload, timeout=timeout,
+        ).result(timeout=timeout + 30)
+    except _FutTimeout as exc:
+        raise RuntimeError(f"M3 请求硬超时（>{timeout + 30}s，疑似 DNS/连接挂起）") from exc
+    finally:
+        ex.shutdown(wait=False)
+
+
 def chat(prompt: str, image_path: str | None = None, max_tokens: int = 1500,
          temperature: float = 0.4) -> str:
     """文本（可选附图）→ M3 回复文本（剥离思考块）。失败抛错。"""
@@ -72,10 +91,10 @@ def chat(prompt: str, image_path: str | None = None, max_tokens: int = 1500,
     last_err: Exception | None = None
     for attempt in range(3):  # 网络偶发（SSL/EOF）重试 3 次
         try:
-            r = requests.post(f"{cfg['base']}/chat/completions",
+            r = _post_bounded(f"{cfg['base']}/chat/completions",
                               headers={"Authorization": f"Bearer {cfg['api_key']}",
                                        "Content-Type": "application/json"},
-                              json=payload, timeout=120)
+                              payload=payload, timeout=120)
             r.raise_for_status()
             msg = r.json()["choices"][0]["message"]["content"]
             return _strip_think(msg)
@@ -120,6 +139,20 @@ def audit_chart(chart_path: str, data_summary: str) -> dict:
         return {"assess": "", "insights": [], "improvements": [], "error": str(exc)[:100]}
 
 
+def _review_skill_text() -> str:
+    """评论分析 skill（nexscope MIT，P3 注入）；不可用时返回空。"""
+    try:
+        sys_root = Path(__file__).resolve().parents[1]
+        base = sys_root / "agent-platform" / "agent_platform" / "skills"
+        if not base.is_dir():
+            return ""
+        from agent_platform.skills.loader import SkillLoader
+
+        return SkillLoader(base_dir=base).load("amazon-review-analyzer", max_chars=4500)
+    except Exception:  # noqa: BLE001 —— skill 加载失败不阻塞
+        return ""
+
+
 def cluster_reviews(reviews: list[dict], limit: int = 30) -> dict:
     """评论聚类：{topics[], pain_points[], strengths[], opportunities[]}。失败返回空。"""
     if not reviews:
@@ -128,8 +161,10 @@ def cluster_reviews(reviews: list[dict], limit: int = 30) -> dict:
     for r in reviews[:limit]:
         body = (r.get("body") or "")[:150].replace("\n", " ")
         sample.append(f"- [{r.get('asin')} {r.get('rating')}★] {body}")
+    skill = _review_skill_text()
+    skill_block = (f"\n【评论分析 Skill（方法论参考）】\n{skill}\n" if skill else "")
     prompt = f"""以下是亚马逊竞品评论样本（{len(sample)} 条）。
-请聚类输出：
+{skill_block}请聚类输出：
 - topics: 高频讨论主题（≤6 项）
 - pain_points: 用户痛点（≤5 项，含证据）
 - strengths: 被反复认可的优点（≤4 项）

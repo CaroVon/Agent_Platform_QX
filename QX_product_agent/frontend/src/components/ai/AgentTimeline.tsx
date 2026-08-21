@@ -29,15 +29,15 @@ const TEAM: TeamRole[] = [
   {
     name: 'Research Agent',
     role: '研究员',
-    nodes: ['research', 'competitor_matrix', 'competitor_analysis'],
-    task: '搜索市场信息，抓取亚马逊竞品数据，分析竞品格局…',
-    doneTask: '✓ 市场研究、竞品矩阵、竞品分析已完成',
+    nodes: ['source_gathering', 'research', 'competitor_matrix', 'competitor_analysis'],
+    task: '统一采集（Tavily 网络 + Rainforest 亚马逊）→ 市场研究 → MOD 竞品矩阵 → 竞品分析…',
+    doneTask: '✓ 统一采集、市场研究、竞品矩阵（MOD）、竞品分析已完成',
   },
   {
     name: 'Product Agent',
     role: '产品负责人',
     nodes: ['strategy'],
-    task: '制定产品定位、画像与功能路线…',
+    task: '制定产品定位、画像与功能路线（融入真实评论洞察）…',
     doneTask: '✓ 产品策略、PRD 已完成',
   },
   {
@@ -51,15 +51,15 @@ const TEAM: TeamRole[] = [
     name: 'Presentation Agent',
     role: '演示专家',
     nodes: ['presentation', 'critic'],
-    task: '编排演示叙事，评审视觉质量…',
-    doneTask: '✓ 演示资产已完成并通过评审',
+    task: '编排演示叙事（含 MOD 竞品矩阵章节），评审视觉质量…',
+    doneTask: '✓ 演示资产（含 MOD 章节）已完成并通过评审',
   },
   {
     name: 'PPT Design Agent',
     role: 'PPT 设计师',
     nodes: ['ppt_design'],
-    task: '按 ppt-master 工作流设计逐页 SVG 并导出原生 PPTX…',
-    doneTask: '✓ 原生可编辑 PPTX 已生成',
+    task: '同一进程制作主 deck（含 MOD 章节）→ 一次转 PPTX + MOD 独立导出…',
+    doneTask: '✓ 主 PPTX（含 MOD 章节）与独立竞品矩阵 PPTX 已生成',
   },
 ]
 
@@ -72,15 +72,15 @@ const NODE_ORDER = [
 // 节点 → 人话说明（当前正在做什么）
 const NODE_MESSAGES: Record<string, string> = {
   requirement_parser: '解析产品需求，明确目标与边界',
-  source_gathering: '全网检索资料并标注权重（等待审核）',
-  research: '市场研究：搜索行业规模、竞品与用户痛点',
-  competitor_matrix: '竞品矩阵：抓取亚马逊真实价格/评价数据并生成 MOD 报告',
-  competitor_analysis: '竞品分析：构建矩阵与差异化机会',
+  source_gathering: '统一采集：Tavily 网络检索 + Rainforest 亚马逊抓取（等待审核）',
+  research: '市场研究：网络资料 + 亚马逊真实数据双源综合',
+  competitor_matrix: '竞品矩阵：共享数据 0-credit 回放 → 分区/图表/14 章 MOD 报告',
+  competitor_analysis: '竞品分析：真实矩阵数据与网络资料交叉验证',
   strategy: '产品策略：定位、画像、功能与路线图',
   design: 'UX 设计：用户旅程与信息架构',
-  presentation: '演示编排：SCR 叙事与演示 DSL',
+  presentation: '演示编排：SCR 叙事 + MOD 竞品矩阵章节并入主 deck',
   critic: '质量评审：覆盖度与视觉门禁',
-  ppt_design: 'PPT 制作：设计规范 → 逐页 SVG → 原生 PPTX',
+  ppt_design: 'PPT 制作：同进程制作主 deck（含 MOD 章节）+ 质量门禁返工',
   assemble: '资产打包：收敛全部节点产物',
 }
 

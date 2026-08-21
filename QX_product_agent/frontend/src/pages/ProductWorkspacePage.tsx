@@ -20,6 +20,7 @@ import {
   Loader2,
   Pause,
   Play,
+  ShoppingCart,
   Square,
   Upload,
   Zap,
@@ -37,7 +38,8 @@ import {
 import { AgentTimeline } from '@/components/ai/AgentTimeline'
 import { ToolExecution } from '@/components/ai/ToolExecution'
 import { StreamingMessage } from '@/components/ai/StreamingMessage'
-import { productApi, type PptOptions } from '@/lib/api'
+import { PptLivePanel } from '@/components/ai/PptLivePanel'
+import { productApi, type AmazonCollectionSummary, type PptOptions } from '@/lib/api'
 import type { StudioProduct } from '@/types/studio'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/common/button'
@@ -136,25 +138,26 @@ function HeroEmpty({
               <span className="text-primary">完整产品全案</span>
             </h1>
             <p className="mb-6 max-w-xl text-[15px] leading-relaxed text-muted-foreground">
-              输入产品想法，AI 团队自动完成市场调研 → 竞品矩阵 → 用户画像 → PRD → 路线图 → 演示文稿。
-              全流程支持断点干预、资产可视化编辑、16:9 PPT 导出。
+              输入产品想法，AI 团队统一采集网络与亚马逊真实数据，自动完成市场调研 → 竞品矩阵（MOD）→
+              用户画像 → PRD → 路线图 → 演示文稿（竞品矩阵章节同进程制作，风格一致）。
+              节点资产即时交付、PPT 制作全程可视化、断点干预、16:9 原生 PPT 导出。
             </p>
             <div className="flex flex-wrap items-center gap-x-5 gap-y-2 text-[12px] text-muted-foreground">
               <div className="flex items-center gap-2">
                 <StatusLED status="online" size="sm" />
-                <span>7 节点流水线</span>
+                <span>统一采集 · 11 步流水线</span>
               </div>
               <div className="flex items-center gap-2">
                 <StatusLED status="processing" size="sm" />
-                <span>4 个专业 Agent</span>
+                <span>双源数据（Tavily + Rainforest）</span>
               </div>
               <div className="flex items-center gap-2">
                 <StatusLED status="busy" size="sm" />
-                <span>RAG 混合检索</span>
+                <span>节点资产即时交付</span>
               </div>
               <div className="flex items-center gap-2">
                 <StatusLED status="warning" size="sm" />
-                <span>16:9 PPT 导出</span>
+                <span>16:9 PPT · MOD 章节同进程</span>
               </div>
             </div>
           </div>
@@ -254,6 +257,7 @@ function HeroEmpty({
 function SourcesGate({
   product,
   sources,
+  amazon,
   sourcesLoading,
   uploadingSource,
   onUpload,
@@ -272,6 +276,7 @@ function SourcesGate({
     selected?: boolean
     local?: boolean
   }>
+  amazon: AmazonCollectionSummary | null
   sourcesLoading: boolean
   uploadingSource: boolean
   onUpload: (file: File) => Promise<void>
@@ -283,8 +288,82 @@ function SourcesGate({
     <Section
       step="01"
       title="资料审核"
-      description="AI 已检索资料并标注权重；勾选保留或上传本地资料补充后继续。"
+      description="统一采集完成：Tavily 网络资料（可勾选）+ Rainforest 亚马逊真实数据（只读参考）。确认后继续。"
     >
+      {/* ── 亚马逊采集摘要（只读，不参与勾选） ── */}
+      {amazon && !amazon.error && (
+        <div className="mb-5 rounded-lg border border-[#24415E]/20 bg-[#24415E]/[0.03] p-4">
+          <div className="mb-3 flex flex-wrap items-center gap-2">
+            <ShoppingCart className="h-4 w-4 text-[#24415E]" />
+            <span className="text-sm font-semibold">亚马逊真实数据已采集</span>
+            <span className="font-mono text-[11px] text-muted-foreground">
+              {amazon.keyword} · {amazon.n_products} ASIN · credits≈{amazon.credits}
+              {amazon.fetched_at ? ` · ${amazon.fetched_at.slice(0, 10)}` : ''}
+            </span>
+            <span className="ml-auto rounded-full bg-secondary px-2 py-0.5 text-[10px] text-muted-foreground">
+              只读参考 · 不可筛选
+            </span>
+          </div>
+          <div className="mb-3 grid grid-cols-2 gap-2 sm:grid-cols-4">
+            {[
+              {
+                label: '价格带',
+                value: `$${amazon.price_range?.min ?? '—'} – $${amazon.price_range?.max ?? '—'}`,
+              },
+              { label: '均价', value: `$${amazon.price_range?.avg ?? '—'}` },
+              { label: '平均评分', value: String(amazon.rating_avg ?? '—') },
+              { label: '评论样本', value: String(amazon.reviews_count ?? 0) },
+            ].map((k) => (
+              <div key={k.label} className="rounded-md border border-border bg-card px-3 py-2">
+                <div className="font-mono text-[10px] uppercase tracking-wider text-muted-foreground">
+                  {k.label}
+                </div>
+                <div className="mt-0.5 text-[14px] font-semibold text-[#24415E]">{k.value}</div>
+              </div>
+            ))}
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[560px] text-left text-[12px]">
+              <thead>
+                <tr className="border-b border-border text-[10px] uppercase tracking-wider text-muted-foreground">
+                  <th className="py-1.5 pr-3">ASIN</th>
+                  <th className="py-1.5 pr-3">竞品（Top 销量）</th>
+                  <th className="py-1.5 pr-3 text-right">价格</th>
+                  <th className="py-1.5 pr-3 text-right">评分</th>
+                  <th className="py-1.5 pr-3 text-right">评论</th>
+                  <th className="py-1.5 pr-3 text-right">月销≈</th>
+                  <th className="py-1.5">分区</th>
+                </tr>
+              </thead>
+              <tbody>
+                {(amazon.top_asins ?? []).map((t) => (
+                  <tr key={t.asin} className="border-b border-border/50">
+                    <td className="py-1.5 pr-3 font-mono text-[11px] text-primary">{t.asin}</td>
+                    <td className="max-w-[260px] truncate py-1.5 pr-3">
+                      {t.brand ? <span className="font-medium">{t.brand} · </span> : null}
+                      {t.title}
+                    </td>
+                    <td className="py-1.5 pr-3 text-right font-mono">${t.current_price ?? '—'}</td>
+                    <td className="py-1.5 pr-3 text-right font-mono">{t.rating ?? '—'}</td>
+                    <td className="py-1.5 pr-3 text-right font-mono">{t.review_count ?? '—'}</td>
+                    <td className="py-1.5 pr-3 text-right font-mono">{t.est_monthly_sales ?? '—'}</td>
+                    <td className="py-1.5 text-muted-foreground">{t.zone}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <p className="mt-2 text-[10px] text-muted-foreground/70">
+            *Rainforest 实时采集；该数据将直接进入市场研究、竞品矩阵（MOD）与 PPT 的竞品矩阵章节，无需重复抓取。
+          </p>
+        </div>
+      )}
+      {amazon?.error && (
+        <div className="mb-4 rounded-md border border-amber-500/30 bg-amber-500/5 px-4 py-2.5 text-[12px] text-amber-700">
+          亚马逊采集未完成（{amazon.error}）——将继续使用网络资料；竞品矩阵节点会自行重试采集。
+        </div>
+      )}
+
       <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
         <div className="flex items-center gap-2">
           <Globe className="h-4 w-4 text-primary" />
@@ -539,6 +618,7 @@ export function ProductWorkspacePage() {
   }>>([])
   const [sourcesLoading, setSourcesLoading] = useState(false)
   const [uploadingSource, setUploadingSource] = useState(false)
+  const [amazonSummary, setAmazonSummary] = useState<AmazonCollectionSummary | null>(null)
 
   // ── 任务控制 ──
   const [taskAction, setTaskAction] = useState<'pause' | 'resume' | 'cancel' | null>(null)
@@ -588,7 +668,10 @@ export function ProductWorkspacePage() {
     productApi
       .getSources(product.product_id)
       .then((d) => {
-        if (!cancelled) setSources(d.sources ?? [])
+        if (!cancelled) {
+          setSources(d.sources ?? [])
+          setAmazonSummary(d.amazon ?? null)
+        }
       })
       .catch(() => {
         /* 拉取失败保持空 */
@@ -771,6 +854,7 @@ export function ProductWorkspacePage() {
         <SourcesGate
           product={product}
           sources={sources}
+          amazon={amazonSummary}
           sourcesLoading={sourcesLoading}
           uploadingSource={uploadingSource}
           onUpload={handleSourceUpload}
@@ -836,11 +920,11 @@ export function ProductWorkspacePage() {
         </div>
       )}
 
-      {/* ─── AI Team Progress ──────────── */}
+      {/* ─── AI Team Progress（双栏工作台：左时间线 / 右 PPT 可视化+控制） ─── */}
       {product && (
-        <Section step="02" title="AI Team Progress" description="节点时间线 + 工具执行 + 任务控制">
-          <div className="grid gap-6 lg:grid-cols-[1fr_280px]">
-            <div>
+        <Section step="02" title="AI Team Progress" description="统一采集 → 研究 → 竞品 → 策略 → 设计 → 演示（含 MOD 章节）→ 同进程 PPT 制作 → 交付">
+          <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_380px]">
+            <div className="min-w-0">
               <AgentTimeline
                 nodeStatus={product.node_status ?? {}}
                 nodeModels={product.node_models ?? {}}
@@ -848,7 +932,11 @@ export function ProductWorkspacePage() {
                 logs={eventLogs}
               />
             </div>
-            <div className="space-y-4">
+            <div className="space-y-4 lg:sticky lg:top-6 lg:self-start">
+              <PptLivePanel
+                productId={product.product_id}
+                active={product.node_status?.ppt_design === 'running'}
+              />
               <TaskControl
                 product={product}
                 taskAction={taskAction}
@@ -894,12 +982,12 @@ export function ProductWorkspacePage() {
         </div>
       )}
 
-      {/* ─── Generated Assets ──────────── */}
+      {/* ─── Generated Assets（渐进交付：节点完成即出现） ─── */}
       {product && (
         <Section
           step="03"
           title="Generated Product Assets"
-          description="研究 / 竞品 / PRD / 设计 / 演示 — 全部结构化产出"
+          description="研究 / 竞品矩阵（MOD）/ PRD / 设计 / 演示 — 节点完成即交付，可先行预览下载"
         >
           <AssetPanel
             product={product}

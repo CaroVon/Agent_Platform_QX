@@ -138,11 +138,24 @@ def _persist_progress(product_id: str, event: dict) -> None:
         completed > running > queued > failed
     同一节点只有更高优先级的后续事件才允许覆盖写库；
     failed 只作为「最低优先级的占位」，一旦节点随后 running/completed 即被替换。
+
+    渐进式交付（P4）：事件携带 artifact_key/artifact 时，即时渲染该节点
+    文本资产到 studio_assets/{id}/（前端资产面板节点完成即可预览/下载）；
+    artifact 本体不写入 progress_log（保持日志轻量）。
     """
     node = event.get("node", "")
     status = event.get("status", "")
     if not node or not status:
         return
+    artifact_key = event.get("artifact_key")
+    if artifact_key and event.get("artifact") is not None:
+        try:
+            from app.services.project_assets import ensure_text_assets
+
+            ensure_text_assets(str(product_id), {str(artifact_key): event["artifact"]})
+        except Exception as exc:  # noqa: BLE001 —— 渐进交付失败不影响主流程（完成态会补齐）
+            logger.warning("[Product Studio] 渐进资产产出失败 %s.%s: %s",
+                           product_id, artifact_key, exc)
     _RANK = {"completed": 3, "running": 2, "queued": 1, "failed": 0}
     prev = _PROGRESS_SNAPSHOT.get(product_id, {}).get(node)
     if prev is not None and _RANK.get(status, 0) < _RANK.get(prev, 0):
@@ -381,7 +394,8 @@ def run_product_studio_pipeline(self: ProductStudioTask, product_id: str):
             design_agent=DesignAgent(loop=loops["design"]),
             presentation_agent=PresentationAgent(loop=loops["presentation"], memory=memory),
             critic_agent=CriticAgent(llm=loops["critic"].llm),
-            ppt_design_agent=PptDesignAgent(),
+            ppt_design_agent=PptDesignAgent(
+                progress_callback=lambda event: _persist_progress(product_id, event)),
             llm=loop.llm,
             memory=memory,
             node_models=node_models,
@@ -428,7 +442,8 @@ def run_product_studio_pipeline(self: ProductStudioTask, product_id: str):
                 for key in ("requirement", "research", "competitor_matrix", "competitor_analysis", "strategy",
                             "design", "presentation", "node_status", "_completed_nodes",
                             "_gate_passed", "critic_score", "revision_count",
-                            "_sources_review", "source_gathering_meta"):
+                            "_sources_review", "source_gathering_meta",
+                            "amazon_collection", "mod_keyword"):
                     if key in _saved:
                         extra_initial[key] = _saved[key]
                 extra_initial["idea"] = _saved.get("idea") or idea
@@ -457,6 +472,9 @@ def run_product_studio_pipeline(self: ProductStudioTask, product_id: str):
             # 资料审核：待审核/已审核资料必须持久化（供前端审核界面 + 续跑使用）
             "_sources_review": snapshot.get("_sources_review", []),
             "source_gathering_meta": snapshot.get("source_gathering_meta", {}),
+            # 统一采集层：亚马逊数据摘要必须持久化（gate 展示 + 矩阵节点 0-credit 回放）
+            "amazon_collection": snapshot.get("amazon_collection"),
+            "mod_keyword": snapshot.get("mod_keyword", ""),
         }
         _update_product(
             product_id,

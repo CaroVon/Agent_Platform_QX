@@ -331,6 +331,194 @@ def enforce_coverage(
     return Presentation(title=presentation.title, theme=presentation.theme, pages=pages)
 
 
+_MOD_PAGE_TYPES = (
+    "mod_overview", "mod_matrix", "mod_hero_teardown",
+    "mod_spec_comparison", "mod_sku_analysis", "mod_actions",
+)
+
+
+def enforce_mod_pages(
+    presentation: Presentation,
+    mod_pack: dict | None,
+) -> Presentation:
+    """MOD 章节确定性保底：有真实矩阵数据而 LLM 未规划足够 MOD 页时，
+    按参考蓝图（Desktop\\MOD 方法论）追加确定性 MOD 页。
+
+    - 必备：mod_overview、mod_matrix（两者缺一即补）
+    - 数据可用则补：mod_spec_comparison、mod_sku_analysis、mod_actions
+    - 位置：追加在页面末尾（参考 deck 的附录式 MOD 章节，conclusion 之后）
+    - 数据全部来自 mod_pack（真实采集），组件引用确定性图表资产（chart_ref）
+    """
+    if not mod_pack or not mod_pack.get("available"):
+        return presentation
+    pages = list(presentation.pages)
+    existing_types = {p.type for p in pages}
+    seen_ids = {p.id for p in pages} | {c.id for p in pages for c in p.components}
+    pr = mod_pack.get("price_range") or {}
+    interp = mod_pack.get("interpretation") or {}
+    tops = mod_pack.get("top_products") or []
+    citation = str(mod_pack.get("citation") or "")
+    keyword = str(mod_pack.get("keyword") or "")
+
+    def _pid(prefix: str, n: int) -> str:
+        return _unique_id(f"{prefix}{n}", seen_ids, f"{prefix}{n}")
+
+    def _comp(prefix: str, ctype: str, data: dict, emphasis: str = "normal") -> Component:
+        return Component(
+            id=_unique_id(f"{prefix}-c", seen_ids, f"{prefix}-c"), type=ctype,
+            data=data, emphasis=emphasis,
+        )
+
+    def _chart_comp(prefix: str, chart_name: str) -> Component | None:
+        chart = (mod_pack.get("charts") or {}).get(chart_name)
+        if not chart:
+            return None
+        return _comp(f"{prefix}c", "chart",
+                     {"chart_ref": chart_name, "title": chart.get("title"),
+                      "note": "已渲染确定性图表，页面以图片组件呈现，数据勿改写"})
+
+    def _new_page(pid: str, ptype: str, layout: str, title: str,
+                  insight: str, comps: list[Component]) -> Page:
+        return Page(id=pid, type=ptype, layout=layout, title=title,
+                    insight=insight, components=comps)
+
+    added = 0
+    # ── 必备 1：mod_overview ─────────────────────────────────
+    if "mod_overview" not in existing_types:
+        p = f"modov{added + 1}"
+        comps = [
+            _comp(f"{p}m", "metric",
+                  {"value": f"${pr.get('avg')}", "label": "均价 ASP"}, emphasis="high"),
+            _comp(f"{p}m", "metric",
+                  {"value": f"${pr.get('min')}–${pr.get('max')}", "label": "价格带"}),
+            _comp(f"{p}m", "metric",
+                  {"value": str(mod_pack.get("rating_avg") or "—"), "label": "平均评分"}),
+            _comp(f"{p}m", "metric",
+                  {"value": str(mod_pack.get("n_products") or "—"), "label": "样本 ASIN"}),
+            _comp(f"{p}t", "text", {
+                "title": "四区解读（真实数据）",
+                "text": "；".join(f"{k}：{v}" for k, v in interp.items() if v)[:300]}),
+        ]
+        chart = _chart_comp(f"{p}", "market_donut")
+        if chart:
+            comps.insert(4, chart)
+        if citation:
+            comps.append(_comp(f"{p}f", "text", {"text": citation, "note": "脚注"}))
+        pages.append(_new_page(
+            _pid("mod-ov", added + 1), "mod_overview", "market",
+            f"竞品矩阵 · {keyword} 市场总览",
+            str(interp.get("verdict") or f"{keyword} 真实价格带 ${pr.get('min')}–${pr.get('max')}"),
+            comps))
+        added += 1
+
+    # ── 必备 2：mod_matrix ───────────────────────────────────
+    if "mod_matrix" not in existing_types:
+        p = f"modmx{added + 1}"
+        sales = [t.get("est_monthly_sales") or 0 for t in tops]
+        med = sorted(sales)[len(sales) // 2] if sales else 0
+        comps: list[Component] = [
+            _comp(f"{p}m", "matrix", {
+                "chart_ref": "matrix_scatter",
+                "x_axis": "价格（对数）", "y_axis": "月销估算（对数）",
+                "note": "边框色=分区，尺寸∝评论数；已渲染确定性散点图"}),
+            _comp(f"{p}t", "text", {
+                "title": "头部竞品（[A编号] 引用）",
+                "text": "；".join(
+                    f"[A{i}] {t.get('brand') or '—'} ${t.get('current_price')}"
+                    f" 月销≈{t.get('est_monthly_sales')}"
+                    for i, t in enumerate(tops[:5], 1))[:300]}),
+        ]
+        chart = _chart_comp(f"{p}", "matrix_scatter")
+        if chart:
+            comps.insert(0, chart)
+        if citation:
+            comps.append(_comp(f"{p}f", "text", {"text": citation, "note": "脚注"}))
+        pages.append(_new_page(
+            _pid("mod-mx", added + 1), "mod_matrix", "matrix",
+            "价格 × 月销矩阵",
+            f"主流价格带 ${pr.get('min')}–${pr.get('max')}，头部月销中位≈{med}",
+            comps))
+        added += 1
+
+    # ── 数据可用则补：参数对比 / SKU 渠道 / 行动建议 ─────────
+    if len(tops) >= 5 and "mod_spec_comparison" not in existing_types:
+        p = f"modsp{added + 1}"
+        cols = ["属性"] + [str(t.get("brand") or t.get("asin"))[:10] for t in tops[:5]]
+        rows = []
+        for attr, key in (("价格", "current_price"), ("评分", "rating"),
+                          ("评论数", "review_count"), ("月销", "est_monthly_sales"),
+                          ("配送", None), ("分区", "zone")):
+            if key:
+                rows.append([attr] + [str(t.get(key) if t.get(key) is not None else "TBD") for t in tops[:5]])
+            else:
+                rows.append([attr] + ["FBA" if t.get("is_fba") else "自发货" for t in tops[:5]])
+        comps = [
+            _comp(f"{p}t", "table", {"columns": cols, "rows": rows}),
+        ]
+        chart = _chart_comp(f"{p}", "spec_matrix")
+        if chart:
+            comps.append(chart)
+        if citation:
+            comps.append(_comp(f"{p}f", "text", {"text": citation, "note": "脚注"}))
+        pages.append(_new_page(
+            _pid("mod-sp", added + 1), "mod_spec_comparison", "matrix",
+            "参数对比矩阵（Top 竞品）",
+            "优势高亮=最优价格/评分；数据全部来自真实采集",
+            comps))
+        added += 1
+
+    if tops and "mod_sku_analysis" not in existing_types:
+        p = f"modsk{added + 1}"
+        fba_n = sum(1 for t in tops if t.get("is_fba"))
+        sellers: dict[str, int] = {}
+        for t in tops:
+            s = str(t.get("seller_type") or "unknown")
+            sellers[s] = sellers.get(s, 0) + 1
+        comps = [
+            _comp(f"{p}m", "metric",
+                  {"value": f"{fba_n}/{len(tops)}", "label": "FBA 占比（Top8）"}),
+            _comp(f"{p}t", "text", {
+                "title": "卖家类型分布",
+                "text": "；".join(f"{k}×{v}" for k, v in sellers.items())}),
+        ]
+        chart = _chart_comp(f"{p}", "sku_channels")
+        if chart:
+            comps.insert(1, chart)
+        if citation:
+            comps.append(_comp(f"{p}f", "text", {"text": citation, "note": "脚注"}))
+        pages.append(_new_page(
+            _pid("mod-sk", added + 1), "mod_sku_analysis", "features",
+            "SKU 与渠道结构",
+            f"Top{len(tops)} 中 FBA {fba_n} 款；"
+            + "；".join(f"{k}×{v}" for k, v in list(sellers.items())[:3]),
+            comps))
+        added += 1
+
+    insights = mod_pack.get("insights") or []
+    if (insights or interp) and "mod_actions" not in existing_types:
+        p = f"modac{added + 1}"
+        actions = list(insights)[:4] or [interp.get("verdict") or "TBD"]
+        comps = [
+            _comp(f"{p}c", "card", {
+                "title": f"0{i + 1}", "description": str(a)[:120],
+                "owner": owner})
+            for i, (a, owner) in enumerate(zip(
+                actions, ("定价/选品", "选品", "运营", "listing")))
+        ]
+        if citation:
+            comps.append(_comp(f"{p}f", "text", {"text": citation, "note": "脚注"}))
+        pages.append(_new_page(
+            _pid("mod-ac", added + 1), "mod_actions", "features",
+            "行动建议（owner 制）",
+            str(interp.get("verdict") or "基于真实数据的下一步"),
+            comps))
+        added += 1
+
+    if not added:
+        return presentation
+    return Presentation(title=presentation.title, theme=presentation.theme, pages=pages)
+
+
 def ensure_consulting_theme(presentation: Presentation, seed: str = "") -> Presentation:
     """CyberPPT 风格锁定（确定性）：
 

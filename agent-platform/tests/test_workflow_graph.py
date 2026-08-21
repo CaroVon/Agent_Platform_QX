@@ -20,6 +20,23 @@ def _market_research() -> dict:
     }
 
 
+def _competitor_matrix() -> dict:
+    """competitor_matrix 节点脚本（PriceCompetitorMatrix 最小可用负载）。"""
+    return {
+        "keyword": IDEA,
+        "marketplace": "amazon.com",
+        "products": [
+            {"asin": "B0TEST01", "title": "竞品 A", "zone": "red_ocean"},
+            {"asin": "B0TEST02", "title": "竞品 B", "zone": "price_gap"},
+        ],
+        "zoning_rules": {"price_gap": {"p25": 10, "p75": 30}},
+        "llm_interpretation": {"verdict": "切入价格缺口带"},
+        "artifacts_paths": {"markdown": "competitor_matrix.md"},
+        "fetched_at": "2026-01-01T00:00:00Z",
+        "cost_estimate": {"rainforest_credits": 3},
+    }
+
+
 def _competitor_analysis() -> dict:
     return {
         "competitors": [{"name": "Keep", "positioning": "大众健身", "threat_level": "high"}],
@@ -170,7 +187,7 @@ def _build_graph(research: _Agent, product: _Agent, design: _Agent, pres: _Agent
 
 def test_happy_path_full_pipeline():
     research = _Agent(
-        {"market_research": [_market_research()], "competitor_analysis": [_competitor_analysis()]}
+        {"market_research": [_market_research()], "competitor_matrix": [_competitor_matrix()], "competitor_analysis": [_competitor_analysis()]}
     )
     product = _Agent({"strategy": [_strategy()]})
     design = _Agent({"ux_design": [_design()]})
@@ -199,6 +216,7 @@ def test_node_retry_on_transient_failure():
     research = _Agent(
         {
             "market_research": [RuntimeError("临时故障"), _market_research()],
+            "competitor_matrix": [_competitor_matrix()],
             "competitor_analysis": [_competitor_analysis()],
         }
     )
@@ -217,7 +235,7 @@ def test_node_retry_on_transient_failure():
 def test_node_failure_degrades_gracefully():
     """presentation 节点持续失败 → 资产包仍产出，错误被结构化记录。"""
     research = _Agent(
-        {"market_research": [_market_research()], "competitor_analysis": [_competitor_analysis()]}
+        {"market_research": [_market_research()], "competitor_matrix": [_competitor_matrix()], "competitor_analysis": [_competitor_analysis()]}
     )
     product = _Agent({"strategy": [_strategy()]})
     design = _Agent({"ux_design": [_design()]})
@@ -253,7 +271,7 @@ def test_schema_violation_marks_node_failed():
 def test_requirement_fallback_without_llm():
     """无 LLM 时 Requirement Parser 确定性回退。"""
     research = _Agent(
-        {"market_research": [_market_research()], "competitor_analysis": [_competitor_analysis()]}
+        {"market_research": [_market_research()], "competitor_matrix": [_competitor_matrix()], "competitor_analysis": [_competitor_analysis()]}
     )
     product = _Agent({"strategy": [_strategy()]})
     design = _Agent({"ux_design": [_design()]})
