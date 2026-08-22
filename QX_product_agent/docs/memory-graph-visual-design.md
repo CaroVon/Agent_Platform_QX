@@ -301,3 +301,30 @@ frontend/src/pages/MemoryPage.tsx  // 页面组装：搜索/筛选/scope/画布/
 - M4 ✅ `MemoryPage.tsx` 组装（工具栏/统计条/画布/图例/洞察面板/PNG 导出）+ `GraphSidebar.tsx`（详情/邻域/洞察/证据/纠错删除）+ Sidebar 入口 + 懒加载路由
 - M5 ⏳ 社区着色与后端聚合（>3000 节点场景）留待 P4d（当前 limit=400 截断提示已实现）
 - M6 ⏳ 时间轴重放与 3D 演示模式留待 P4d（可选）
+
+---
+
+## 16. 显示问题修复记录（2026-08）
+
+### 问题现象
+Memory Graph 页面无法显示关系图（画布空白 / 项目视图报错 / 各视图均为空状态）。
+
+### 根因链（调研结论）
+
+| # | 根因 | 修复 |
+|---|------|------|
+| 1 | **GraphCanvas 渲染时序 bug**：loading 分支不渲染容器 div，`containerRef` 为 null，初始化 effect 只在挂载时执行一次 → 图表实例从未创建 | 容器 div 常驻，loading/error/empty 改为覆盖层；主题切换 dispose 后重建并重放 option；点击回调改经 ref 读取最新数据（`GraphCanvas.tsx` 重写） |
+| 2 | **前端/后端 studio 契约不一致**：前端传 `project_id=studio:{uuid}`，后端按 `projects.id` 解析 → `uuid.UUID('studio:…')` 抛错 → HTTP 500 | 后端 `/memory/graph` 与 `/memory/insights` 兼容剥离 `studio:` 前缀（`memory.py`）；外部已实现的 `studio_product_id` 独立参数路径保持不变 |
+| 3 | **记忆抽取未覆盖 Product Studio 产品**：记忆钩子只挂在传统研究报告流程，studio 产品（用户实际主要工作流）无记忆数据 | `extract_memory_from_project` 支持 `studio:{id}` 源（语料来自 `studio_products.asset_package`/`keywords` 递归提取文本）；`build_studio_memory_graph` 任务与 `/memory/rebuild-studio` 端点（外部已实现）配套 |
+| 4 | **空状态无引导**：全局视图无全局记忆时只显示"空的"，用户不知道去哪看 | 空状态引导条：全局空 → "查看项目记忆"CTA；项目空 → "立即抽取"CTA（触发 rebuild） |
+
+### 验证（Playwright headless chromium 实测）
+- ✅ 全局视图：空状态 + 引导条显示
+- ✅ 项目视图（studio 产品）：canvas 渲染（752×558，非背景像素 >0）、无 JS 错误
+- ✅ 点击画布 → 实体详情侧栏弹出
+- ✅ `tsc -b` 零错误、`vite build` 通过、后端 75 项 pytest 全绿
+
+### 环境备注
+- 本机 headless 截图依赖 `LD_LIBRARY_PATH=/tmp/alsa-stub`（系统缺 libasound.so.2，stub 以 ALSA_0.9/ALSA_0.9.0rc4 版本节点导出 125 个符号）；验证脚本见 `/tmp/final-verify.js`
+- 演示种子数据：admin 用户传统项目"智能手表竞品分析"（7 实体/8 关系/2 洞察）+ studio 产品"青年财务 App"（5 实体/5 关系/2 洞察），可在 Memory Page 直接查看
+- **后端需重启**（uvicorn 热加载不生效）以加载 `memory_extraction.py` 的 studio 抽取分支

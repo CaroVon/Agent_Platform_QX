@@ -300,6 +300,11 @@ function SourcesGate({
               {amazon.keyword} · {amazon.n_products} ASIN · credits≈{amazon.credits}
               {amazon.fetched_at ? ` · ${amazon.fetched_at.slice(0, 10)}` : ''}
             </span>
+            {amazon.source === 'mock' && (
+              <span className="rounded-full bg-amber-500/15 px-2 py-0.5 text-[10px] font-semibold text-amber-600 dark:text-amber-400">
+                ⚠️ mock 数据 · 非真实采集
+              </span>
+            )}
             <span className="ml-auto rounded-full bg-secondary px-2 py-0.5 text-[10px] text-muted-foreground">
               只读参考 · 不可筛选
             </span>

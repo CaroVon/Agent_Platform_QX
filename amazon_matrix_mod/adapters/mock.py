@@ -1,7 +1,11 @@
 """Mock 适配器 —— 离线开发/单测用（0 credits）。"""
 from __future__ import annotations
 
+import logging
+
 from amazon_matrix_mod.metrics import parse_recent_sales
+
+logger = logging.getLogger(__name__)
 
 # 模拟 "wireless mouse" 竞品池（真实 ASIN/价格量级，主图用 media-amazon 占位图）
 _MOCK_PRODUCTS = [
@@ -57,7 +61,16 @@ _MOCK_PRODUCTS = [
 
 
 def fetch_competitors(keyword: str, limit: int = 50, **kwargs) -> list[dict]:
-    """返回模拟竞品（截取 limit 个）。"""
+    """返回模拟竞品（截取 limit 个）。
+
+    夹具为固定 wireless mouse 竞品池，与 keyword 无关；keyword 非鼠标品类时
+    打 WARNING（防止 mock 数据被误当作真实采集结果消费）。
+    """
+    kw = (keyword or "").strip().lower()
+    if kw and "mouse" not in kw:
+        logger.warning(
+            "[mock] keyword=%r 与夹具品类(wireless mouse)不符：返回的仍是 %d 个"
+            "鼠标夹具竞品（离线开发数据，非真实采集）", keyword, min(limit, len(_MOCK_PRODUCTS)))
     rows = []
     for p in _MOCK_PRODUCTS:
         row = dict(p)

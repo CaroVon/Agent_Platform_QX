@@ -37,6 +37,7 @@ from typing import Any, Callable
 
 from celery.exceptions import SoftTimeLimitExceeded
 from langgraph.graph import END, START, StateGraph
+from pydantic import BaseModel
 
 from agent_platform.harness.agent_loop import BaseAgent
 from agent_platform.harness.quality_gate import run_quality_gate
@@ -74,6 +75,16 @@ NODE_ORDER = [
 _REQUIREMENT_SYSTEM = """你是资深产品需求分析师。
 解析用户的产品想法，输出结构化的产品需求规格。
 只输出符合 Schema 的 JSON。"""
+
+
+class _AmazonSearchKeyword(BaseModel):
+    keyword: str
+
+
+_AMAZON_KEYWORD_SYSTEM = """你是亚马逊美国站（amazon.com）市场研究专家。
+把用户的产品想法转换为适合亚马逊搜索的英文关键词短语：
+2-4 个单词、品类词 + 核心修饰（如 "robot vacuum" / "wireless gaming mouse"），
+不含品牌名、价格、销量等限定，不含中文。只输出符合 Schema 的 JSON。"""
 
 
 class GatePause(Exception):
@@ -279,6 +290,28 @@ class ProductResearchGraph:
             raise RuntimeError(result.error or f"Agent {agent.name} 执行失败")
         return {field: result.data}
 
+    def _amazon_search_keyword(self, keyword: str) -> str:
+        """idea → amazon.com 英文检索词（Rainforest search_term 仅适配英文；
+        中文/混合关键词在 amazon.com 搜索基本无结果）。已是 ASCII 或翻译失败时原样返回。"""
+        if not keyword or keyword.isascii():
+            return keyword
+        if self.llm is None:
+            return keyword
+        try:
+            model = StructuredRunner(self.llm).run(
+                system_prompt=_AMAZON_KEYWORD_SYSTEM,
+                user_prompt=f"产品想法：{keyword}",
+                schema=_AmazonSearchKeyword,
+                max_retries=1,
+            )
+            en = (model.keyword or "").strip()
+            if en:
+                logger.info("[source_gathering] 亚马逊检索词翻译: %r → %r", keyword, en)
+                return en
+        except Exception as exc:  # noqa: BLE001 —— 翻译失败回退原词
+            logger.warning("[source_gathering] 亚马逊检索词翻译失败（回退原词）: %s", exc)
+        return keyword
+
     def _gather_sources(self, state: dict) -> dict:
         """统一采集节点（B/C 共享数据层）：Tavily 网络检索 + Rainforest 亚马逊抓取
         → 暂停等待用户审核（Plan/Act 门；网络源可勾选，亚马逊数据只读展示）。"""
@@ -307,7 +340,7 @@ class ProductResearchGraph:
             if keyword:
                 try:
                     amazon = collect_fn(
-                        keyword,
+                        self._amazon_search_keyword(keyword),
                         product_id=state.get("product_id"),
                         top_n=int(state.get("top_n") or 20),
                         source=str(state.get("source") or "rainforest"),
@@ -631,8 +664,10 @@ class ProductResearchGraph:
         extra_initial: dict | None = None,
     ) -> ProductAssetPackage:
         """运行全流程，返回最终产品资产包。"""
+        # 注意：extra_initial 必须放最后 —— 断点恢复的资产值（research 等）要覆盖
+        # None 默认值；放前面会被下面的 "research": None 等键清掉，导致已完成节点
+        # 被跳过后下游拿不到上游成果（resume 路径回归）。
         initial: ProductStudioState = {
-            **dict(extra_initial or {}),
             "idea": idea,
             "memory_namespace": memory_namespace,
             "requirement": None,
@@ -652,6 +687,7 @@ class ProductResearchGraph:
             "gate_report": None,
             "node_status": {name: "pending" for name in NODE_ORDER + ["critic", "assemble"]},
             "errors": {},
+            **dict(extra_initial or {}),
         }
         config = None
         if self._checkpointer is not None:

@@ -417,15 +417,23 @@ def run_product_studio_pipeline(self: ProductStudioTask, product_id: str):
         if settings.SOURCE_REVIEW and "source_gathering" not in gate_nodes:
             gate_nodes.insert(0, "source_gathering")
         extra_initial: dict = {"product_id": str(product_id), "_gate_nodes": gate_nodes}
-        # MOD 数据源覆盖（MOD_SOURCE=mock 供 0-credit 预演/测试；缺省 rainforest）
-        if os.environ.get("MOD_SOURCE"):
-            extra_initial["source"] = os.environ["MOD_SOURCE"]
-        # MOD 抓取量覆盖（缺省 20：search 1 + product 20 ≈ 21 credits）
-        if os.environ.get("MOD_TOP_N"):
-            try:
-                extra_initial["top_n"] = int(os.environ["MOD_TOP_N"])
-            except ValueError:
-                pass
+        # MOD 数据源/抓取量覆盖（MOD_SOURCE=mock 供 0-credit 预演/测试；缺省 rainforest）。
+        # 仅 QX_ENV=e2e 时生效：E2E worker 与生产任务共用队列时，防止 mock 夹具
+        # 污染真实交付（mock 夹具为固定 wireless mouse 数据，与任务品类无关）。
+        _e2e = os.environ.get("QX_ENV", "").strip().lower() == "e2e"
+        if _e2e:
+            if os.environ.get("MOD_SOURCE"):
+                extra_initial["source"] = os.environ["MOD_SOURCE"]
+            # MOD 抓取量覆盖（缺省 20：search 1 + product 20 ≈ 21 credits）
+            if os.environ.get("MOD_TOP_N"):
+                try:
+                    extra_initial["top_n"] = int(os.environ["MOD_TOP_N"])
+                except ValueError:
+                    pass
+        elif os.environ.get("MOD_SOURCE"):
+            logger.warning(
+                "[Product Studio] 忽略 MOD_SOURCE=%s（仅 QX_ENV=e2e 时生效，"
+                "防止 mock 数据污染生产任务）", os.environ["MOD_SOURCE"])
         # 读取产品记录判断是否从等待批准状态恢复
         from app.core.celery_db import get_sync_engine
         from sqlalchemy.orm import Session
