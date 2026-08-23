@@ -17,6 +17,19 @@ import re
 _BANNED_PLACEHOLDERS = ("解读缺失", "TODO：", "XXX", "？？？")
 _MOD_CITATION_MARKS = ("*Rainforest", "[A", "ASIN", "B0")
 
+# 裸占位词：<text> 整节点内容恰为图表类型词（LLM 未画图只留词，
+# 曾致"timeline"占位的空图表页通过 QA 混入成品）
+_BARE_PLACEHOLDER_RE = re.compile(
+    r">\s*(timeline|flowchart|chart|diagram|graph|TBD|待补|占位)\s*<", re.IGNORECASE)
+
+# 硬性失败：重做预算耗尽也不得放行（放行 = 成品出现空壳/占位页），
+# 其余（色板/字号等）保持"带警告放行"的原有策略
+_HARD_ISSUE_PREFIXES = ("信息密度不足", "视觉结构不足", "缺少视觉层次", "禁用空占位")
+
+
+def is_hard_issue(issue: str) -> bool:
+    return issue.startswith(_HARD_ISSUE_PREFIXES)
+
 
 def _hex_to_rgb(value: str) -> tuple[int, int, int] | None:
     v = value.lstrip("#")
@@ -107,6 +120,10 @@ def qa_page(svg: str, page: dict, theme: dict | None,
         if banned in svg:
             issues.append(f"禁用空占位：{banned}")
             break
+    else:
+        m = _BARE_PLACEHOLDER_RE.search(svg)
+        if m:
+            issues.append(f"禁用空占位：裸占位词充当图表（{m.group(1)}）")
 
     # 7. MOD 页数据溯源
     if is_mod and not any(mark in svg for mark in _MOD_CITATION_MARKS):

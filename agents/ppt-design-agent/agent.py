@@ -499,6 +499,13 @@ class PptDesignAgent(BaseAgent):
             backfill = {"error": str(exc)}
 
         # ── 6) finalize + svg_to_pptx ───────────────────────────
+        # 导出一致性门：svg_output 页数必须与 DSL 页数一致（跨运行遗留/
+        # 清理异常会混装；曾出现 16+17 两代共 30 页的成品 deck）
+        _n_svg = len(list((project_dir / "svg_output").glob("slide_*.svg")))
+        if _n_svg != total_pages:
+            raise RuntimeError(
+                f"导出一致性门失败：svg_output {_n_svg} 页 != DSL {total_pages} 页"
+                "（疑似跨运行遗留文件混入）")
         self._write_progress(project_dir, stage="finalizing")
         self._emit("running", "finalize + 转换 PPTX")
         python = sys.executable
@@ -809,6 +816,11 @@ class PptDesignAgent(BaseAgent):
 
         svg_dir = project_dir / "svg_output"
         svg_dir.mkdir(exist_ok=True)
+        # 跨运行/节点重试遗留清理：project_dir 按产品复用，每轮全量重画；
+        # 旧 slide 文件不清理会被导出器全量打包（曾致新旧两代 30 页混装）。
+        # finalize_svg 以 svg_output 为源原子重建 svg_final，清这里即足够。
+        for _old in svg_dir.glob("slide_*.svg"):
+            _old.unlink()
         pages = presentation.get("pages") or []
         llm = get_presentation_llm_client() or get_llm_client()
         files: list[str] = []
@@ -943,6 +955,24 @@ class PptDesignAgent(BaseAgent):
                     qa_attempts[idx] = qa_attempts.get(idx, 0) + 1
                     stats["qa_reworks"] += 1
                     return False, qa_issues  # 重排队（带反馈）
+                # 硬性失败（信息密度/视觉结构/占位）：重做预算耗尽也不放行
+                # ——曾出现仅含"timeline"占位词的空图表页带警告混入成品。
+                # 降级为确定性兜底版式并重走注入链，保证页面非空可读。
+                if qa_issues and any(svg_qa.is_hard_issue(i) for i in qa_issues):
+                    logger.warning(
+                        "[finalize] P%d 重做耗尽仍硬性不达标（%s），降级兜底版式",
+                        page_no, "; ".join(qa_issues[:3]))
+                    status = "fallback"
+                    stats["fallbacks"] += 1
+                    svg = svg_author.fallback_svg(page, theme)
+                    svg = svg_author.sanitize_svg(svg)
+                    svg = svg_author.inject_page_image(svg, page_image, page)
+                    svg = cross_page_module.inject_root_metadata(
+                        svg, page.get("type", "content"), idx, total)
+                    if page.get("type") != "cover":
+                        svg = cross_page_module.inject_footer(svg, idx, total, identity)
+                    svg, _ = cross_page_module.snap_font_sizes(svg)
+                    qa_issues = []
 
             (svg_dir / name).write_text(svg, encoding="utf-8")
             files.append(name)
