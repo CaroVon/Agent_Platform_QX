@@ -10,6 +10,8 @@ agent_py310/
 
 # Env
 .env
+.env.bak*
+.env.backup*
 
 # IDE
 .vscode/
