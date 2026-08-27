@@ -19,6 +19,7 @@ import {
   Maximize2,
   RefreshCw,
   ShieldCheck,
+  ThumbsDown,
   X,
 } from 'lucide-react'
 import { productApi, type PptProgress } from '@/lib/api'
@@ -59,6 +60,8 @@ export function PptLivePanel({
   const [progress, setProgress] = useState<PptProgress | null>(null)
   const [lightbox, setLightbox] = useState<PptProgress['pages'][number] | null>(null)
   const [error, setError] = useState('')
+  const [reworkMsg, setReworkMsg] = useState('')
+  const [reworkBusy, setReworkBusy] = useState<number | null>(null)
   const timer = useRef<number | null>(null)
 
   useEffect(() => {
@@ -88,6 +91,26 @@ export function PptLivePanel({
   const hasPages = (progress?.pages?.length ?? 0) > 0
   if (!progress || (!progress.active && !hasPages && progress.stage !== 'done')) {
     return null
+  }
+
+  /** P0.5：页级👎返工（运行中入队 / 完成态外科重做） */
+  const handleRework = async (pageIndex: number) => {
+    const feedback =
+      window.prompt(
+        `对第 ${pageIndex + 1} 页的改进意见（会带反馈重做该页并重新导出）：`,
+        '',
+      ) ?? ''
+    if (feedback === null) return
+    setReworkBusy(pageIndex)
+    try {
+      const r = await productApi.pptRework(productId, pageIndex, feedback.trim())
+      setReworkMsg(r.queued ? `P${pageIndex + 1} 已入返工队列` : (r.detail || `P${pageIndex + 1} 已重做`))
+    } catch (e) {
+      setReworkMsg(`返工失败: ${e instanceof Error ? e.message : String(e)}`)
+    } finally {
+      setReworkBusy(null)
+      setTimeout(() => setReworkMsg(''), 6000)
+    }
   }
 
   const stage = progress.stage ?? ''
@@ -190,16 +213,21 @@ export function PptLivePanel({
       {/* ── 缩略图网格（流式填充） ── */}
       <div className="px-4 py-3">
         {error && <div className="mb-2 text-[11px] text-muted-foreground">{error}</div>}
+        {reworkMsg && (
+          <div className="mb-2 rounded border border-[#24415E]/30 bg-[#24415E]/5 px-2 py-1 text-[11px] text-[#24415E]">
+            {reworkMsg}
+          </div>
+        )}
         {hasPages ? (
           <div className="grid grid-cols-3 gap-2">
             {progress.pages.map((pg) => {
               const st = pageStatusOf(pg.index, progress.per_page, progress.total)
               return (
+                <div key={pg.file} className="group relative">
                 <button
-                  key={pg.file}
                   type="button"
                   onClick={() => setLightbox(pg)}
-                  className="group relative overflow-hidden rounded-md border border-border bg-background/60 transition-all hover:border-[#24415E]/50 hover:shadow-elev-xs"
+                  className="relative block w-full overflow-hidden rounded-md border border-border bg-background/60 transition-all hover:border-[#24415E]/50 hover:shadow-elev-xs"
                 >
                   <img
                     src={pg.url}
@@ -231,6 +259,25 @@ export function PptLivePanel({
                     </div>
                   )}
                 </button>
+                  {/* P0.5：页级返工按钮（hover 出现，运行中入队 / 完成态重做） */}
+                  <button
+                    type="button"
+                    title="对此页返工（附改进意见）"
+                    disabled={reworkBusy === pg.index}
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      handleRework(pg.index)
+                    }}
+                    className="absolute bottom-1 left-1 hidden items-center gap-1 rounded bg-white/90 px-1.5 py-0.5 text-[10px] font-medium text-red-600 shadow group-hover:flex disabled:opacity-50"
+                  >
+                    {reworkBusy === pg.index ? (
+                      <Loader2 className="h-3 w-3 animate-spin" />
+                    ) : (
+                      <ThumbsDown className="h-3 w-3" />
+                    )}
+                    返工
+                  </button>
+                </div>
               )
             })}
             {/* 待生成占位 */}

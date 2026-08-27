@@ -36,6 +36,29 @@ _SKILL_RULES = """## 硬性规则（必须遵守）
 - filter 只能直接用于 rect/circle/image/path/text；禁止在 <g> 或 style 中使用 filter"""
 
 
+
+
+# ── P1 图标库（Iconify MIT 路径精选；LLM 可内联到卡片眉标/清单项） ──
+ICON_LIBRARY = {
+    "check": "M9 16.17 4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z",
+    "warning": "M1 21h22L12 2 1 21zm12-3h-2v-2h2v2zm0-4h-2v-4h2v4z",
+    "trend_up": "M16 6l2.29 2.29-4.88 4.88-4-4L2 16.59 3.41 18l6-6 4 4 6.3-6.29L22 12V6z",
+    "target": "M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20zm0 18a8 8 0 1 1 0-16 8 8 0 0 1 0 16zm0-4a4 4 0 1 1 0-8 4 4 0 0 1 0 8z",
+    "dollar": "M12.82 5.58V3h-1.64v2.58H9.27V3H7.63v2.58H5v1.64h2.63v1.82H5v1.64h2.63V19h1.64v-1.64h1.91V19h1.64v-1.64c1.83-.13 3.09-1.2 3.09-2.91 0-1.36-.86-2.24-2.32-2.58v-2.6c1.32-.13 2.14-.94 2.14-2.18 0-1.45-1.02-2.31-2.91-2.51z",
+    "users": "M16 11c1.66 0 3-1.34 3-3s-1.34-3-3-3-3 1.34-3 3 1.34 3 3 3zm-8 0c1.66 0 3-1.34 3-3S9.66 5 8 5 5 6.34 5 8s1.34 3 3 3zm0 2c-2.33 0-7 1.17-7 3.5V19h14v-2.5c0-2.33-4.67-3.5-7-3.5zm8 0c-.29 0-.62.02-.97.05 1.16.84 1.97 1.97 1.97 3.45V19h6v-2.5c0-2.33-4.67-3.5-7-3.5z",
+    "shield": "M12 1 3 5v6c0 5.55 3.84 10.74 9 12 5.16-1.26 9-6.45 9-12V5l-9-4z",
+    "bolt": "M7 2v11h3v9l7-12h-4l4-8z",
+    "box": "M12 2 2 7v10l10 5 10-5V7L12 2zm0 2.24 7 3.5-7 3.5-7-3.5 7-3.5zM4 9.24l7 3.5v6.02l-7-3.5V9.24z",
+    "flag": "M14.4 6 14 4H5v17h2v-7h5.6l.4 2h7V6z",
+}
+
+
+def _icon_hint() -> str:
+    """图标提示块：path 以 <path d="..."/> 形式内联（fill=currentColor 主题色）。"""
+    items = "\n".join(f'- {k}: <path d="{v}"/> (viewBox 0 0 24 24, 12-16px)' for k, v in list(ICON_LIBRARY.items())[:10])
+    return ("\n## 可用图标（Iconify MIT 精选，内联 path，fill 用主题色）\n" + items + "\n")
+
+
 # ─────────────────────────────────────────────────────────────────
 # MOD 章节页型提示（视觉质量对齐 svg_final 基线 + ppt temp 技法入题自适应）
 # 技法来源：swiss_grid（细线网格/大字排版/mono 元数据）、glassmorphism（玻璃卡）、
@@ -197,6 +220,7 @@ def build_page_prompt(
     elif page_type.startswith("mod_"):
         page_kind_hint = _MOD_PAGE_HINTS.get(page_type, "")
 
+    icon_hint = _icon_hint()
     return f"""你是资深咨询风演示 SVG 设计师（ppt-master Executor）。根据页面数据与视觉体系，逐页手写高质量 SVG 页面。
 
 ## 设计规范摘要
@@ -211,7 +235,7 @@ def build_page_prompt(
 {img_hint}{page_kind_hint}## 页面数据（Presentation DSL 页 {page_index + 1}）
 {_page_json(page)}
 
-{_SKILL_RULES}
+{_SKILL_RULES}{icon_hint}
 
 ## 构图要求（咨询风）
 - 封面：左侧文字区（主标题+副标题+强调色条，x<640）+ 右侧产品主图区留白

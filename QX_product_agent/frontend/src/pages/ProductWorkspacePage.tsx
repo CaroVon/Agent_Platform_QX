@@ -500,18 +500,62 @@ function SourcesGate({
   )
 }
 
-/* ─── 人工批准门（其他节点） ─────────────────────── */
+/* ─── 人工批准门（其他节点；presentation 时展示大纲确认） ── */
 function ApprovalGate({
   pausedNode,
+  outline,
   onApprove,
   onReject,
 }: {
   pausedNode: string
+  /** P0.4：presentation 门时的页面大纲（title/insight/type） */
+  outline?: Array<{ title?: string; insight?: string; type?: string }>
   onApprove: () => Promise<void>
   onReject: () => Promise<void>
 }) {
+  const isOutlineGate = pausedNode === 'presentation'
   return (
-    <Section step="01" title="人工确认节点" description={`流水线已暂停于「${pausedNode}」节点，请审阅后决定继续或终止。`}>
+    <Section
+      step="01"
+      title={isOutlineGate ? '演示大纲确认' : '人工确认节点'}
+      description={
+        isOutlineGate
+          ? '演示页清单已生成（含 MOD 竞品矩阵章节）。批准后进入评审与逐页创作（约 15-20 分钟），请先确认结构符合预期。'
+          : `流水线已暂停于「${pausedNode}」节点，请审阅后决定继续或终止。`
+      }
+    >
+      {isOutlineGate && outline && outline.length > 0 && (
+        <div className="mb-4 max-h-72 overflow-y-auto rounded-lg border border-border">
+          {outline.map((p, i) => (
+            <div
+              key={i}
+              className={`flex items-start gap-3 border-b border-border/50 px-4 py-2.5 last:border-0 ${
+                (p.type || '').startsWith('mod_') ? 'bg-[#24415E]/[0.04]' : ''
+              }`}
+            >
+              <span className="mt-0.5 font-mono text-[11px] text-muted-foreground">
+                P{String(i + 1).padStart(2, '0')}
+              </span>
+              <div className="min-w-0 flex-1">
+                <div className="flex items-center gap-2">
+                  <span className="truncate text-[13px] font-medium">{p.title || '（未命名页）'}</span>
+                  <span className="shrink-0 rounded bg-secondary px-1.5 py-px font-mono text-[9px] uppercase text-muted-foreground">
+                    {p.type}
+                  </span>
+                  {(p.type || '').startsWith('mod_') && (
+                    <span className="shrink-0 rounded bg-[#24415E]/10 px-1.5 py-px text-[9px] text-[#24415E]">
+                      真实数据
+                    </span>
+                  )}
+                </div>
+                {p.insight && (
+                  <div className="mt-0.5 truncate text-[11px] text-muted-foreground">{p.insight}</div>
+                )}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
       <div className="flex flex-wrap items-center justify-between gap-4">
         <div className="flex items-center gap-2 text-warning">
           <AlertCircle className="h-4 w-4" />
@@ -522,7 +566,7 @@ function ApprovalGate({
             拒绝并终止
           </Button>
           <Button size="sm" onClick={onApprove}>
-            批准并继续
+            {isOutlineGate ? `批准大纲，开始制作（${outline?.length ?? '?'} 页）` : '批准并继续'}
           </Button>
         </div>
       </div>
@@ -635,6 +679,26 @@ export function ProductWorkspacePage() {
     product?.status === 'waiting_approval'
       ? (product.error_message?.replace('等待人工确认节点: ', '') ?? '')
       : ''
+
+  // ── P0.3：SSE 进度事件订阅（秒级推送触发即时拉取；失败退化为纯轮询） ──
+  useEffect(() => {
+    if (!product?.product_id || !isActive) return
+    let es: EventSource | null = null
+    try {
+      const base = (import.meta.env.VITE_API_BASE ?? '').replace(/\/$/, '')
+      es = new EventSource(`${base}/api/v1/product/${product.product_id}/events`)
+      const pid = product.product_id
+      es.addEventListener('progress', () => {
+        productApi.get(pid).then(setProduct).catch(() => {})
+        productApi.logs(pid).then((r) => setEventLogs(r.logs)).catch(() => {})
+      })
+      es.onerror = () => es?.close()
+    } catch {
+      /* EventSource 不可用时纯轮询 */
+    }
+    return () => es?.close()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [product?.product_id, isActive])
 
   // ──────────────── 数据加载 ────────────────
 
@@ -887,6 +951,11 @@ export function ProductWorkspacePage() {
       {product?.status === 'waiting_approval' && pausedNode !== 'source_gathering' && (
         <ApprovalGate
           pausedNode={pausedNode}
+          outline={
+            pausedNode === 'presentation' && product?.presentation
+              ? (product.presentation as { pages?: Array<{ title?: string; insight?: string; type?: string }> }).pages
+              : undefined
+          }
           onApprove={async () => {
             try {
               await productApi.approveNode(product.product_id, pausedNode)

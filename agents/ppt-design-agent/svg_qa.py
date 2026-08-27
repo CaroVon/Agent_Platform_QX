@@ -115,13 +115,16 @@ def qa_page(svg: str, page: dict, theme: dict | None,
     if "data-pptx-page-role" not in svg:
         issues.append("根属性缺失（data-pptx-page-role）")
 
-    # 6. 禁用空占位
+    # 6. 禁用空占位（先剥离 base64 data URI——嵌入图片的随机串可能恰含
+    #    "XXX" 等占位词，对全文裸查会系统性假阳性；裸查仅针对文本层）
+    import re as _re_strip
+    text_only = _re_strip.sub(r'data:[^"\')]+', '', svg)
     for banned in _BANNED_PLACEHOLDERS:
-        if banned in svg:
+        if banned in text_only:
             issues.append(f"禁用空占位：{banned}")
             break
     else:
-        m = _BARE_PLACEHOLDER_RE.search(svg)
+        m = _BARE_PLACEHOLDER_RE.search(text_only)
         if m:
             issues.append(f"禁用空占位：裸占位词充当图表（{m.group(1)}）")
 

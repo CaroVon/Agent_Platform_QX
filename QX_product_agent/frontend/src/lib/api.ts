@@ -597,6 +597,20 @@ export const productApi = {
     return request(`/product/${productId}/ppt-progress`)
   },
 
+  /** P0.5：页级返工（运行中入队 / 完成态外科单页重做） */
+  pptRework(productId: string, pageIndex: number, feedback: string): Promise<{
+    product_id: string
+    queued?: boolean
+    reworked?: boolean
+    page_index: number
+    detail?: string
+  }> {
+    return request(`/product/${productId}/ppt-rework`, {
+      method: 'POST',
+      body: JSON.stringify({ page_index: pageIndex, feedback }),
+    })
+  },
+
   /** 上传本地资料（作为最高权重补充来源） */
   async uploadSource(productId: string, file: File): Promise<{
     product_id: string

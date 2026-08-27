@@ -112,6 +112,9 @@ class Settings(BaseSettings):
     GATE_NODES: str = Field(default="")
     # 资料审核（默认开启）：source_gathering 节点搜索后暂停，用户审核资料权重后再继续
     SOURCE_REVIEW: bool = Field(default=True)
+    # P0.4 大纲确认门：presentation 产出页清单后暂停，用户审批/增删页后再进入
+    # critic+逐页创作（避免结构跑偏后 15 分钟创作返工）；默认开启
+    OUTLINE_REVIEW: bool = Field(default=True)
 
     # ─── 看门狗（卡死任务回收） ────────────────────────────────
     # 超过该时长未更新的 running/queued 任务将被置为 failed

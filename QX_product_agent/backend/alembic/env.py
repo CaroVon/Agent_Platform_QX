@@ -47,6 +47,12 @@ def run_migrations_online() -> None:
     """
     在线模式迁移（直接连接数据库执行）
     """
+    # 优先应用配置（支持 DATABASE_URL 切换 PostgreSQL）；无 app 环境时回退 ini
+    try:
+        from app.core.config import get_settings
+        config.set_main_option("sqlalchemy.url", get_settings().DATABASE_URL_SYNC)
+    except Exception:  # noqa: BLE001 —— 独立迁移环境
+        pass
     connectable = engine_from_config(
         config.get_section(config.config_ini_section, {}),
         prefix="sqlalchemy.",

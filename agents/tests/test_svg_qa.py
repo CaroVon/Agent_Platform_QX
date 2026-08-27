@@ -81,3 +81,62 @@ def test_ns0_prefix_compat():
                .replace("<stop", "<ns0:stop").replace("</stop>", "</ns0:stop>") \
                .replace("</svg>", "</ns0:svg>").replace("<svg ", "<ns0:svg ", 1)
     assert qa_page(ns0, {"type": "content"}, _THEME, None) == []
+
+
+# ══════════════════════════════════════════════════════════
+# P1 Rust 内核等价性（qx_svg_tools 可选，缺失时 skip）
+# ══════════════════════════════════════════════════════════
+
+def _rust():
+    try:
+        import qx_svg_tools
+        return qx_svg_tools
+    except ImportError:
+        return None
+
+
+def test_rust_equivalence_snap():
+    rust = _rust()
+    if rust is None:
+        import pytest
+        pytest.skip("qx_svg_tools 未安装")
+    from agents.ppt_design_agent import cross_page
+    cases = [_RICH, _THIN.replace("#2E7D32", "#12355B"),
+             _RICH.replace('font-size="14"', 'font-size="15.5"'),
+             _RICH.replace('font-size="44"', 'font-size="47"')]
+    for svg in cases:
+        py_svg, py_info = cross_page.snap_font_sizes(svg)
+        rs_svg, rs_count = rust.snap_font_sizes(svg)
+        assert py_svg == rs_svg, "snap 产物不一致"
+        assert len(py_info["snapped"]) == rs_count, "snap 计数不一致"
+
+
+def test_rust_equivalence_qa_budget_and_palette():
+    rust = _rust()
+    if rust is None:
+        import pytest
+        pytest.skip("qx_svg_tools 未安装")
+    from agents.ppt_design_agent import svg_qa
+    palette = list(_THEME["palette"].values())
+    for svg, page in ((_RICH, "content"), (_THIN, "mod_overview"), (_RICH, "cover")):
+        py = svg_qa.qa_page(svg, {"type": page}, _THEME, None)
+        py_budget = [i for i in py if any(k in i for k in ("密度", "结构", "层次"))]
+        py_palette = [i for i in py if "色板" in i]
+        py_fonts = [i for i in py if "字号" in i]
+        rs_budget = list(rust.qa_element_budget(svg, page))
+        rs_palette = list(rust.qa_palette(svg, palette))
+        rs_fonts = list(rust.qa_font_sizes(svg))
+        # 判定等价：有问题/无问题的二值结论必须一致（文案措辞允许差异）
+        assert bool(py_budget) == bool(rs_budget), (page, py_budget, rs_budget)
+        assert bool(py_palette) == bool(rs_palette), (page, py_palette, rs_palette)
+        assert bool(py_fonts) == bool(rs_fonts), (page, py_fonts, rs_fonts)
+
+
+def test_rust_process_page_roundtrip():
+    rust = _rust()
+    if rust is None:
+        import pytest
+        pytest.skip("qx_svg_tools 未安装")
+    r = rust.process_page(_THIN, "mod_overview", list(_THEME["palette"].values()))
+    assert r["svg"] and isinstance(r["issues"], list) and len(r["issues"]) >= 3
+    assert r["svg"].startswith("<svg")

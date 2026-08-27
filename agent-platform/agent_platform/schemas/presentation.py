@@ -57,6 +57,17 @@ PageType = Literal[
 LayoutId = Literal[
     "cover", "summary", "market", "matrix", "persona",
     "journey", "features", "architecture", "roadmap", "closing",
+    # ── P1 多样性扩容（10 → 20 版式）──
+    "big_number",     # 大数字锚点页（货币级 KPI）
+    "comparison",     # 左右对比页（我们 vs 竞品 / 现状 vs 方案）
+    "gallery",        # 三/四卡画廊（图片矩阵）
+    "kpi_wall",       # KPI 墙（6-8 指标网格）
+    "quote_full",     # 全屏引用页（金句/用户原声）
+    "timeline_v",     # 竖版时间线（历程/里程碑）
+    "funnel",         # 漏斗页（转化/分层）
+    "table_dense",    # 密集数据表（宽表）
+    "map_split",      # 图文分栏（图左文右）
+    "checklist",      # 清单页（行动项/检查表）
 ]
 
 
@@ -226,6 +237,67 @@ LAYOUT_LIBRARY: dict[str, dict] = {
         "page_types": ["conclusion"],
         "grid": "全屏居中：金句 / 行动号召",
         "components": ["quote", "text"],
+    },
+    # ── P1 多样性扩容版式 ──
+    "big_number": {
+        "name": "大数字锚点",
+        "page_types": ["executive_summary", "market_overview", "mod_overview"],
+        "grid": "单一巨型数值（80px+）+ 单位 tspan + 三行支撑说明",
+        "components": ["metric", "text"],
+    },
+    "comparison": {
+        "name": "左右对比",
+        "page_types": ["competitor_matrix", "mod_spec_comparison", "feature_priority"],
+        "grid": "双栏对峙：左现状/竞品 vs 右方案/我方，中线分隔 + 逐行对照",
+        "components": ["card", "table", "matrix"],
+    },
+    "gallery": {
+        "name": "卡片画廊",
+        "page_types": ["user_persona", "user_journey", "mod_sku_analysis"],
+        "grid": "3×N 等宽卡片墙（图/标题/一句话）",
+        "components": ["image", "card"],
+    },
+    "kpi_wall": {
+        "name": "KPI 墙",
+        "page_types": ["market_overview", "executive_summary", "mod_overview"],
+        "grid": "2×3 或 2×4 指标网格（accent 顶条 + 大数值 + 小标签）",
+        "components": ["metric"],
+    },
+    "quote_full": {
+        "name": "全屏引用",
+        "page_types": ["user_persona", "conclusion"],
+        "grid": "全屏留白 + 引文居中 + 出处签名（用户原声/评论）",
+        "components": ["quote"],
+    },
+    "timeline_v": {
+        "name": "竖版时间线",
+        "page_types": ["roadmap", "user_journey"],
+        "grid": "左侧竖轴 + 阶段节点（时期/事件/产出）",
+        "components": ["timeline", "card"],
+    },
+    "funnel": {
+        "name": "漏斗",
+        "page_types": ["market_overview", "user_journey"],
+        "grid": "分层漏斗（层名+量级+转化率标注）",
+        "components": ["chart", "metric"],
+    },
+    "table_dense": {
+        "name": "密集数据表",
+        "page_types": ["competitor_matrix", "mod_spec_comparison", "mod_sku_analysis"],
+        "grid": "全宽表（主色表头 + 斑马纹 + 优势格高亮）",
+        "components": ["table"],
+    },
+    "map_split": {
+        "name": "图文分栏",
+        "page_types": ["market_overview", "mod_matrix", "product_architecture"],
+        "grid": "图占左 55% + 右侧要点列（或反向）",
+        "components": ["image", "text"],
+    },
+    "checklist": {
+        "name": "行动清单",
+        "page_types": ["feature_priority", "mod_actions", "conclusion"],
+        "grid": "编号清单（01-06 + 复选框 + owner/优先级徽标）",
+        "components": ["card", "table"],
     },
 }
 

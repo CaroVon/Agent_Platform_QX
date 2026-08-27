@@ -508,19 +508,15 @@ class PptDesignAgent(BaseAgent):
                 "（疑似跨运行遗留文件混入）")
         self._write_progress(project_dir, stage="finalizing")
         self._emit("running", "finalize + 转换 PPTX")
-        python = sys.executable
-        for script, args in (
-            ("finalize_svg.py", [str(project_dir)]),
-            ("svg_to_pptx.py", [str(project_dir), "-s", "final"]),
-        ):
-            proc = subprocess.run(
-                [python, str(_SCRIPTS_DIR / script), *args],
-                capture_output=True, text=True, timeout=600,
-                cwd=str(_SCRIPTS_DIR),
-            )
-            if proc.returncode != 0:
-                detail = (proc.stderr or proc.stdout)[-500:]
-                raise RuntimeError(f"{script} 失败: {detail}")
+        # P1 耗时优化：vendor 转换器进程内调用（省 3-4 次解释器启动 ≈ 10-15s/deck）
+        from agents.ppt_design_agent import vendor_bridge
+
+        rc, tail = vendor_bridge.run_finalize(str(project_dir))
+        if rc != 0:
+            raise RuntimeError(f"finalize_svg.py 失败: {tail}")
+        rc, tail = vendor_bridge.run_svg_to_pptx([str(project_dir), "-s", "final"])
+        if rc != 0:
+            raise RuntimeError(f"svg_to_pptx.py 失败: {tail}")
 
         pptx_candidates = list((project_dir / "exports").glob("*.pptx")) if (project_dir / "exports").is_dir() else []
         if pptx_candidates:
@@ -546,6 +542,7 @@ class PptDesignAgent(BaseAgent):
         except Exception:
             model = "deterministic"
 
+        reveal_html = self._export_reveal_html(project_dir, str(pkg_idea := presentation.get("title") or idea))
         self._write_progress(project_dir, stage="done", pptx_url=str(pptx_path))
         self._emit("completed", f"PPT 制作完成：{len(files)} 页 → {pptx_path.name}")
 
@@ -567,8 +564,43 @@ class PptDesignAgent(BaseAgent):
             "spec_lock_backfill": backfill,
             "mod_chart_assets": mod_assets,
             "mod_standalone": mod_standalone,
+            "reveal_html": reveal_html,
             "created_at": datetime.now(timezone.utc).isoformat(),
         }
+
+
+
+    # ── reveal.js 网页 deck 导出（P1 多格式出口） ──
+    @staticmethod
+    def _export_reveal_html(project_dir: Path, title: str) -> str | None:
+        """svg_final/*.svg → exports/deck.html（reveal.js，CDN 引用，离线降级为纵向滚动）。"""
+        import html as _html
+        svg_dir = project_dir / "svg_final"
+        svgs = sorted(svg_dir.glob("slide_*.svg")) if svg_dir.is_dir() else []
+        if not svgs:
+            return None
+        try:
+            sections = "\n".join(
+                f'<section><div class="svg-wrap">{svg.read_text(encoding="utf-8")}</div></section>'
+                for svg in svgs)
+            html_doc = f"""<!DOCTYPE html>
+<html lang="zh-CN"><head><meta charset="utf-8">
+<title>{_html.escape(title)}</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/reveal.js@5/dist/reveal.css">
+<style>body{{margin:0;background:#F7F6F0}}
+.svg-wrap svg{{width:100%;height:auto;display:block}}
+.reveal .slides{{text-align:left}}</style>
+</head><body>
+<div class="reveal"><div class="slides">{sections}</div></div>
+<script src="https://cdn.jsdelivr.net/npm/reveal.js@5/dist/reveal.js"></script>
+<script>try{{Reveal.initialize({{hash:true, embedded:false}})}}catch(e){{/* 离线时保持纵向滚动 */}}</script>
+</body></html>"""
+            out = project_dir / "exports" / "deck.html"
+            out.parent.mkdir(exist_ok=True)
+            out.write_text(html_doc, encoding="utf-8")
+            return str(out)
+        except Exception:  # noqa: BLE001 —— 增强出口失败不影响主产物
+            return None
 
     # ── MOD 章节图表资产同步（共享数据层 → 项目 images/） ──
     @staticmethod
@@ -683,7 +715,6 @@ class PptDesignAgent(BaseAgent):
         if not mod_files:
             return {**empty, "reason": "主 deck 无 MOD 章节页"}
         try:
-            python = sys.executable
             mod_out = out_dir / "studio_assets" / product_id / "competitor_matrix"
             standalone = mod_out / "ppt_standalone"
             st_svg = standalone / "svg_output"
@@ -728,19 +759,16 @@ class PptDesignAgent(BaseAgent):
                 dst = st_svg / f"slide_{i:02d}_{src.name.split('_', 2)[2]}"
                 dst.write_text(text_content, encoding="utf-8")
 
-            for script, args in (
-                ("finalize_svg.py", [str(standalone)]),
-                ("svg_to_pptx.py", [str(standalone), "-s", "final",
-                                    "-o", str(mod_out / "compet_matrix_tmp.pptx")]),
-            ):
-                proc = subprocess.run(
-                    [python, str(_SCRIPTS_DIR / script), *args],
-                    capture_output=True, text=True, timeout=600,
-                    cwd=str(_SCRIPTS_DIR),
-                )
-                if proc.returncode != 0:
-                    raise RuntimeError(
-                        f"{script} 失败: {(proc.stderr or proc.stdout)[-300:]}")
+            from agents.ppt_design_agent import vendor_bridge
+
+            rc, tail = vendor_bridge.run_finalize(str(standalone))
+            if rc != 0:
+                raise RuntimeError(f"finalize_svg.py 失败: {tail}")
+            rc, tail = vendor_bridge.run_svg_to_pptx(
+                [str(standalone), "-s", "final",
+                 "-o", str(mod_out / "compet_matrix_tmp.pptx")])
+            if rc != 0:
+                raise RuntimeError(f"svg_to_pptx.py 失败: {tail}")
             final_pptx = mod_out / "competitor_matrix.pptx"
             if (mod_out / "compet_matrix_tmp.pptx").is_file():
                 shutil.move(str(mod_out / "compet_matrix_tmp.pptx"), str(final_pptx))
@@ -943,9 +971,12 @@ class PptDesignAgent(BaseAgent):
                 svg = cross_page_module.inject_footer(svg, idx, total, identity)
                 stats["footers_injected"] += 1
 
-            # ── d) 字号白名单收敛 ──
-            svg, snap_info = cross_page_module.snap_font_sizes(svg)
-            stats["font_sizes_snapped"] += len(snap_info["snapped"])
+            # ── d) 字号白名单收敛（P1：Rust 内核可选开关） ──
+            from agents.ppt_design_agent import svg_kernels
+
+            svg, snap_info = svg_kernels.snap(svg, tuple())
+            stats["font_sizes_snapped"] += len(snap_info.get("snapped", [])) or int(
+                snap_info.get("snap_count_rust", 0))
 
             # ── e) 确定性质量门禁（对照 svg_final 参考基线） ──
             qa_issues: list[str] = []
@@ -975,6 +1006,8 @@ class PptDesignAgent(BaseAgent):
                     qa_issues = []
 
             (svg_dir / name).write_text(svg, encoding="utf-8")
+            if name in files:
+                files.remove(name)  # 用户返工重写同名页：去重计数
             files.append(name)
             qa_feedback.pop(idx, None)  # 重做成功，清除反馈
             if qa_issues:
@@ -982,7 +1015,7 @@ class PptDesignAgent(BaseAgent):
             stats["per_page"][page_no] = {
                 "status": status,
                 "page_image": page_image,
-                "font_sizes": snap_info["kept_unique"],
+                "font_sizes": snap_info.get("kept_unique", []),
                 "snap_count": len(snap_info["snapped"]),
                 "qa_issues": qa_issues,
             }
@@ -1007,7 +1040,34 @@ class PptDesignAgent(BaseAgent):
         # ── batch 自适应并发主循环（参照 image_gen._run_manifest） ──
         _tn = threading.current_thread().name
         queue: list[int] = list(range(total))
+
+        def _consume_user_rework() -> None:
+            """P0.5：批次间消费用户👎返工请求（progress.json.rework_requests），
+            对该页重新入队并携带反馈（走既有 qa_feedback 返工通道）。"""
+            try:
+                import json as _json
+                _pp = project_dir / "progress.json"
+                _prog = _json.loads(_pp.read_text(encoding="utf-8"))
+                _reqs = _prog.get("rework_requests") or []
+                if not _reqs:
+                    return
+                _prog["rework_requests"] = []
+                _pp.write_text(_json.dumps(_prog, ensure_ascii=False), encoding="utf-8")
+                for _req in _reqs:
+                    _idx = int(_req.get("page_index", -1))
+                    if 0 <= _idx < total:
+                        qa_feedback[_idx] = str(_req.get("feedback") or "用户要求改进")
+                        if _idx not in queue:
+                            queue.append(_idx)
+                            stats["qa_reworks"] += 1
+                        self._emit("running", f"P{_idx + 1:02d} 收到用户返工请求，已重新排队")
+                        logger.info("[ppt_design] P%d 用户返工请求入队: %s",
+                                    _idx + 1, str(_req.get("feedback"))[:80])
+            except Exception:  # noqa: BLE001 —— 消费失败不影响主循环
+                pass
+
         while queue:
+            _consume_user_rework()
             batch_size = min(current, len(queue))
             batch = queue[:batch_size]
             queue = queue[batch_size:]

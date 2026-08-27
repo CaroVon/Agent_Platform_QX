@@ -156,6 +156,18 @@ def _persist_progress(product_id: str, event: dict) -> None:
         except Exception as exc:  # noqa: BLE001 —— 渐进交付失败不影响主流程（完成态会补齐）
             logger.warning("[Product Studio] 渐进资产产出失败 %s.%s: %s",
                            product_id, artifact_key, exc)
+    # P0.2/P0.3：心跳刷新 + 事件广播（SSE 通道）；失败静默不阻塞主流程
+    try:
+        from app.services.task_health import heartbeat, publish_event
+
+        heartbeat(str(product_id))
+        publish_event(str(product_id), {
+            "ts": datetime.now(timezone.utc).isoformat(),
+            "node": node, "status": status,
+            "detail": str(event.get("detail") or event.get("error") or "")[:160],
+        })
+    except Exception:  # noqa: BLE001
+        pass
     _RANK = {"completed": 3, "running": 2, "queued": 1, "failed": 0}
     prev = _PROGRESS_SNAPSHOT.get(product_id, {}).get(node)
     if prev is not None and _RANK.get(status, 0) < _RANK.get(prev, 0):
@@ -416,6 +428,9 @@ def run_product_studio_pipeline(self: ProductStudioTask, product_id: str):
         # 资料审核：source_gathering 节点默认门控（用户审核资料后再继续）
         if settings.SOURCE_REVIEW and "source_gathering" not in gate_nodes:
             gate_nodes.insert(0, "source_gathering")
+        # P0.4 大纲确认门：presentation 页清单批准后再进入 critic+逐页创作
+        if settings.OUTLINE_REVIEW and "presentation" not in gate_nodes:
+            gate_nodes.append("presentation")
         extra_initial: dict = {"product_id": str(product_id), "_gate_nodes": gate_nodes}
         # MOD 数据源/抓取量覆盖（MOD_SOURCE=mock 供 0-credit 预演/测试；缺省 rainforest）。
         # 仅 QX_ENV=e2e 时生效：E2E worker 与生产任务共用队列时，防止 mock 夹具
@@ -490,6 +505,12 @@ def run_product_studio_pipeline(self: ProductStudioTask, product_id: str):
             asset_package=json.dumps(partial, ensure_ascii=False),
             error_message=f"等待人工确认节点: {gp.node}",
         )
+        try:
+            from app.services.task_health import clear_heartbeat
+
+            clear_heartbeat(str(product_id))
+        except Exception:  # noqa: BLE001
+            pass
         logger.info("[Product Studio] product=%s 已暂停于节点 %s（等待人工批准）", product_id, gp.node)
         return {"product_id": product_id, "status": "waiting_approval", "node": gp.node}
     except SoftTimeLimitExceeded:
@@ -508,6 +529,12 @@ def run_product_studio_pipeline(self: ProductStudioTask, product_id: str):
             status=StudioProductStatus.FAILED,
             error_message=str(exc)[:2000],
         )
+        try:
+            from app.services.task_health import clear_heartbeat
+
+            clear_heartbeat(str(product_id))
+        except Exception:  # noqa: BLE001
+            pass
         raise self.retry(exc=exc, countdown=30)
 
     # ── C5: 收集各节点模型 token 用量（成本可观测） ──
@@ -537,6 +564,12 @@ def run_product_studio_pipeline(self: ProductStudioTask, product_id: str):
         asset_package=json.dumps(package_dict, ensure_ascii=False, default=str),
         error_message=None,
     )
+    try:
+        from app.services.task_health import clear_heartbeat
+
+        clear_heartbeat(str(product_id))
+    except Exception:  # noqa: BLE001
+        pass
     # ── 完成态后处理（耗时优化：五段互不依赖，并行执行） ──
     # keywords 结果回写主线程赋值；其余四段只读 package_dict，各自降级语义保持
     from concurrent.futures import ThreadPoolExecutor

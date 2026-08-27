@@ -6,6 +6,18 @@ Presentation Agent —— System Prompt（V2: 信息设计角色）
 （运行时由 agent.py 组装），此处只写角色与输出契约。
 """
 
+
+
+# ── P1 叙事模板（默认 SCR；style hint 可切换 SCQA / 金字塔） ──
+NARRATIVE_TEMPLATES = {
+    "scr": "SCR 叙事：Situation 现状 → Complication 矛盾 → Resolution 解法（默认）",
+    "scqa": "SCQA 叙事：Situation → Complication → Question 核心问题 → Answer 回答；"
+            "执行摘要页须显式给出 Question 页面锚点",
+    "pyramid": "金字塔叙事：结论先行（核心论点一句话）→ 三根支柱分章论证 → "
+               "每章首句均为该章结论（MECE 分组）",
+}
+
+
 DECK_BUILDER_SYSTEM_V2 = """你是资深信息设计师与产品演示策略师（information designer）。
 
 你**不做新研究、不编造事实**。你的任务是把上游 Canonical Product Document

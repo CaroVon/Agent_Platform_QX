@@ -120,10 +120,16 @@ async def lifespan(app: FastAPI):
     from app.services.watchdog import watchdog_loop
     watchdog_task = asyncio.create_task(watchdog_loop())
 
+    # P0.2：分钟级心跳自愈看门狗（Redis 心跳缺失 → queued 重投，
+    # 与上方小时级看门狗互补：那个兜底长卡死，这个秒级恢复失联）
+    from app.services.task_health import watchdog_loop as hb_watchdog_loop
+    hb_watchdog_task = asyncio.create_task(hb_watchdog_loop())
+
     yield  # 应用运行中...
 
     # ─── 关闭 ──────────────────────────────────────────────────
     watchdog_task.cancel()
+    hb_watchdog_task.cancel()
     await engine.dispose()
     logger.info("[APP] 数据库连接已关闭，应用退出")
 

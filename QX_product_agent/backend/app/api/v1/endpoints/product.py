@@ -1090,6 +1090,120 @@ async def reject_product_node(
 # 资料审核（source_gathering 门）—— 读取 / 提交 / 上传本地资料
 # ================================================================
 
+@router.get("/{product_id}/events")
+async def product_events(
+    product_id: uuid.UUID,
+    user: User = Depends(get_current_user),
+):
+    """SSE 进度事件流（P0.3）：订阅 Redis qx:events:{id}。
+
+    事件：{ts, node, status, detail}；每 20s 注释心跳保活。
+    """
+    import asyncio
+
+    from sse_starlette.sse import EventSourceResponse
+
+    async def gen():
+        import redis.asyncio as aioredis
+
+        from app.core.config import get_settings
+
+        s = get_settings()
+        r = aioredis.Redis(host=s.REDIS_HOST, port=s.REDIS_PORT, db=s.REDIS_DB,
+                           socket_connect_timeout=3)
+        pubsub = r.pubsub()
+        channel = f"qx:events:{product_id}"
+        await pubsub.subscribe(channel)
+        try:
+            yield {"event": "open", "data": channel}
+            while True:
+                try:
+                    msg = await asyncio.wait_for(pubsub.get_message(
+                        ignore_subscribe_messages=True), timeout=20)
+                except asyncio.TimeoutError:
+                    yield {"comment": "keep-alive"}
+                    continue
+                if msg and msg.get("type") == "message":
+                    yield {"event": "progress", "data": msg["data"].decode()}
+        finally:
+            await pubsub.unsubscribe(channel)
+            await r.aclose()
+
+    return EventSourceResponse(gen())
+
+
+# ================================================================
+# P0.5：页级返工（👎）—— 运行中入队 / 完成态外科单页重做
+# ================================================================
+
+@router.post("/{product_id}/ppt-rework")
+async def ppt_page_rework(
+    product_id: uuid.UUID,
+    body: dict = None,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """对指定 PPT 页发起返工（携带用户反馈）。
+
+    - 运行中（ppt_design running）：写入项目 progress.json 的
+      rework_requests，创作循环在批次间消费并带反馈重做该页。
+    - 完成态：调用外科单页重做服务（LLM 重创作 + 双 PPTX 重导出）。
+    """
+    body = body or {}
+    page_index = int(body.get("page_index", 0))
+    feedback = str(body.get("feedback") or "用户标记此页需要改进").strip()[:200]
+
+    product = await db.get(StudioProduct, product_id)
+    if product is None:
+        raise HTTPException(status_code=404, detail="产品不存在")
+    if product.owner_id is not None and product.owner_id != user.id:
+        raise HTTPException(status_code=403, detail="无权访问该产品")
+
+    import re as _re
+    from pathlib import Path as _Path
+    from app.core.config import get_settings
+
+    key = _re.sub(r"[^A-Za-z0-9._-]+", "_", str(product_id)).strip("._")[:80]
+    project_dir = _Path(get_settings().OUTPUT_DIR).resolve() / "studio_assets" / "ppt_projects" / key
+    if not project_dir.is_dir():
+        raise HTTPException(status_code=404, detail="PPT 项目目录不存在")
+
+    try:
+        _ns = json.loads(product.node_status or "{}")
+    except (TypeError, ValueError):
+        _ns = {}
+    running = _ns.get("ppt_design") == "running"
+    progress_path = project_dir / "progress.json"
+    prog = {}
+    try:
+        prog = json.loads(progress_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        prog = {}
+
+    if running:
+        from datetime import datetime as _dt
+
+        reqs = prog.get("rework_requests") or []
+        reqs.append({"page_index": page_index, "feedback": feedback,
+                     "ts": _dt.utcnow().isoformat()})
+        prog["rework_requests"] = reqs
+        progress_path.write_text(json.dumps(prog, ensure_ascii=False), encoding="utf-8")
+        return {"product_id": str(product_id), "queued": True, "page_index": page_index}
+
+    # 完成态：外科单页重做（线程池执行，避免阻塞事件循环）
+    import asyncio
+
+    from app.services.ppt_rework import surgical_rework_page
+
+    pkg = json.loads(product.asset_package or "{}")
+    ok, detail = await asyncio.to_thread(
+        surgical_rework_page, str(product_id), pkg, page_index, feedback)
+    if not ok:
+        raise HTTPException(status_code=422, detail=detail)
+    return {"product_id": str(product_id), "queued": False, "reworked": True,
+            "page_index": page_index, "detail": detail}
+
+
 @router.get("/{product_id}/ppt-progress")
 async def get_product_ppt_progress(
     product_id: uuid.UUID,

@@ -1,0 +1,81 @@
+# QX Product Studio 一键部署（P2）
+# 用法：docker compose up -d --build
+# 首次：cp backend/.env.example backend/.env（填 API keys + OUTPUT_DIR 卷路径）
+services:
+  redis:
+    image: redis:7-alpine
+    container_name: qx-redis
+    ports: ["6379:6379"]
+    volumes: [redis-data:/data]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      retries: 5
+
+  postgres:
+    image: postgres:16-alpine
+    container_name: qx-postgres
+    environment:
+      POSTGRES_USER: qx
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-qx}
+      POSTGRES_DB: qx
+    ports: ["5432:5432"]
+    volumes: [pg-data:/var/lib/postgresql/data]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U qx"]
+      interval: 10s
+      retries: 5
+
+  api:
+    build:
+      context: .
+      dockerfile: deploy/Dockerfile.api
+    container_name: qx-api
+    depends_on:
+      redis: {condition: service_healthy}
+      postgres: {condition: service_healthy}
+    env_file: [backend/.env]
+    environment:
+      DATABASE_URL: postgresql+asyncpg://qx:${POSTGRES_PASSWORD:-qx}@postgres:5432/qx
+      REDIS_HOST: redis
+      # P0.1：任意节点断点持久化（LangGraph checkpoint 表与业务库同实例）
+      AGENT_PLATFORM_CHECKPOINT_POSTGRES_URI: postgresql://qx:${POSTGRES_PASSWORD:-qx}@postgres:5432/qx
+    ports: ["8000:8000"]
+    volumes:
+      - ${OUTPUT_DIR:-/mnt/d/DEV/agents_outputs}:/app/outputs
+    command: >
+      sh -c "python -m alembic stamp head 2>/dev/null || true;
+             python -m uvicorn app.main:app --host 0.0.0.0 --port 8000"
+
+  worker:
+    build:
+      context: .
+      dockerfile: deploy/Dockerfile.api
+    container_name: qx-worker
+    depends_on:
+      redis: {condition: service_healthy}
+      postgres: {condition: service_healthy}
+      api: {condition: service_started}
+    env_file: [backend/.env]
+    environment:
+      DATABASE_URL: postgresql+asyncpg://qx:${POSTGRES_PASSWORD:-qx}@postgres:5432/qx
+      REDIS_HOST: redis
+      AGENT_PLATFORM_CHECKPOINT_POSTGRES_URI: postgresql://qx:${POSTGRES_PASSWORD:-qx}@postgres:5432/qx
+      # P1：PPT 逐页创作并发（独立部署机建议 4；内存富余可 6）
+      AGENT_PLATFORM_PPT_DESIGN_CONCURRENCY: "4"
+      # P1：SVG 内核 Rust 开关（qx_svg_tools 已随镜像构建）
+      AGENT_PLATFORM_SVG_KERNEL: rust
+      # Playwright 光栅化（MOD 图表 PNG）
+      PLAYWRIGHT_BROWSERS_PATH: /ms-playwright
+    ports: ["5555:5555"]   # flower
+    volumes:
+      - ${OUTPUT_DIR:-/mnt/d/DEV/agents_outputs}:/app/outputs
+    command: >
+      sh -c "celery -A app.core.celery_app.celery_app worker
+             --loglevel=info --concurrency=4 --pool=prefork
+             -Q celery,product_studio &
+             celery -A app.core.celery_app.celery_app flower --port=5555"
+
+volumes:
+  redis-data:
+  pg-data:

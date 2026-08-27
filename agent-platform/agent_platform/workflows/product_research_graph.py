@@ -32,6 +32,7 @@ Agent 实现通过构造参数注入（依赖倒置）：
 from __future__ import annotations
 
 import logging
+import os
 from datetime import datetime, timezone
 from typing import Any, Callable
 
@@ -647,7 +648,24 @@ class ProductResearchGraph:
 
     @staticmethod
     def _make_checkpointer():
-        """内存 checkpoint（支持断点续跑/回放），缺失依赖时禁用。"""
+        """断点持久化（P0.1）：
+        - 配置 AGENT_PLATFORM_CHECKPOINT_POSTGRES_URI（psycopg 连接串）时启用
+          PostgresSaver —— 任意节点崩溃后按 thread_id 从 checkpoint 恢复；
+        - 缺省/失败回退内存 MemorySaver（原行为）。
+        """
+        uri = os.environ.get("AGENT_PLATFORM_CHECKPOINT_POSTGRES_URI", "").strip()
+        if uri:
+            try:
+                import psycopg
+                from langgraph.checkpoint.postgres import PostgresSaver
+
+                conn = psycopg.connect(uri, autocommit=True)
+                saver = PostgresSaver(conn)
+                saver.setup()
+                logger.info("[checkpoint] Postgres saver 已启用（任意节点断点持久化）")
+                return saver
+            except Exception as exc:  # noqa: BLE001 —— 回退内存
+                logger.warning("[checkpoint] Postgres saver 启用失败（回退内存）: %s", exc)
         try:
             from langgraph.checkpoint.memory import MemorySaver
 

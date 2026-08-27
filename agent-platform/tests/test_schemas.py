@@ -161,11 +161,11 @@ def test_presentation_dsl_rejects_unknown_component():
 
 
 def test_layout_library_covers_all_layouts():
-    """Layout Library 与 LayoutId 枚举一一对应（10 个布局）。"""
+    """Layout Library 与 LayoutId 枚举一一对应（P1 扩容至 20 个布局）。"""
     from agent_platform.schemas.presentation import LAYOUT_LIBRARY, LayoutId
 
     ids = set(LAYOUT_LIBRARY.keys())
-    assert len(ids) == 10
+    assert len(ids) == 20
     for layout_id in ids:
         assert layout_id in LayoutId.__args__
         spec = LAYOUT_LIBRARY[layout_id]

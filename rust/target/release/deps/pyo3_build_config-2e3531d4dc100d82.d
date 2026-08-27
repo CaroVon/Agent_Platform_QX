@@ -1,0 +1,14 @@
+/home/administrator/dev/agents/rust/qx-svg-tools/target/release/deps/pyo3_build_config-2e3531d4dc100d82.d: /home/administrator/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/pyo3-build-config-0.23.5/src/lib.rs /home/administrator/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/pyo3-build-config-0.23.5/src/errors.rs /home/administrator/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/pyo3-build-config-0.23.5/src/impl_.rs /home/administrator/dev/agents/rust/qx-svg-tools/target/release/build/pyo3-build-config-e284706ad5725d1b/out/pyo3-build-config-file.txt /home/administrator/dev/agents/rust/qx-svg-tools/target/release/build/pyo3-build-config-e284706ad5725d1b/out/pyo3-build-config.txt
+
+/home/administrator/dev/agents/rust/qx-svg-tools/target/release/deps/libpyo3_build_config-2e3531d4dc100d82.rlib: /home/administrator/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/pyo3-build-config-0.23.5/src/lib.rs /home/administrator/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/pyo3-build-config-0.23.5/src/errors.rs /home/administrator/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/pyo3-build-config-0.23.5/src/impl_.rs /home/administrator/dev/agents/rust/qx-svg-tools/target/release/build/pyo3-build-config-e284706ad5725d1b/out/pyo3-build-config-file.txt /home/administrator/dev/agents/rust/qx-svg-tools/target/release/build/pyo3-build-config-e284706ad5725d1b/out/pyo3-build-config.txt
+
+/home/administrator/dev/agents/rust/qx-svg-tools/target/release/deps/libpyo3_build_config-2e3531d4dc100d82.rmeta: /home/administrator/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/pyo3-build-config-0.23.5/src/lib.rs /home/administrator/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/pyo3-build-config-0.23.5/src/errors.rs /home/administrator/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/pyo3-build-config-0.23.5/src/impl_.rs /home/administrator/dev/agents/rust/qx-svg-tools/target/release/build/pyo3-build-config-e284706ad5725d1b/out/pyo3-build-config-file.txt /home/administrator/dev/agents/rust/qx-svg-tools/target/release/build/pyo3-build-config-e284706ad5725d1b/out/pyo3-build-config.txt
+
+/home/administrator/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/pyo3-build-config-0.23.5/src/lib.rs:
+/home/administrator/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/pyo3-build-config-0.23.5/src/errors.rs:
+/home/administrator/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/pyo3-build-config-0.23.5/src/impl_.rs:
+/home/administrator/dev/agents/rust/qx-svg-tools/target/release/build/pyo3-build-config-e284706ad5725d1b/out/pyo3-build-config-file.txt:
+/home/administrator/dev/agents/rust/qx-svg-tools/target/release/build/pyo3-build-config-e284706ad5725d1b/out/pyo3-build-config.txt:
+
+# env-dep:CARGO_PKG_VERSION=0.23.5
+# env-dep:OUT_DIR=/home/administrator/dev/agents/rust/qx-svg-tools/target/release/build/pyo3-build-config-e284706ad5725d1b/out
