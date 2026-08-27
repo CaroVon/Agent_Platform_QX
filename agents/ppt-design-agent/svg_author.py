@@ -214,7 +214,10 @@ def build_page_prompt(
 {_SKILL_RULES}
 
 ## 构图要求（咨询风）
-- 封面/结尾：居中标题 + 强调色条 + 留白；可选 Hero 图（低透明度铺底）
+- 封面：左侧文字区（主标题+副标题+强调色条，x<640）+ 右侧产品主图区留白
+  （程序会在 (716,207,488×274) 注入 Hero 产品图，该区域不要放文字或不透明元素；
+  Hero 另有低透明度全幅铺底层）——左文右图
+- 结尾：居中标题 + 强调色条 + 留白
 - 内容页：左上标题（26px 加粗）+ 强调竖条 + insight（14px 主色）；内容两列网格或全宽布局
 - 指标卡：圆角卡片（surface 底 + accent 描边）+ 大号主色数值 + 次级标签
 - 清单卡：圆角卡片 + 标题 + "• " 条目（≤8 条，超出用「等 N 项」）
@@ -414,11 +417,14 @@ def fallback_svg(page: dict, theme: dict | None) -> str:
 
 # 各页类型的图片位置 + 尺寸规则（x, y, w, h, opacity）
 _IMAGE_LAYOUTS: dict[str, list[dict]] = {
-    # 封面：全幅铺底 + 半透明遮罩
+    # 封面：全幅铺底（底层）+ 右侧产品主图（左文右图版式；槽位来自实证标杆 deck）
     "cover": [
         {"x": 0, "y": 0, "w": 1280, "h": 720, "opacity": 0.35,
          "preserveAspectRatio": "xMidYMid slice",
          "name": "cover-bg", "role": "background"},
+        {"x": 716, "y": 207, "w": 488, "h": 274, "opacity": 1.0,
+         "preserveAspectRatio": "xMidYMid slice",
+         "name": "cover-product", "role": "decoration"},
     ],
     # 通用内容页：右上角小图 280×158（4:2.25）
     "content": [
@@ -504,8 +510,93 @@ def _image_layer_for_page(page: dict) -> list[dict]:
     return _IMAGE_LAYOUTS.get(ptype, _IMAGE_LAYOUTS["content"])
 
 
+def _ref_visible_in_svg(svg: str, ref: str) -> bool:
+    """svg 中已有的 ref 引用是否真实可见（未退化）。
+
+    LLM 偶尔写出隐形引用（opacity=0 / 高度<40px 细条）绕过程序注入
+    （P12 矩阵图曾因此不可见），此处将退化引用视为未引用。
+    """
+    for m in re.finditer(r"<(?:ns\d+:)?image\b[^>]*>", svg):
+        tag = m.group(0)
+        if ref not in tag:
+            continue
+
+        def _attr(name: str, default: str) -> str:
+            am = re.search(rf'\b{name}="([^"]*)"', tag)
+            return am.group(1) if am else default
+
+        try:
+            w = float(_attr("width", "0") or 0)
+            h = float(_attr("height", "0") or 0)
+            op = float(_attr("opacity", "1") or 1)
+        except ValueError:
+            continue
+        if w >= 40 and h >= 40 and op >= 0.3:
+            return True
+    return False
+
+
+_FULL_CANVAS_RECT_RE = re.compile(r"<(?:ns\d+:)?rect\b[^>]*>")
+
+
+def _is_opaque_full_canvas_rect(tag: str) -> bool:
+    """是否为「全幅不透明背景矩形」（会盖住先画的图片）。"""
+    def _attr(name: str, default: str) -> str:
+        am = re.search(rf'\b{name}="([^"]*)"', tag)
+        return am.group(1) if am else default
+
+    try:
+        x = float(_attr("x", "0") or 0)
+        y = float(_attr("y", "0") or 0)
+        w = float(_attr("width", "0") or 0)
+        h = float(_attr("height", "0") or 0)
+    except ValueError:
+        return False
+    if x > 1 or y > 1 or w < 1250 or h < 700:
+        return False
+    fill = _attr("fill", "").lower()
+    if fill in ("none", "transparent"):
+        return False
+    try:
+        op = min(float(_attr("opacity", "1") or 1),
+                 float(_attr("fill-opacity", "1") or 1))
+    except ValueError:
+        op = 1.0
+    return op >= 0.85
+
+
+def _last_bg_rect_end(svg: str) -> int:
+    """最后一个全幅不透明背景矩形的结束位置（找不到返回 -1）。"""
+    end = -1
+    for m in _FULL_CANVAS_RECT_RE.finditer(svg):
+        if _is_opaque_full_canvas_rect(m.group(0)):
+            end = m.end()
+    return end
+
+
+def _reorder_occluded_images(svg: str) -> str:
+    """确定性兜底：把仍被「后续全幅不透明矩形」遮挡的注入图挪到该矩形之后。
+
+    SVG 按文档顺序绘制——注入块若在背景矩形之前会被完全盖住
+    （历次 deck 中 P3/P4/P11/P15 配图"存在但不可见"的根因）。
+    仅移动程序注入的 page-image-* 块，不触碰 LLM 文本/图形。
+    """
+    block_re = re.compile(
+        r'[ \t]*<g id="page-image-[^"]*wrap"[^>]*>.*?</g>\n?', re.DOTALL)
+    out = svg
+    for m in list(block_re.finditer(out)):
+        block = m.group(0)
+        after = out[m.end():]
+        cover_end = _last_bg_rect_end(after)
+        if cover_end < 0:
+            continue
+        abs_end = m.end() + cover_end
+        out = out[:m.start()] + out[m.end():abs_end] + block + out[abs_end:]
+    return out
+
+
 def inject_page_image(svg: str, page_image_ref: str | None, page: dict) -> str:
-    """在 SVG 顶层注入 <image> 元素（不依赖 LLM）。
+    """在 SVG 注入 <image> 元素（不依赖 LLM）。
 
     Args:
         svg: 原始 SVG 字符串
@@ -515,27 +606,30 @@ def inject_page_image(svg: str, page_image_ref: str | None, page: dict) -> str:
     Returns:
         注入了 <image> 的 SVG 字符串。
         若 page_image_ref 为空，函数无效。
+
+    z-order 策略（修复"图片存在但被背景矩形盖死"）：
+      - 全幅图层（铺底/水印）插在最底层（文字压图是预期效果）；
+      - 其余图层（缩略图/图表/产品图）插到最后一个全幅不透明背景矩形
+        之后，保证可见；无背景矩形时退回底层插入。
+      - 注入后再跑一次遮挡自查（_reorder_occluded_images）兜底。
     """
     if not page_image_ref:
-        return svg
-
-    # 防御：避免重复注入
-    if page_image_ref in svg:
         return svg
 
     layers = _image_layer_for_page(page)
     if not layers:
         return svg
 
-    image_tags: list[str] = []
-    for layer in layers:
+    # 防御：已有「可见」引用则跳过注入；隐形/退化引用（opacity=0、细条）仍注入。
+    # 两种情况都要跑遮挡重排——历史产物中存在"属性可见但被背景矩形盖死"的注入块。
+    if page_image_ref in svg and _ref_visible_in_svg(svg, page_image_ref):
+        return _reorder_occluded_images(svg)
+
+    def _build_tag(layer: dict) -> str:
         role = layer.get("role", "decoration")
         name = layer.get("name", role)
         x, y, w, h = layer["x"], layer["y"], layer["w"], layer["h"]
-        # 关键：data-pptx-role 必须是 lowercase kebab-case 合法枚举
-        # （background/decoration/footer/header/logo/watermark/chrome），
-        # 并把 <image> 包在 <g data-pptx-bounds="..."> 内（bounds 仅对 <g> 合法）
-        image_tags.append(
+        return (
             f'  <g id="page-image-{name}-wrap" data-pptx-bounds="{x} {y} {w} {h}">'
             f'\n    <image id="page-image-{name}" data-name="{name}" '
             f'data-pptx-role="{role}" '
@@ -546,21 +640,37 @@ def inject_page_image(svg: str, page_image_ref: str | None, page: dict) -> str:
             f'\n  </g>'
         )
 
-    image_block = "\n".join(image_tags) + "\n"
-
-    # 在 <svg> 后第一个非 defs 子元素之前注入（让图片在底层）
-    # 策略：找到 </defs>（兼容 ns0: 前缀），如果有就插到其后；否则插到 <svg ...> 后
-    has_defs = bool(re.search(r"</(?:ns\d+:)?defs>", svg))
-    if has_defs:
-        # 保留原命名空间前缀：分两种情况 sub
-        if "</ns0:defs>" in svg:
-            new_svg, n = re.subn(r"</ns0:defs>", "</ns0:defs>\n" + image_block, svg, count=1)
+    # 按几何分层：全幅（铺底）走底层；其余走背景矩形之后
+    base_tags, top_tags = [], []
+    for layer in layers:
+        if layer["w"] >= 1250 and layer["h"] >= 700:
+            base_tags.append(_build_tag(layer))
         else:
-            new_svg, n = re.subn(r"</defs>", "</defs>\n" + image_block, svg, count=1)
-    else:
-        new_svg, n = re.subn(
-            r"(<(?:ns\d+:)?svg\b[^>]*>)",
-            r"\1\n" + image_block,
-            svg, count=1,
-        )
-    return new_svg if n > 0 else svg
+            top_tags.append(_build_tag(layer))
+
+    new_svg = svg
+    if base_tags:
+        block = "\n".join(base_tags) + "\n"
+        has_defs = bool(re.search(r"</(?:ns\d+:)?defs>", new_svg))
+        if has_defs:
+            if "</ns0:defs>" in new_svg:
+                new_svg, n = re.subn(r"</ns0:defs>", "</ns0:defs>\n" + block,
+                                     new_svg, count=1)
+            else:
+                new_svg, n = re.subn(r"</defs>", "</defs>\n" + block,
+                                     new_svg, count=1)
+        else:
+            new_svg, n = re.subn(
+                r"(<(?:ns\d+:)?svg\b[^>]*>)", r"\1\n" + block, new_svg, count=1)
+        if n == 0:
+            new_svg = svg
+
+    if top_tags:
+        block = "\n".join(top_tags) + "\n"
+        pos = _last_bg_rect_end(new_svg)
+        if pos > 0:
+            new_svg = new_svg[:pos] + "\n" + block + new_svg[pos:]
+        else:
+            new_svg += "\n" + block
+
+    return _reorder_occluded_images(new_svg)

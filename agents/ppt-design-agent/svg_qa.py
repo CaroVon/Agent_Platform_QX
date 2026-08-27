@@ -133,6 +133,30 @@ def qa_page(svg: str, page: dict, theme: dict | None,
     if page_image and not re.search(r"<(?:ns\d+:)?image\b", svg):
         issues.append("未引用页图（图片会由注入层补，但页面应为其留白布局）")
 
+    # 8b. 图片退化不可见：LLM 写出的 assets 引用若 opacity≈0 或被压成细条
+    #     （曾致 P12 矩阵图表页"有图不可见"，且绕过注入层的去重短路）
+    for m in re.finditer(r"<(?:ns\d+:)?image\b[^>]*>", svg):
+        tag = m.group(0)
+        if "images/" not in tag and "page-image-" not in tag:
+            continue
+
+        def _attr(name, default):
+            am = re.search(rf'\b{name}="([^"]*)"', tag)
+            return am.group(1) if am else default
+
+        try:
+            w = float(_attr("width", "0") or 0)
+            h = float(_attr("height", "0") or 0)
+            op = float(_attr("opacity", "1") or 1)
+        except ValueError:
+            continue
+        if op < 0.15:
+            issues.append(f"图片退化不可见：opacity={op}（{w:.0f}×{h:.0f}）")
+            break
+        if w >= 80 and h < 40:
+            issues.append(f"图片退化不可见：{w:.0f}×{h:.0f} 细条")
+            break
+
     # 9. 配图遮挡（本质防护：注入层图片位于 </defs> 后的底层，
     #    其后任何不透明矩形若完全覆盖图片 bbox → 视觉不可见）
     if page_image:
