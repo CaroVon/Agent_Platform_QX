@@ -32,7 +32,8 @@ def snap(svg: str, allowed: tuple) -> tuple[str, dict]:
         out, count = mod.snap_font_sizes(svg)
         import re
 
-        kept = sorted({int(s) for s in re.findall(r'font-size="([\d.]+)"', out)})
+        # int(float())：Rust 语义保留 "10.5" 原文（截断 10 合法），裸 int 会崩
+        kept = sorted({int(float(s)) for s in re.findall(r'font-size="([\d.]+)"', out)})
         return out, {"snapped": [""] * count, "kept_unique": kept,
                      "snap_count_rust": count}
     from agents.ppt_design_agent import cross_page

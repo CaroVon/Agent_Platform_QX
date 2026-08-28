@@ -140,3 +140,12 @@ def test_rust_process_page_roundtrip():
     r = rust.process_page(_THIN, "mod_overview", list(_THEME["palette"].values()))
     assert r["svg"] and isinstance(r["issues"], list) and len(r["issues"]) >= 3
     assert r["svg"].startswith("<svg")
+
+
+def test_kernels_snap_fractional_regression():
+    """回归：Rust 内核保留 10.5 原文时，包装层 kept 统计不得 int('10.5') 崩。"""
+    from agents.ppt_design_agent import svg_kernels
+
+    svg, info = svg_kernels.snap('<text font-size="10.5"/><text font-size="14"/>', tuple())
+    assert 'font-size="10.5"' in svg  # 截断 10 合法 → 保留原文
+    assert info["kept_unique"] == [10, 14]
