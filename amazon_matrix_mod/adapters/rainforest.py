@@ -33,14 +33,17 @@ def get_key() -> str:
 
 def _call(params: dict) -> dict:
     params["api_key"] = get_key()
+    last_retryable = None
     for attempt in range(3):
         try:
             r = requests.get(BASE, params=params, timeout=60)
             if r.status_code == 429:
+                last_retryable = f"Rainforest 限流（HTTP 429，已退避重试 {attempt + 1}/3 次）"
                 time.sleep(30 * (attempt + 1))
                 continue
             if r.status_code >= 500:
                 # 服务端暂不可用（实测 reviews 偶发 503）→ 退避重试
+                last_retryable = f"Rainforest 服务端错误（HTTP {r.status_code}，已退避重试 {attempt + 1}/3 次）"
                 time.sleep(10 * (attempt + 1))
                 continue
             r.raise_for_status()
@@ -53,6 +56,9 @@ def _call(params: dict) -> dict:
             if attempt == 2:
                 raise
             time.sleep(5 * (attempt + 1))
+    # 重试预算耗尽（持续 429/5xx）：显式报错而非隐式返回 None——
+    # None 会在调用方 data.get(...) 处崩成难以定位的 'NoneType' object has no attribute 'get'
+    raise RuntimeError(last_retryable or "Rainforest 请求失败（重试耗尽）")
 
 
 def _parse_rating(v) -> float | None:

@@ -306,6 +306,15 @@ def run_product_studio_pipeline(self: ProductStudioTask, product_id: str):
         logger.info("[Product Studio] product=%s 已暂停，忽略重复投递", product_id)
         return {"product_id": product_id, "status": "paused", "duplicate": True}
 
+    # 运行锁（DB 状态机之外的第二道防线）：同产品重复投递在状态窗口漏防时，
+    # 仅持锁任务执行（TTL 900s，心跳续期；终态显式释放）
+    from app.services.task_health import acquire_run_lock
+
+    if not acquire_run_lock(str(product_id)):
+        logger.warning("[Product Studio] product=%s 运行锁被占用，忽略本次投递", product_id)
+        return {"product_id": product_id, "status": "running", "duplicate": True,
+                "run_lock": "busy"}
+
     settings = self.settings
     _bridge_env(settings)
     _ensure_paths(settings)
@@ -506,9 +515,10 @@ def run_product_studio_pipeline(self: ProductStudioTask, product_id: str):
             error_message=f"等待人工确认节点: {gp.node}",
         )
         try:
-            from app.services.task_health import clear_heartbeat
+            from app.services.task_health import clear_heartbeat, release_run_lock
 
             clear_heartbeat(str(product_id))
+            release_run_lock(str(product_id))
         except Exception:  # noqa: BLE001
             pass
         logger.info("[Product Studio] product=%s 已暂停于节点 %s（等待人工批准）", product_id, gp.node)
@@ -530,9 +540,10 @@ def run_product_studio_pipeline(self: ProductStudioTask, product_id: str):
             error_message=str(exc)[:2000],
         )
         try:
-            from app.services.task_health import clear_heartbeat
+            from app.services.task_health import clear_heartbeat, release_run_lock
 
             clear_heartbeat(str(product_id))
+            release_run_lock(str(product_id))
         except Exception:  # noqa: BLE001
             pass
         raise self.retry(exc=exc, countdown=30)
@@ -565,9 +576,10 @@ def run_product_studio_pipeline(self: ProductStudioTask, product_id: str):
         error_message=None,
     )
     try:
-        from app.services.task_health import clear_heartbeat
+        from app.services.task_health import clear_heartbeat, release_run_lock
 
         clear_heartbeat(str(product_id))
+        release_run_lock(str(product_id))
     except Exception:  # noqa: BLE001
         pass
     # ── 完成态后处理（耗时优化：五段互不依赖，并行执行） ──

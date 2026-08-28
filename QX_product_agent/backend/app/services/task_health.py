@@ -25,9 +25,29 @@ logger = logging.getLogger(__name__)
 
 HEARTBEAT_KEY = "qx:hb:{product_id}"
 HEARTBEAT_TTL = 120
+RUN_LOCK_KEY = "qx:run-lock:{product_id}"
+RUN_LOCK_TTL = 900
 # 无进度事件宽限（采集/长 LLM 阶段心跳仍在，故可短）
 STALE_NO_PROGRESS_SEC = 180
 SELF_HEAL_INTERVAL = 60
+
+
+def acquire_run_lock(product_id: str) -> bool:
+    """任务级互斥锁（DB 状态机之外的第二道防线）：
+    同产品重复投递/状态窗口漏防时，仅持锁任务执行，其余直接返回。
+    心跳事件顺带续期；任务终态显式释放。"""
+    try:
+        return bool(_redis().set(RUN_LOCK_KEY.format(product_id=product_id),
+                                 "1", nx=True, ex=RUN_LOCK_TTL))
+    except Exception:  # noqa: BLE001 —— Redis 不可用时放行（退化为仅 DB 判定）
+        return True
+
+
+def release_run_lock(product_id: str) -> None:
+    try:
+        _redis().delete(RUN_LOCK_KEY.format(product_id=product_id))
+    except Exception:  # noqa: BLE001
+        pass
 
 
 def _redis():
@@ -44,10 +64,11 @@ def _redis():
 
 
 def heartbeat(product_id: str) -> None:
-    """worker 侧：刷新任务心跳（失败静默——进度主流程不受影响）。"""
+    """worker 侧：刷新任务心跳 + 运行锁续期（失败静默——进度主流程不受影响）。"""
     try:
-        _redis().setex(HEARTBEAT_KEY.format(product_id=product_id),
-                       HEARTBEAT_TTL, "1")
+        r = _redis()
+        r.setex(HEARTBEAT_KEY.format(product_id=product_id), HEARTBEAT_TTL, "1")
+        r.expire(RUN_LOCK_KEY.format(product_id=product_id), RUN_LOCK_TTL)
     except Exception:  # noqa: BLE001
         pass
 
