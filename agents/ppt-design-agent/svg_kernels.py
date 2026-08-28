@@ -1,7 +1,7 @@
 """SVG 内核开关层（P1）：Python 实现 ↔ Rust 扩展（qx_svg_tools）。
 
-AGENT_PLATFORM_SVG_KERNEL=rust 启用（缺省 python，灰度切换）。
-Rust 版与 Python 版的产物等价性由 tests/test_svg_qa.py 双实现对照保障。
+默认 rust（等价性由 tests/test_svg_qa.py 双实现对照保障）；扩展缺失或
+显式 AGENT_PLATFORM_SVG_KERNEL=python 时回退 Python 实现。
 """
 from __future__ import annotations
 
@@ -11,7 +11,7 @@ from functools import lru_cache
 
 @lru_cache()
 def _rust() -> object | None:
-    if os.environ.get("AGENT_PLATFORM_SVG_KERNEL", "python").lower() != "rust":
+    if os.environ.get("AGENT_PLATFORM_SVG_KERNEL", "rust").lower() == "python":
         return None
     try:
         import qx_svg_tools  # type: ignore

@@ -13,7 +13,7 @@ docker compose up -d --build           # api + worker + redis + postgres + flowe
 | 变量 | 默认 | 说明 |
 |---|---|---|
 | `AGENT_PLATFORM_PPT_DESIGN_CONCURRENCY` | 4 | PPT 逐页创作并发（429 自动降并发兜底；内存紧张调 2） |
-| `AGENT_PLATFORM_SVG_KERNEL` | python | `rust` 启用 qx_svg_tools 内核（等价性测试保障） |
+| `AGENT_PLATFORM_SVG_KERNEL` | rust | 默认启用 Rust 内核；`python` 回退（等价性测试保障） |
 | `AGENT_PLATFORM_CHECKPOINT_POSTGRES_URI` | 空 | 配置后 LangGraph 任意节点断点持久化 |
 | `OUTLINE_REVIEW` | true | 大纲确认门（presentation 后暂停审批页清单） |
 | `SOURCE_REVIEW` | true | 资料审核门（Tavily+Rainforest 双源） |
