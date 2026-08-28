@@ -17,6 +17,7 @@ import asyncio
 import json
 import logging
 import re
+import time
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -33,6 +34,10 @@ from app.services import project_assets as pa
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/project-assets", tags=["project-assets"])
+
+# 列表汇总缓存（体验优化）：(product_id, updated_at) → summary，60s TTL
+_LIB_CACHE: dict[str, tuple[str, dict, float]] = {}
+_LIB_CACHE_TTL = 60.0
 
 
 async def _get_product(product_id: uuid.UUID, db: AsyncSession, user: User) -> StudioProduct:
@@ -85,7 +90,13 @@ async def list_project_asset_libraries(
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
-    """任务资产库列表：每个任务的资产统计（只读，不补产文本）。"""
+    """任务资产库列表：每个任务的资产统计（只读，不补产文本）。
+
+    性能（体验优化）：
+    - collect_files(ensure=False)：纯 stat/glob 扫描，不触发 md/pdf 生成
+    - 并行收集（8 线程）替代串行循环
+    - (product_id, updated_at) 键 + TTL 缓存：二次请求直接命中内存
+    """
     from sqlalchemy import or_, select
 
     result = await db.execute(
@@ -97,12 +108,35 @@ async def list_project_asset_libraries(
         .order_by(StudioProduct.updated_at.desc())
     )
     products = result.scalars().all()
-    libraries = []
+
+    # 先查缓存：仅对（无缓存 / updated_at 变化 / TTL 过期）的产品执行扫描
+    now = time.time()
+    stale: list[StudioProduct] = []
+    cached_map: dict[str, dict] = {}
     for p in products:
+        key = str(p.id)
+        updated = p.updated_at.isoformat() if p.updated_at else ""
+        cached = _LIB_CACHE.get(key)
+        if cached and cached[0] == updated and now - cached[2] < _LIB_CACHE_TTL:
+            cached_map[key] = cached[1]
+        else:
+            stale.append(p)
+
+    def _collect(p):
         package = _load_package(p)
-        files = await asyncio.to_thread(pa.collect_files, str(p.id), package)
-        libraries.append(_summary(p, files))
-    return libraries
+        return pa.collect_files(str(p.id), package, ensure=False)
+
+    from concurrent.futures import ThreadPoolExecutor
+
+    if stale:
+        with ThreadPoolExecutor(max_workers=8) as ex:
+            files_list = list(ex.map(_collect, stale))
+        for p, files in zip(stale, files_list):
+            summary = _summary(p, files)
+            updated = p.updated_at.isoformat() if p.updated_at else ""
+            _LIB_CACHE[str(p.id)] = (updated, summary, time.time())
+            cached_map[str(p.id)] = summary
+    return [cached_map[str(p.id)] for p in products]
 
 
 @router.get("/{product_id}")
@@ -111,13 +145,21 @@ async def get_project_asset_library(
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
-    """任务资产库明细：惰性补产文本 md/pdf 后返回全部资产清单。"""
+    """任务资产库明细：惰性补产文本 md（幂等）后返回全部资产清单。
+
+    性能（体验优化）：ensure×1 / collect×1 —— save_library_index 接受
+    已算好的 files 结果，不再内部二次 collect；PDF 不在本请求路径。
+    """
     product = await _get_product(product_id, db, user)
     package = _load_package(product)
-    # 惰性补产：文本资产 → md（必产）+ pdf（尽力）；已有产出时幂等跳过
-    await asyncio.to_thread(pa.ensure_text_assets, str(product_id), package)
-    files = await asyncio.to_thread(pa.collect_files, str(product_id), package)
-    index = await asyncio.to_thread(pa.save_library_index, str(product_id), package)
+    # 惰性补产：文本资产 md（必产，幂等跳过）；pdf 由完成态后处理或
+    # POST /render-pdf 显式生成
+    await asyncio.to_thread(pa.ensure_text_assets, str(product_id), package,
+                            render_pdf=False)
+    files = await asyncio.to_thread(pa.collect_files, str(product_id), package,
+                                    ensure=False)
+    index = await asyncio.to_thread(pa.save_library_index, str(product_id),
+                                    package, files=files)
     return {
         "product_id": str(product.id),
         "idea": product.idea,
@@ -127,6 +169,20 @@ async def get_project_asset_library(
         "total_size": sum(f["size"] for f in files),
         "generated_at": index.get("generated_at"),
     }
+
+
+@router.post("/{product_id}/render-pdf")
+async def render_product_pdfs(
+    product_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """按需渲染文本资产 PDF（weasyprint 同步耗时，移出常规读路径）。"""
+    product = await _get_product(product_id, db, user)
+    package = _load_package(product)
+    written = await asyncio.to_thread(pa.ensure_text_assets, str(product_id),
+                                      package, render_pdf=True)
+    return {"product_id": str(product.id), "rendered": written}
 
 
 @router.get("/{product_id}/download")

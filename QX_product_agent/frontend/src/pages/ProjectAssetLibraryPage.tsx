@@ -6,7 +6,8 @@
  * 展开后展示全部资产卡片
  */
 
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useState } from 'react'
+import { useQuery } from '@tanstack/react-query'
 import {
   Archive,
   ChevronDown,
@@ -394,50 +395,39 @@ function LibraryDetail({
 }
 
 export function ProjectAssetLibraryPage() {
-  const [libraries, setLibraries] = useState<ProjectAssetSummary[]>([])
-  const [details, setDetails] = useState<Record<string, ProjectAssetLibrary>>({})
   const [openId, setOpenId] = useState<string | null>(null)
-  const [loading, setLoading] = useState(true)
-  const [refreshing, setRefreshing] = useState(false)
+  // F1 体验优化：TanStack Query 缓存（staleTime 60s 对齐后端 TTL）——切页回来自动命中，秒开
+  const listQuery = useQuery({
+    queryKey: ['project-assets', 'list'],
+    queryFn: () => projectAssetsApi.list(),
+    staleTime: 60_000,
+    gcTime: 5 * 60_000,
+  })
+  const libraries = listQuery.data ?? []
+  const loading = listQuery.isLoading
+  const refreshing = listQuery.isFetching && !listQuery.isLoading
+  const detailQuery = useQuery({
+    queryKey: ['project-assets', 'detail', openId],
+    queryFn: () => projectAssetsApi.get(openId as string),
+    enabled: !!openId,
+    staleTime: 60_000,
+    gcTime: 5 * 60_000,
+  })
+  const details: Record<string, ProjectAssetLibrary> = openId && detailQuery.data
+    ? { [openId]: detailQuery.data } : {}
   const [downloading, setDownloading] = useState(false)
-  const [error, setError] = useState('')
 
   const load = useCallback(async (silent = false) => {
-    if (!silent) setLoading(true)
-    setRefreshing(true)
-    try {
-      setError('')
-      const list = await projectAssetsApi.list()
-      setLibraries(list)
-    } catch (err) {
-      setError(err instanceof Error ? err.message : '加载资产库失败')
-    } finally {
-      setLoading(false)
-      setRefreshing(false)
-    }
-  }, [])
-
-  useEffect(() => {
-    load()
-  }, [load])
-
-  // 加载展开项的明细
-  useEffect(() => {
-    if (!openId || details[openId]) return
-    let cancelled = false
-    projectAssetsApi
-      .get(openId)
-      .then((d) => {
-        if (!cancelled) setDetails((prev) => ({ ...prev, [openId]: d }))
-      })
-      .catch((err) => {
-        if (!cancelled)
-          setError(err instanceof Error ? err.message : '加载资产明细失败')
-      })
-    return () => {
-      cancelled = true
-    }
-  }, [openId, details])
+    // 刷新即失效重取（Query 缓存）
+    await listQuery.refetch()
+    if (openId) await detailQuery.refetch()
+    void silent
+  }, [listQuery, detailQuery, openId])
+  const error = listQuery.isError
+    ? (listQuery.error instanceof Error ? listQuery.error.message : '加载资产库失败')
+    : detailQuery.isError
+      ? (detailQuery.error instanceof Error ? detailQuery.error.message : '加载资产明细失败')
+      : ''
 
   const handleDownloadZip = async () => {
     if (!openId) return
@@ -446,7 +436,7 @@ export function ProjectAssetLibraryPage() {
       const url = await projectAssetsApi.downloadUrl(openId)
       await downloadFile(url, `project_assets_${openId.slice(0, 8)}.zip`)
     } catch (err) {
-      setError(err instanceof Error ? err.message : '打包下载失败')
+      window.alert(`打包下载失败: ${err instanceof Error ? err.message : String(err)}`)
     } finally {
       setDownloading(false)
     }

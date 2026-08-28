@@ -515,10 +515,17 @@ def _md_to_pdf(md_text: str, out_path: Path) -> bool:
 # 文本资产产出（任务完成时调用；读取资产库时惰性兜底）
 # ─────────────────────────────────────────────────────────────
 
-def ensure_text_assets(product_id: str, package: dict | None) -> dict:
-    """为任务的文本资产生成 Markdown（必产）+ PDF（尽力），写入任务资产库目录。
+_PDF_FAIL_CACHE: set[str] = set()
 
-    - 幂等：md 已存在且内容一致则跳过重写；pdf 缺失时补产（尽力）
+
+def ensure_text_assets(product_id: str, package: dict | None,
+                       render_pdf: bool = False) -> dict:
+    """为任务的文本资产生成 Markdown（必产）写入任务资产库目录。
+
+    - 幂等：md 已存在且内容一致则跳过重写
+    - render_pdf=True 时补产缺失 PDF（weasyprint 同步耗时——仅完成态
+      后处理与 POST /render-pdf 显式调用；读路径禁止开启）
+    - PDF 渲染失败负缓存：同产品同键本进程内不再重试
     - Presentation DSL 另存为任务专属 presentation.json，供项目资产库和 Web 演示入口使用
     - 返回本次实际写入的 {资产键: path}
     """
@@ -584,8 +591,14 @@ def ensure_text_assets(product_id: str, package: dict | None) -> dict:
                 md_path.write_text(md_text, encoding="utf-8")
             written[key] = str(md_path.relative_to(Path(get_settings().OUTPUT_DIR).resolve()))
             pdf_path = md_path.with_suffix(".pdf")
-            if not pdf_path.is_file():
-                _md_to_pdf(md_text, pdf_path)
+            if (render_pdf and not pdf_path.is_file()
+                    and f"{product_id}:{key}" not in _PDF_FAIL_CACHE):
+                try:
+                    _md_to_pdf(md_text, pdf_path)
+                except Exception as exc:  # noqa: BLE001 —— 负缓存，避免每次请求重试
+                    _PDF_FAIL_CACHE.add(f"{product_id}:{key}")
+                    logger.warning("[Project Assets] PDF 渲染失败（负缓存）| %s:%s | %s",
+                                   product_id, key, str(exc)[:80])
         except OSError as exc:
             logger.warning("[Project Assets] 文本资产写入失败 | product=%s | %s | %s",
                            product_id, key, exc)
@@ -728,13 +741,15 @@ def _ppt_entry(product_id: str, package: dict) -> dict | None:
                   preview_urls=previews)
 
 
-def _presentation_entry(product_id: str, package: dict) -> dict | None:
+def _presentation_entry(product_id: str, package: dict,
+                         ensure: bool = True) -> dict | None:
     """Presentation DSL 资产：没有原生 PPTX 时仍保留可打开的 Web 演示入口。"""
     presentation = package.get("presentation") or {}
     if not presentation:
         return None
-    # 项目资产列表也会调用 collect_files；这里惰性补写，确保历史任务立即可见。
-    ensure_text_assets(product_id, package)
+    # 惰性补写仅在 ensure=True（详情端点/完成态）时执行；列表路径纯只读
+    if ensure:
+        ensure_text_assets(product_id, package, render_pdf=False)
     relative = f"studio_assets/{_canonical_id(product_id)}/presentation.json"
     path = Path(get_settings().OUTPUT_DIR).resolve() / relative
     if not path.is_file():
@@ -750,12 +765,14 @@ def _presentation_entry(product_id: str, package: dict) -> dict | None:
     )
 
 
-def _keywords_entry(product_id: str, package: dict) -> dict | None:
+def _keywords_entry(product_id: str, package: dict,
+                     ensure: bool = True) -> dict | None:
     """任务 Keywords 资产：独立 JSON 文件 + 一级 Keywords 页面入口。"""
     keywords = package.get("keywords")
     if not isinstance(keywords, dict) or not keywords:
         return None
-    ensure_text_assets(product_id, package)
+    if ensure:
+        ensure_text_assets(product_id, package, render_pdf=False)
     relative = f"studio_assets/{_canonical_id(product_id)}/keywords.json"
     path = Path(get_settings().OUTPUT_DIR).resolve() / relative
     if not path.is_file():
@@ -844,8 +861,12 @@ def _mod_matrix_entries(product_id: str) -> list[dict]:
     return entries
 
 
-def collect_files(product_id: str, package: dict | None) -> list[dict]:
-    """聚合任务全部资产（文本产出 + PPT + 演示导出 + 设计图 + 上传素材）。"""
+def collect_files(product_id: str, package: dict | None,
+                  ensure: bool = True) -> list[dict]:
+    """聚合任务全部资产（文本产出 + PPT + 演示导出 + 设计图 + 上传素材）。
+
+    ensure=False：纯只读扫描（列表端点用）——不触发任何 md/json 补写，
+    避免读路径隐藏写放大（实测曾致列表请求 93s）。"""
     product_id = _canonical_id(product_id)
     package = package or {}
     output_dir = Path(get_settings().OUTPUT_DIR).resolve()
@@ -866,12 +887,12 @@ def collect_files(product_id: str, package: dict | None) -> list[dict]:
         seen.add(ppt["path"])
 
     # Presentation DSL（即使原生 PPTX 节点失败，也必须进入项目资产库）
-    presentation = _presentation_entry(product_id, package)
+    presentation = _presentation_entry(product_id, package, ensure=ensure)
     if presentation and presentation["path"] not in seen:
         entries.append(presentation)
         seen.add(presentation["path"])
 
-    keywords = _keywords_entry(product_id, package)
+    keywords = _keywords_entry(product_id, package, ensure=ensure)
     if keywords and keywords["path"] not in seen:
         entries.append(keywords)
         seen.add(keywords["path"])
@@ -891,9 +912,12 @@ def collect_files(product_id: str, package: dict | None) -> list[dict]:
     return entries
 
 
-def save_library_index(product_id: str, package: dict | None) -> dict:
-    """把聚合结果落盘到任务资产库 index.json（审计 + 目录自包含）。"""
-    files = collect_files(product_id, package)
+def save_library_index(product_id: str, package: dict | None,
+                       files: list[dict] | None = None) -> dict:
+    """把聚合结果落盘到任务资产库 index.json（审计 + 目录自包含）。
+
+    files 传入时复用（详情端点已 collect 过），避免二次全量扫描。"""
+    files = files if files is not None else collect_files(product_id, package)
     index = {
         "schema_version": 1,
         "product_id": str(product_id),

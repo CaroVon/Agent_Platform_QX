@@ -168,6 +168,19 @@ def create_app() -> FastAPI:
     # 提供输出文件（PDF/Markdown/图片）的 HTTP 访问
     outputs_path = Path(settings.OUTPUT_DIR)
     outputs_path.mkdir(parents=True, exist_ok=True)
+
+    # B5 体验优化：静态资源加 Cache-Control（预览图/SVG 切页不再重拉；
+    # StaticFiles 自带 ETag，max-age 内直接走浏览器缓存）
+    from starlette.middleware.base import BaseHTTPMiddleware
+
+    class _StaticCacheMiddleware(BaseHTTPMiddleware):
+        async def dispatch(self, request, call_next):
+            response = await call_next(request)
+            if request.url.path.startswith("/api/v1/files"):
+                response.headers.setdefault("Cache-Control", "public, max-age=3600")
+            return response
+
+    app.add_middleware(_StaticCacheMiddleware)
     app.mount("/api/v1/files", StaticFiles(directory=str(outputs_path)), name="files")
 
     # 托管前端构建产物 (React SPA)

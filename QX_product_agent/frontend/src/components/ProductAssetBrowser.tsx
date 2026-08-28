@@ -7,6 +7,7 @@
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { useQuery } from '@tanstack/react-query'
 import { useLocation } from 'react-router-dom'
 import { Boxes, ChevronRight, Loader2 } from 'lucide-react'
 import { productApi } from '@/lib/api'
@@ -37,15 +38,10 @@ export function ProductAssetBrowser({
 
   const load = useCallback(async () => {
     try {
+      // F3 体验优化：列表页只用轻量摘要（不再对全部产品 N+1 拉全量详情包）；
+      // 详情由上方 detailQuery 按选中项拉取并经 TanStack Query 缓存
       const list = await productApi.list(0, 100)
-      // 已完成产品拉全量详情（资产）；其余用列表轻量字段
-      const completed = (await Promise.all(
-        list
-          .filter((i) => i.status === 'completed')
-          .map((i) => productApi.get(i.product_id).catch(() => null)),
-      )).filter((p): p is StudioProduct => p !== null)
-      const byId = new Map(completed.map((p) => [p.product_id, p]))
-      const merged = list.map((i) => byId.get(i.product_id) ?? (i as StudioProduct))
+      const merged = list as StudioProduct[]
       setProducts(merged)
       const requested = (location.state as { productId?: string } | null)?.productId
       setSelectedId((prev) => {
@@ -74,6 +70,18 @@ export function ProductAssetBrowser({
     }
   }, [location.state])
 
+  // 选中项详情（按需 + 缓存；列表摘要缺 ppt_design 等字段时由此补齐）
+  const detailQuery = useQuery({
+    queryKey: ['product-detail', selectedId],
+    queryFn: () => productApi.get(selectedId as string),
+    enabled: !!selectedId,
+    staleTime: 60_000,
+    gcTime: 5 * 60_000,
+    // 列表显示 completed 但详情尚未加载完成时仍展示摘要卡
+    placeholderData: (prev) => prev,
+  })
+  const selectedDetail = detailQuery.data ?? null
+
   useEffect(() => {
     let cancelled = false
     const start = async () => {
@@ -97,7 +105,9 @@ export function ProductAssetBrowser({
     }
   }, [load])
 
-  const selected = products.find((p) => p.product_id === selectedId) ?? null
+  const selected = (selectedDetail && selectedDetail.product_id === selectedId
+    ? selectedDetail
+    : products.find((p) => p.product_id === selectedId)) ?? null
   const runningCount = products.filter((p) => p.status === 'running' || p.status === 'queued').length
 
   /** 展示名称：优先 idea；空 idea 时退回 presentation 标题（或恢复资产生成标题） */

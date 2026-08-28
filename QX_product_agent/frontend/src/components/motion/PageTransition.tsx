@@ -43,9 +43,8 @@ export function TopProgressBar() {
 
 /* ─── 页面切换包装 ───────────────────────────── */
 export function PageTransition({ children }: { children: ReactNode }) {
-  const location = useLocation()
   return (
-    <div key={location.pathname} className="page-enter">
+    <div className="page-enter">
       {children}
     </div>
   )

@@ -6,7 +6,6 @@ import { ResearchHubPage } from '@/pages/ResearchHubPage'
 import { PRDStudioPage } from '@/pages/PRDStudioPage'
 import { DesignStudioPage } from '@/pages/DesignStudioPage'
 import { ProjectAssetLibraryPage } from '@/pages/ProjectAssetLibraryPage'
-import { MemoryPage } from '@/pages/MemoryPage'
 import { KeywordsPage } from '@/pages/KeywordsPage'
 import { KnowledgePage } from '@/pages/KnowledgePage'
 import { PptAssetLibraryPage } from '@/pages/PptAssetLibraryPage'
@@ -18,6 +17,8 @@ import { ReportPage } from '@/pages/ReportPage'
 import { LoadingFallback } from '@/components/motion/PageTransition'
 
 // 重型页面路由级懒加载（Konva/GrapesJS/Playwright/echarts 不进主包）
+const MemoryPage = lazy(() =>
+  import('@/pages/MemoryPage').then((m) => ({ default: m.MemoryPage })))
 const PresentationPage = lazy(() =>
   import('@/pages/PresentationPage').then((m) => ({ default: m.PresentationPage })))
 const EditorPage = lazy(() =>

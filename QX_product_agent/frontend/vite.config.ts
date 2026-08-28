@@ -23,7 +23,7 @@ export default defineConfig({
           if (id.includes('recharts') || id.includes('d3-') || id.includes('victory-vendor')) {
             return 'vendor-charts'
           }
-          if (id.includes('pptx') || id.includes('jszip') || id.includes('lucide')
+          if (id.includes('pptx') || id.includes('jszip')
             || id.includes('dnd') || id.includes('html2canvas') || id.includes('jspdf')
             || id.includes('grapesjs')) return 'vendor-editor'
           return 'vendor'
